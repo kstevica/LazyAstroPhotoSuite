@@ -403,8 +403,10 @@ def run_pipeline(
     #     compensates for accumulated clipping (esp. LHE). Not a PI step; see
     #     calibration/survey.py (the biggest port-vs-PI gap was highlight clipping). ---
     def _rolloff():
-        ctx["img"] = highlights.highlight_rolloff(ctx["img"])
-    add("Highlight roll-off", _rolloff)
+        knee = highlights.knee_for_dial(params.highlights)
+        ctx["img"] = highlights.highlight_rolloff(ctx["img"], knee)
+        _log(f"   dial {params.highlights:.2f} -> knee {knee:.3f}")
+    add(f"Highlight roll-off (dial {params.highlights:.2f})", _rolloff)
 
     # --- run the steps, isolated, continue-on-error (js:3465-3480) ---
     total = len(steps)

@@ -67,6 +67,10 @@ class Parameters:
     chromaNR: float = 0.0          # chroma-only NR on CIE a*/b* (luminance untouched)
     deepen: float = 0.0            # 2nd-pass stretch for already-stretched input
     starsAdj: float = 0.0          # star-reduction nudge (effLevel = class starLevel + this)
+    highlights: float = 0.20       # highlight roll-off dial 0..1 (0=dialed fully down/dim,
+                                   # 1=bright/untouched). Low pulls bright cores / blown
+                                   # stars down + reveals core structure. Default 0.20 =
+                                   # dialed down. Not a PI param (port-only finishing dial).
 
     # --- transient narrowband channel arrays (not persisted) ---
     ha: Optional[np.ndarray] = field(default=None, repr=False)

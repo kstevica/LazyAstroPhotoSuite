@@ -38,6 +38,9 @@ def recipe_from_params(params: Parameters, data: "LazyStretchData | None" = None
         o[k] = float(getattr(params, k))
     for k in data.recipe_bools:
         o[k] = bool(getattr(params, k))
+    # Port-only finishing dials (not in PI's persistedReals — kept explicit so the PI-mirror
+    # data layer stays verbatim; PI ignores unknown keys, and we default them when absent).
+    o["highlights"] = float(params.highlights)
     return o
 
 
@@ -80,6 +83,12 @@ def apply_recipe(params: Parameters, recipe: Dict,
         if isinstance(v, bool):
             setattr(params, k, v)
             n += 1
+    # Port-only finishing dials (see recipe_from_params): tolerant + clamped, applied only
+    # when present so a PI recipe (which lacks them) keeps the Parameters default.
+    hv = recipe.get("highlights")
+    if isinstance(hv, (int, float)) and not isinstance(hv, bool) and math.isfinite(hv):
+        params.highlights = min(max(float(hv), 0.0), 1.0)
+        n += 1
     oc = recipe.get("objectClass")
     if isinstance(oc, str) and oc in data.class_list:
         params.object_class = oc

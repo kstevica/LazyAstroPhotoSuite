@@ -32,6 +32,23 @@ def test_recipe_roundtrip(tmp_path):
     assert q.darkLaneGC is True and q.reduceCast is True
 
 
+def test_recipe_persists_highlights_dial(tmp_path):
+    p = Parameters.for_object("emission", highlights=0.35)
+    path = tmp_path / "h.lsrecipe"
+    save_recipe(path, p, D)
+    recipe = load_recipe(path)
+    assert abs(recipe["highlights"] - 0.35) < 1e-9
+    q = Parameters.for_object("generic")           # starts at the default 0.80
+    apply_recipe(q, recipe, D)
+    assert abs(q.highlights - 0.35) < 1e-9
+
+
+def test_apply_recipe_missing_highlights_keeps_default():
+    q = Parameters.for_object("emission")          # default highlights 0.20
+    apply_recipe(q, {"lazystretch_recipe": 1, "objectClass": "emission"}, D)
+    assert abs(q.highlights - 0.20) < 1e-9         # PI recipe lacks the key -> default kept
+
+
 def test_recipe_excludes_machine_specific():
     p = Parameters.for_object("emission")
     r = recipe_from_params(p, D)

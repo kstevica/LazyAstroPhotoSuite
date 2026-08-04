@@ -67,19 +67,23 @@ _OPTIONS = [
     ("inputStretched", "Input already stretched (polish only)"),
 ]
 
-# The five adjustment dials + three extras: (attr, label, lo, hi, decimals).
+# The adjustment dials: (attr, label, lo, hi, decimals, default). The ± nudge dials default
+# to 0 (class-neutral); "Highlights" defaults 0.20 (dialed down) — LOW dials bright cores /
+# blown stars down and reveals core structure, HIGH leaves highlights bright (0 = dimmest,
+# 1 = untouched, photographic-slider convention).
 _DIALS = [
-    ("satAdj", "Saturation ±", -0.5, 0.5, 2),
-    ("brightAdj", "Brightness ±", -0.10, 0.10, 3),
-    ("bgAdj", "Background ±", -0.25, 0.15, 2),
-    ("blackAdj", "Black point ±", -0.5, 0.5, 2),
-    ("contrastAdj", "Contrast ±", -0.15, 0.15, 2),
-    ("gradientCleanup", "Gradient cleanup", 0.0, 1.0, 2),
-    ("dehaze", "Dehaze", 0.0, 1.0, 2),
-    ("smallStars", "Small stars", 0.0, 0.5, 2),
-    ("starsAdj", "Stars ±", -0.3, 0.5, 2),
-    ("chromaNR", "Chroma NR", 0.0, 1.0, 2),
-    ("deepen", "Deepen (2nd pass)", 0.0, 1.0, 2),
+    ("satAdj", "Saturation ±", -0.5, 0.5, 2, 0.0),
+    ("brightAdj", "Brightness ±", -0.10, 0.10, 3, 0.0),
+    ("bgAdj", "Background ±", -0.25, 0.15, 2, 0.0),
+    ("blackAdj", "Black point ±", -0.5, 0.5, 2, 0.0),
+    ("contrastAdj", "Contrast ±", -0.15, 0.15, 2, 0.0),
+    ("gradientCleanup", "Gradient cleanup", 0.0, 1.0, 2, 0.0),
+    ("dehaze", "Dehaze", 0.0, 1.0, 2, 0.0),
+    ("smallStars", "Small stars", 0.0, 0.5, 2, 0.0),
+    ("starsAdj", "Stars ±", -0.3, 0.5, 2, 0.0),
+    ("chromaNR", "Chroma NR", 0.0, 1.0, 2, 0.0),
+    ("deepen", "Deepen (2nd pass)", 0.0, 1.0, 2, 0.0),
+    ("highlights", "Highlights (0 dim → 1 bright)", 0.0, 1.0, 2, 0.20),
 ]
 
 
@@ -202,9 +206,11 @@ class MainWindow(QWidget):
         # --- column 2 ---
         g_adj = QGroupBox("Adjustments")
         v = QVBoxLayout(g_adj)
-        for attr, label, lo, hi, dec in _DIALS:
-            fs = FloatSlider(label, lo, hi, 0.0, decimals=dec)
+        self._dial_defaults: Dict[str, float] = {}
+        for attr, label, lo, hi, dec, dflt in _DIALS:
+            fs = FloatSlider(label, lo, hi, dflt, decimals=dec)
             self.dials[attr] = fs
+            self._dial_defaults[attr] = dflt
             v.addWidget(fs)
         reset = QPushButton("Reset to class defaults")
         reset.clicked.connect(self._reset_dials)
@@ -297,8 +303,8 @@ class MainWindow(QWidget):
             cb.blockSignals(False)
 
     def _reset_dials(self):
-        for fs in self.dials.values():
-            fs.set_value(0.0)
+        for attr, fs in self.dials.items():
+            fs.set_value(self._dial_defaults.get(attr, 0.0))
         self.crop_slider.set_value(3.0)
 
     def _orient(self, op: str):

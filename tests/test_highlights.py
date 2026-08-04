@@ -4,7 +4,12 @@ import pytest
 
 from lazystretch.objects.model import Parameters
 from lazystretch.pipeline.runcore import run_pipeline
-from lazystretch.processes.highlights import highlight_rolloff
+from lazystretch.processes.highlights import (
+    _KNEE_AT_DIAL_0,
+    _KNEE_AT_DIAL_1,
+    highlight_rolloff,
+    knee_for_dial,
+)
 
 
 def test_rolloff_never_reaches_one():
@@ -42,3 +47,31 @@ def test_pipeline_has_no_pure_white():
     assert any("Highlight roll-off" in s for s in r.steps_run)
     # after the roll-off, essentially nothing is at pure white
     assert float((r.image >= 0.999).mean()) < 1e-4
+
+
+# --- the "Highlights" user dial -------------------------------------------------
+
+def test_knee_for_dial_endpoints_and_monotone():
+    # LOW dial = dialed down (low knee); HIGH dial = bright (high knee).
+    assert knee_for_dial(0.0) == pytest.approx(_KNEE_AT_DIAL_0)   # dial 0 -> strongest (low knee)
+    assert knee_for_dial(1.0) == pytest.approx(_KNEE_AT_DIAL_1)   # dial 1 -> gentlest (high knee)
+    ks = [knee_for_dial(d) for d in (0.0, 0.25, 0.5, 0.75, 1.0)]
+    assert all(ks[i] < ks[i + 1] for i in range(len(ks) - 1))     # higher dial -> higher knee
+    assert knee_for_dial(-1.0) == knee_for_dial(0.0)              # clamps
+    assert knee_for_dial(2.0) == knee_for_dial(1.0)
+
+
+def test_lower_dial_dims_highlights_more():
+    x = np.linspace(0.0, 1.0, 256)
+    peaks = [highlight_rolloff(x, knee_for_dial(d)).max() for d in (0.0, 0.5, 1.0)]
+    assert peaks[0] < peaks[1] < peaks[2]                          # lower dial -> lower peak (dimmer)
+
+
+def test_pipeline_respects_highlights_dial():
+    rng = np.random.default_rng(1)
+    img = np.clip(rng.normal(0.06, 0.02, (140, 180, 3)), 0, 1)
+    img[60:70, 90:100, :] = 0.97                                   # a bright core
+    dialed_down = run_pipeline(img, Parameters.for_object("emission", highlights=0.0), preview=True)
+    bright = run_pipeline(img, Parameters.for_object("emission", highlights=1.0), preview=True)
+    # a lower dial pulls the brightest pixels down further
+    assert dialed_down.image.max() < bright.image.max()

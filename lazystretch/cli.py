@@ -74,6 +74,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--stars", type=float, dest="starsAdj", help="star-reduction nudge (-0.3..0.5)")
     p.add_argument("--deepen", type=float, dest="deepen",
                    help="2nd-pass additional stretch 0..1 (for --input-stretched results)")
+    p.add_argument("--highlights", type=float, dest="highlights",
+                   help="highlights dial 0..1 (0=dialed down/dim cores+stars, 1=bright/untouched)")
     p.add_argument("--analyze", action="store_true", help="print frame analysis + recommendations and exit")
 
     # toggles (store the opposite of the default where useful)
@@ -126,7 +128,7 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
 
     # explicit CLI dials (None == unset, so a preset/recipe value survives)
     for name in ("satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj",
-                 "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen"):
+                 "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen", "highlights"):
         v = getattr(args, name)
         if v is not None:
             setattr(p, name, v)
