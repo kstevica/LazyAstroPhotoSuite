@@ -71,6 +71,9 @@ class Parameters:
                                    # 1=bright/untouched). Low pulls bright cores / blown
                                    # stars down + reveals core structure. Default 0.20 =
                                    # dialed down. Not a PI param (port-only finishing dial).
+    transparency: float = 0.40     # core-transparency dial 0..1 (0=off): large-scale local
+                                   # contrast masked to bright nebulosity so dust lanes deepen
+                                   # and the core reads transparent. Port-only finishing dial.
 
     # --- transient narrowband channel arrays (not persisted) ---
     ha: Optional[np.ndarray] = field(default=None, repr=False)

@@ -84,6 +84,7 @@ _DIALS = [
     ("chromaNR", "Chroma NR", 0.0, 1.0, 2, 0.0),
     ("deepen", "Deepen (2nd pass)", 0.0, 1.0, 2, 0.0),
     ("highlights", "Highlights (0 dim → 1 bright)", 0.0, 1.0, 2, 0.20),
+    ("transparency", "Core transparency", 0.0, 1.0, 2, 0.40),
 ]
 
 

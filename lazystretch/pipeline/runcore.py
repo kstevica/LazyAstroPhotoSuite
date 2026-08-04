@@ -47,6 +47,7 @@ from ..processes import (
     scnr as scnr_mod,
     shadowanchor,
     tone,
+    transparency as transparency_mod,
 )
 from ..stats.assess import adaptive_floor_raise, auto_assess, measure_dust
 from ..stretch.autostretch import StretchResult, apply_auto_stretch
@@ -387,6 +388,15 @@ def run_pipeline(
             ctx["img"] = deepen_mod.restore_source_highlights(
                 ctx["img"], source_ref, eff_crop / 100.0, params.deepen)
         add("Restore source highlights (Deepen 2nd pass)", _restore)
+
+    # --- core transparency (P1 calibration): large-scale local contrast masked to the
+    #     bright nebulosity so dust lanes deepen and the core reads as a transparent
+    #     structured cloud (like PI) rather than an opaque veil. Runs before the highlight
+    #     roll-off so the roll-off then dims the (now-structured) veil. ---
+    if params.transparency > 0:
+        def _transparency():
+            ctx["img"] = transparency_mod.core_transparency(ctx["img"], params.transparency)
+        add(f"Core transparency ({params.transparency:.2f})", _transparency)
 
     # --- shadow anchor (P1 calibration): pull the (NN-denoised) milky sky floor toward
     #     PI's deep black point without dimming cores. Low-end mirror of the highlight
