@@ -1,0 +1,30 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.eggs/
+
+# venv
+.venv/
+venv/
+
+# pytest / tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+
+# OS
+.DS_Store
+
+# Large astro masters must never be committed — only small golden sidecars (PLAN §9.3)
+tests/golden/masters/
+*.fits
+*.fit
+*.fits.gz
+*.xisf
+*.tif
+*.tiff
+!tests/golden/**/*.expected.json

@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lazystretch"
+version = "0.0.1"
+description = "Standalone Python port of the PixInsight LazyStretch pipeline (headless core)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "TBD" }
+authors = [{ name = "kstevica" }]
+dependencies = [
+    "numpy>=1.24",
+    "scipy>=1.10",
+    "astropy>=5.3",
+    "tifffile>=2023.7",
+    "imageio>=2.31",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7"]
+gui = ["PySide6>=6.5"]          # native desktop GUI
+tools = ["imagecodecs>=2023.1"] # read StarNet2/DeepSNR compressed-TIFF output
+xisf = ["xisf>=0.9"]            # optional XISF read support
+bg = ["photutils>=1.9"]        # optional photutils Background2D (ABE)
+spcc = ["astroquery>=0.4.7", "gaiaxpy>=2.1"]   # SPCC-lite prerequisites (scaffolded)
+
+[project.scripts]
+lazystretch = "lazystretch.cli:main"
+
+[project.gui-scripts]
+lazystretch-gui = "lazystretch.gui.app:main"
+
+[tool.setuptools.packages.find]
+include = ["lazystretch*"]
+
+[tool.setuptools.package-data]
+lazystretch = ["data/*.json", "data/catalogs/*.csv"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

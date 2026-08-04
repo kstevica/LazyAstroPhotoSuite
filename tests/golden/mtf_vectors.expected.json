@@ -1,0 +1,19 @@
+{
+  "kind": "mtf_vectors",
+  "description": "Closed-form MTF values and find-midtones round-trips. Derived directly from the pinned formula (independent of stats/mtf.py), so this locks the crown-jewel primitive. Extend with values dumped from a real PI install once Math.mtf is confirmed (PLAN §11).",
+  "atol": 1e-12,
+  "mtf": [
+    { "m": 0.25, "x": 0.5,  "y": 0.75 },
+    { "m": 0.75, "x": 0.5,  "y": 0.25 },
+    { "m": 0.10, "x": 0.5,  "y": 0.90 },
+    { "m": 0.40, "x": 0.2,  "y": 0.2727272727272727 },
+    { "m": 0.50, "x": 0.37, "y": 0.37 },
+    { "m": 0.25, "x": 0.25, "y": 0.50 }
+  ],
+  "find_midtones_roundtrip": [
+    { "v0": 0.25, "v1": 0.05 },
+    { "v0": 0.25, "v1": 0.10 },
+    { "v0": 0.10, "v1": 0.02 },
+    { "v0": 0.40, "v1": 0.30 }
+  ]
+}

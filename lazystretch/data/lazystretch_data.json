@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "source_pi_version": "1.4.1",
+  "source_sha1": "c997b739bc6406fe055fe793bede45b56c003273",
+  "_comment": "Shared data layer for LazyStretch (PLAN.md §9.1). Tunable numbers extracted verbatim from reference/pixinsight/LazyStretch.js. Both the PI .js and Python are meant to read this file so a number tweak propagates with zero re-porting. schema_version bumps ONLY on a shape change, never on a value change. Tier-2 (stepParams, palettes) will be added in later phases.",
+
+  "classList": ["galaxy", "emission", "reflection", "planetary", "globular", "open", "generic"],
+
+  "profiles": {
+    "galaxy":     { "bkg": 0.16, "clip": -1.30, "sat": 0.45, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.10, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": 8,    "starReduce": true,  "starLevel": 0.60 },
+    "emission":   { "bkg": 0.25, "clip": -1.05, "sat": 0.55, "contrast": 0.12, "bgLevel": 0.20, "lc": 0.15, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": true,  "starLevel": 0.50 },
+    "reflection": { "bkg": 0.22, "clip": -1.15, "sat": 0.50, "contrast": 0.16, "bgLevel": 0.14, "lc": 0.12, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": true,  "starLevel": 0.60 },
+    "planetary":  { "bkg": 0.18, "clip": -1.50, "sat": 0.55, "contrast": 0.14, "bgLevel": 0.09, "lc": 0.10, "scnr": true,  "localContrast": false, "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 0.70 },
+    "globular":   { "bkg": 0.18, "clip": -1.60, "sat": 0.30, "contrast": 0.10, "bgLevel": 0.10, "lc": 0.08, "scnr": false, "localContrast": false, "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
+    "open":       { "bkg": 0.20, "clip": -1.50, "sat": 0.35, "contrast": 0.10, "bgLevel": 0.10, "lc": 0.08, "scnr": false, "localContrast": false, "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
+    "generic":    { "bkg": 0.25, "clip": -1.25, "sat": 0.40, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.12, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 0.70 }
+  },
+
+  "sliderMap": {
+    "_comment": "Adjustment dial -> profile field it nudges + the clamp applied at effective-value resolution (NOT the input dial range; that is recipeRanges).",
+    "satAdj":      { "field": "sat",      "effClamp": [ 0.00,  1.50] },
+    "brightAdj":   { "field": "bkg",      "effClamp": [ 0.05,  0.50] },
+    "bgAdj":       { "field": "bgLevel",  "effClamp": [ 0.015, 0.40] },
+    "blackAdj":    { "field": "clip",     "effClamp": [-3.00, -0.20] },
+    "contrastAdj": { "field": "contrast", "effClamp": [ 0.00,  0.40] }
+  },
+
+  "recipeRanges": {
+    "_comment": "Input dial safety ranges: clamped on recipe/memory LOAD so a hand-edited file can't push a dial out of UI range.",
+    "satAdj":          [-0.5,  0.5],
+    "brightAdj":       [-0.10, 0.10],
+    "bgAdj":           [-0.25, 0.15],
+    "blackAdj":        [-0.5,  0.5],
+    "contrastAdj":     [-0.15, 0.15],
+    "cropPercent":     [0, 10],
+    "gradientCleanup": [0, 1],
+    "dehaze":          [0, 1],
+    "smallStars":      [0, 0.5],
+    "chromaNR":        [0, 1],
+    "deepen":          [0, 1],
+    "starsAdj":        [-0.3, 0.5]
+  },
+
+  "persistedReals": ["satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj", "cropPercent", "gradientCleanup", "dehaze", "smallStars", "chromaNR", "deepen", "starsAdj"],
+
+  "recipeBools": ["autoAssess", "doBgExtract", "useGradientCorrection", "darkLaneGC", "doColorCal", "preferSPCC", "doBXT", "doNR", "useNRMask", "doSCNR", "doHDR", "doStarReduce", "removeStars", "useMask", "adaptiveFloor", "starProtect", "doLocalContrast", "protectCores", "enhanceEmission", "reduceCast"],
+
+  "classPredicates": {
+    "adaptiveFloorAppliesTo": ["emission", "generic"],
+    "maskedDarkenAppliesTo":  ["emission", "reflection", "generic", "open"],
+    "starProtectAppliesTo":   ["emission", "reflection", "planetary", "generic"]
+  },
+
+  "catalogs": {
+    "messierClass": {
+      "galaxy":     [31,32,33,49,51,58,59,60,61,63,64,65,66,74,77,81,82,83,84,85,86,87,88,89,90,91,94,95,96,98,99,100,101,102,104,105,106,108,109,110],
+      "globular":   [2,3,4,5,9,10,12,13,14,15,19,22,28,30,53,54,55,56,62,68,69,70,71,72,75,79,80,92,107],
+      "open":       [6,7,11,18,21,23,25,26,29,34,35,36,37,38,39,41,44,45,46,47,48,50,52,67,93,103],
+      "emission":   [8,16,17,20,42,43],
+      "planetary":  [27,57,76,97],
+      "supernova":  [1],
+      "reflection": [78]
+    },
+    "reflectionCat": {
+      "IC":  [348, 349, 431, 435, 446, 447, 2118, 2631, 4592, 4601],
+      "NGC": [1333, 1435, 1973, 1975, 1977, 2023, 2068, 2071, 2170, 6726, 6727, 6729, 7023, 7129]
+    },
+    "emissionCat": {
+      "IC":  [405, 410, 417, 443, 1318, 1396, 1805, 1848, 2177, 5068, 5070, 5146],
+      "NGC": [281, 896, 1491, 1499, 2024, 2174, 2237, 2264, 6334, 6357, 6820, 6888, 6960, 6992, 6995, 7000, 7538, 7635, 7822]
+    }
+  },
+
+  "stretch": {
+    "_comment": "applyAutoStretch / findMidtonesBalance constants (LazyStretch.js:2063-2151).",
+    "kneeWidthFactor": 0.30,
+    "kneeEpsilonFloor": 1.0e-5,
+    "findMidtonesEps": 5.0e-5
+  },
+
+  "autoAssess": {
+    "_comment": "Perimeter-opposition crop/GC picker (LazyStretch.js:2544-2636). sigma is the STF shadows clip in avgDev units used for the visual-space mapping; dropBrightest=1 uses the 2nd-brightest perimeter patch as the bright reference.",
+    "sigma": -2.8,
+    "targetBkg": 0.25,
+    "patchSize": 0.09,
+    "inset": 0.02,
+    "minFrame": 128,
+    "dropBrightest": 1,
+    "tiers": [
+      { "minGradient": 0.45, "cropPercent": 8, "useGC": true },
+      { "minGradient": 0.20, "cropPercent": 6, "useGC": true },
+      { "minGradient": 0.00, "cropPercent": 3, "useGC": false }
+    ]
+  },
+
+  "measureDust": {
+    "_comment": "Self-calibrating dust lift (LazyStretch.js:2162-2193). Patch centers span [spanLo, spanHi]; percentiles use floor(p*(n-1)) indexing on sorted patch medians.",
+    "gridX": 6,
+    "gridY": 4,
+    "patchW": 0.07,
+    "patchH": 0.07,
+    "spanLo": 0.08,
+    "spanHi": 0.92,
+    "minPatchPx": 4,
+    "minValidPatches": 4,
+    "cleanSkyPercentile": 0.10,
+    "typicalPercentile": 0.45
+  },
+
+  "adaptiveFloor": {
+    "_comment": "adaptiveFloorRaise clamps the measured dust lift to [0, raiseCap] (LazyStretch.js:2198-2201).",
+    "raiseCap": 0.03
+  },
+
+  "mtf": {
+    "_comment": "Math.mtf is a PJSR built-in, not defined in the source. The standard PixInsight Midtones Transfer Function is pinned in stats/mtf.py. CONFIRM against a real PI install before P0 closes (PLAN §11) — every stretch/assess number flows through it."
+  }
+}
