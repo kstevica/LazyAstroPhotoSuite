@@ -48,14 +48,35 @@ class PreviewView(QGraphicsView):
         self.setResizeAnchor(QGraphicsView.AnchorViewCenter)
         self._has_image = False
         self._user_zoomed = False
+        self._img_size = None            # (w, h) of the current pixmap
 
-    def set_image(self, a: np.ndarray):
+    def set_image(self, a: np.ndarray, keep_view: bool | None = None):
+        """Show ``a``. When the new image is the SAME size as the current one (a
+        re-process of the same frame), the zoom + pan are preserved so changes can be
+        compared in place; a different size (a new frame) fits to window. ``keep_view``
+        forces the choice: False always fits, True keeps the view when the size matches.
+        """
+        a = np.asarray(a)
+        new_size = (a.shape[1], a.shape[0])
+        keep = (self._has_image and self._img_size == new_size and keep_view is not False)
+        saved = None
+        if keep:
+            saved = (self.transform(),
+                     self.horizontalScrollBar().value(),
+                     self.verticalScrollBar().value())
         pix = QPixmap.fromImage(ndarray_to_qimage(a))
         self._item.setPixmap(pix)
         self._scene.setSceneRect(self._item.boundingRect())
         self._has_image = True
-        self._user_zoomed = False
-        self.fit()
+        self._img_size = new_size
+        if saved is not None:
+            transform, hs, vs = saved
+            self.setTransform(transform)         # restore zoom
+            self.horizontalScrollBar().setValue(hs)
+            self.verticalScrollBar().setValue(vs)  # restore pan (scene rect is unchanged)
+        else:
+            self._user_zoomed = False
+            self.fit()
 
     def fit(self):
         if self._has_image:

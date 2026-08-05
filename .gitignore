@@ -28,3 +28,7 @@ tests/golden/masters/
 *.tif
 *.tiff
 !tests/golden/**/*.expected.json
+
+# Per-master run history (GUI) + saved recipes are runtime data
+history/
+*.lsrecipe

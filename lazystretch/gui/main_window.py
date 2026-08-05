@@ -14,6 +14,9 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
     QPlainTextEdit,
     QProgressBar,
@@ -33,8 +36,15 @@ from ..identify.classify import (
     palettes_for,
 )
 from ..identify.solver import solve
+from ..io.history import (
+    MAX_ITEMS,
+    STATUS_DISCARDED,
+    STATUS_NONE,
+    STATUS_SELECTED,
+    HistoryStore,
+)
 from ..io.image_io import LoadedImage, load_image, save_image
-from ..io.recipes import apply_recipe, load_recipe, save_recipe
+from ..io.recipes import apply_recipe, load_recipe, recipe_from_params, save_recipe
 from ..objects.model import Parameters
 from ..objects.presets import curated_for
 from .preview import PreviewView
@@ -84,7 +94,8 @@ _DIALS = [
     ("chromaNR", "Chroma NR", 0.0, 1.0, 2, 0.0),
     ("deepen", "Deepen (2nd pass)", 0.0, 1.0, 2, 0.0),
     ("highlights", "Highlights (0 dim → 1 bright)", 0.0, 1.0, 2, 0.20),
-    ("transparency", "Core transparency", 0.0, 1.0, 2, 0.40),
+    ("transparency", "Core transparency (0 = off)", 0.0, 1.0, 2, 0.0),
+    ("dimCore", "Dim core (0 = off)", 0.0, 1.0, 2, 0.0),
 ]
 
 
@@ -100,6 +111,9 @@ class MainWindow(QWidget):
         self.solve_result = None
         self._recommendations: list = []
         self.worker: Optional[PipelineWorker] = None
+        self._last_params: Optional[Parameters] = None
+        self._hist_store: Optional[HistoryStore] = None   # disk-backed, per-master
+        self._refreshing_history = False                  # guard reentrant selection signals
 
         self.checks: Dict[str, QCheckBox] = {}
         self.dials: Dict[str, FloatSlider] = {}
@@ -260,19 +274,70 @@ class MainWindow(QWidget):
                                   else "none detected (GraXpert→MMT, StarNet→skip, SPCC→BN+CC)"))
         self.tools_label.setStyleSheet("color: gray;")
         self.tools_label.setWordWrap(True)
+
+        # --- history: header (label + small Clear) over [ list | controls column ] ---
+        self.history_group = QWidget()
+        hgv = QVBoxLayout(self.history_group)
+        hgv.setContentsMargins(0, 0, 0, 0)
+        hdr = QHBoxLayout()
+        hdr.addWidget(QLabel(f"History — select to preview (last {MAX_ITEMS}, saved on disk)"))
+        hdr.addStretch(1)
+        self.clear_btn = QPushButton("Clear")
+        self.clear_btn.setFixedWidth(64)
+        self.clear_btn.setFocusPolicy(Qt.NoFocus)
+        self.clear_btn.clicked.connect(self._clear_history)
+        hdr.addWidget(self.clear_btn)
+        hgv.addLayout(hdr)
+
+        body = QHBoxLayout()
+        self.history_list = QListWidget()
+        self.history_list.setMinimumHeight(160)
+        self.history_list.setToolTip("Select a past run to preview it and restore its settings.")
+        self.history_list.currentItemChanged.connect(self._on_history_selected)
+        body.addWidget(self.history_list, 1)                # list takes the width; grows tall
+
+        ctrl = QVBoxLayout()
+        star_row = QHBoxLayout()
+        star_row.addWidget(QLabel("Rate:"))
+        self.star_btns = []
+        for i in range(5):
+            b = QPushButton("☆")
+            b.setFixedWidth(26)
+            b.setFlat(True)
+            b.setFocusPolicy(Qt.NoFocus)      # don't steal the list's selection/focus
+            b.clicked.connect(lambda _=False, n=i + 1: self._rate_selected(n))
+            self.star_btns.append(b)
+            star_row.addWidget(b)
+        star_row.addStretch(1)
+        ctrl.addLayout(star_row)
+        self.comment_edit = QLineEdit()
+        self.comment_edit.setPlaceholderText("one-line comment…")
+        self.comment_edit.editingFinished.connect(self._comment_selected)
+        ctrl.addWidget(self.comment_edit)
+        self.keep_btn = QPushButton("Keep ✓")
+        self.discard_btn = QPushButton("Discard ✕")
+        self.remove_btn = QPushButton("Remove")
+        self.keep_btn.clicked.connect(lambda: self._status_selected(STATUS_SELECTED))
+        self.discard_btn.clicked.connect(lambda: self._status_selected(STATUS_DISCARDED))
+        self.remove_btn.clicked.connect(self._remove_selected)
+        for b in (self.keep_btn, self.discard_btn, self.remove_btn):
+            b.setFocusPolicy(Qt.NoFocus)      # keep the list's selection while acting on it
+            ctrl.addWidget(b)
+        ctrl.addStretch(1)
+        ctrl_w = QWidget()
+        ctrl_w.setLayout(ctrl)
+        ctrl_w.setFixedWidth(200)
+        body.addWidget(ctrl_w)
+        hgv.addLayout(body)
+        self.history_group.setVisible(False)      # appears once there's a run to show
+
+        # --- log (grows tall) beside a vertical column of action buttons ---
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(500)
-        self.progress = QProgressBar()
-        self.progress.setRange(0, 100)
-        self.status_label = QLabel("Ready.")
-        iv.addWidget(self.detected_label)
-        iv.addWidget(self.tools_label)
-        iv.addWidget(self.log_view, 1)
-        iv.addWidget(self.progress)
-        iv.addWidget(self.status_label)
-
-        btns = QHBoxLayout()
+        log_body = QHBoxLayout()
+        log_body.addWidget(self.log_view, 1)
+        action_col = QVBoxLayout()
         self.preview_btn = QPushButton("Preview")
         self.execute_btn = QPushButton("Execute")
         self.save_btn = QPushButton("Save Result…")
@@ -283,8 +348,22 @@ class MainWindow(QWidget):
         self.save_btn.clicked.connect(self._save_result)
         self.close_btn.clicked.connect(self.close)
         for b in (self.preview_btn, self.execute_btn, self.save_btn, self.close_btn):
-            btns.addWidget(b)
-        iv.addLayout(btns)
+            action_col.addWidget(b)
+        action_col.addStretch(1)
+        action_w = QWidget()
+        action_w.setLayout(action_col)
+        action_w.setFixedWidth(160)
+        log_body.addWidget(action_w)
+
+        self.progress = QProgressBar()
+        self.progress.setRange(0, 100)
+        self.status_label = QLabel("Ready.")
+        iv.addWidget(self.detected_label)
+        iv.addWidget(self.tools_label)
+        iv.addWidget(self.history_group)
+        iv.addLayout(log_body, 1)
+        iv.addWidget(self.progress)
+        iv.addWidget(self.status_label)
 
         v.addWidget(info, 3)
         return w
@@ -341,6 +420,11 @@ class MainWindow(QWidget):
             f"Loaded {Path(path).name}  —  {self.loaded.data.shape}, "
             f"{'color' if self.loaded.is_color else 'mono'}, type '{dtype}'.")
         self.status_label.setText("Loaded. Showing a quick display-stretch…")
+        # Per-master history lives in a `history/` subfolder next to the master and
+        # reloads across sessions.
+        mpath = getattr(self.loaded, "path", None)
+        self._hist_store = HistoryStore(mpath) if mpath else None
+        self._refresh_history_list()
         self._show_quick_display()
 
     def _show_quick_display(self):
@@ -351,10 +435,10 @@ class MainWindow(QWidget):
         try:
             from ..stretch.autostretch import apply_auto_stretch
             disp, _ = apply_auto_stretch(small, -1.25, 0.25)
-            self.preview.set_image(disp)
+            self.preview.set_image(disp, keep_view=False)   # new frame -> fit to window
             self.status_label.setText("Ready. Click Preview for the full look.")
         except Exception:
-            self.preview.set_image(small)
+            self.preview.set_image(small, keep_view=False)
 
     def _identify(self):
         if self.loaded is None:
@@ -497,6 +581,7 @@ class MainWindow(QWidget):
         if self.worker is not None and self.worker.isRunning():
             return
         params = self._collect_params()
+        self._last_params = params
         image = self.loaded.data if self.loaded is not None else None
         if image is None and params.ha is None:
             self.status_label.setText("Load an image or assign Ha + OIII channels.")
@@ -525,16 +610,143 @@ class MainWindow(QWidget):
     def _on_finished(self, result):
         self.result_image = result.image
         self.result_stars = result.stars_layer
-        self.preview.set_image(result.image)
+        self.preview.set_image(result.image)     # same size -> keeps zoom/pan for comparison
         self.save_btn.setEnabled(True)
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
+        mode = self.worker.mode if self.worker is not None else "preview"
+        self._push_history(result, mode)
         skipped = f", {len(result.steps_skipped)} skipped" if result.steps_skipped else ""
         self.status_label.setText(
             f"Done — class '{result.object_class}', {len(result.steps_run)} steps{skipped}.")
         if self.worker is not None and self.worker.mode == "execute":
             self._save_result()
+
+    # --- run history (disk-backed, per-master: settings + image + rating/comment) ----
+
+    @staticmethod
+    def _run_summary(p: Parameters, mode: str, steps: int) -> str:
+        """A compact one-line summary of the settings that distinguish a run."""
+        return (f"{mode} · {p.object_class} · HL{p.highlights:.2f} DC{p.dimCore:.2f} "
+                f"T{p.transparency:.2f} sat{p.satAdj:+.2f} blk{p.blackAdj:+.2f} deep{p.deepen:.2f}"
+                f" · {steps} steps")
+
+    def _push_history(self, result, mode: str):
+        """Save the finished run (settings + rendered image) to the on-disk history."""
+        if self._hist_store is None or self._last_params is None:
+            return                                             # narrowband-only / no master path
+        recipe = recipe_from_params(self._last_params, self.data)
+        label = self._run_summary(self._last_params, mode, len(result.steps_run))
+        self._hist_store.add(np.asarray(result.image, dtype=np.float32),
+                             recipe, label, mode, len(result.steps_run))
+        self._refresh_history_list()
+
+    @staticmethod
+    def _item_label(item: dict) -> str:
+        rating = int(item.get("rating", 0))
+        stars = "★" * rating + "☆" * (5 - rating)
+        st = item.get("status", STATUS_NONE)
+        badge = " ✓" if st == STATUS_SELECTED else (" ✕" if st == STATUS_DISCARDED else "")
+        comment = str(item.get("comment", "")).strip()
+        ctxt = f"  — {comment}" if comment else ""
+        return f"{stars}{badge}  {item.get('label', '')}{ctxt}"
+
+    def _history_items(self) -> list:
+        """Store items newest-first (matching the list-widget order)."""
+        return list(reversed(self._hist_store.items)) if self._hist_store else []
+
+    def _selected_item(self) -> Optional[dict]:
+        row = self.history_list.currentRow()
+        items = self._history_items()
+        return items[row] if 0 <= row < len(items) else None
+
+    def _refresh_history_list(self):
+        self._refreshing_history = True
+        self.history_list.clear()
+        for item in self._history_items():                     # newest first
+            li = QListWidgetItem(self._item_label(item), self.history_list)
+            if item.get("status") == STATUS_DISCARDED:
+                li.setForeground(Qt.gray)
+        self.history_group.setVisible(bool(self._history_items()))
+        self._refreshing_history = False
+
+    def _on_history_selected(self, current, _previous=None):
+        """Selecting a past run previews it, restores its settings, and fills the rating box."""
+        if self._refreshing_history or current is None or self._hist_store is None:
+            self._update_star_display(0)
+            return
+        item = self._selected_item()
+        if item is None:
+            return
+        img = self._hist_store.load_image_data(item)
+        if img is not None:
+            self.preview.set_image(img, keep_view=True)        # compare in place
+            self.result_image = np.asarray(img, dtype=np.float64)
+            self.save_btn.setEnabled(True)
+        p = Parameters.for_object(item["params"].get("objectClass", "generic"), data=self.data)
+        apply_recipe(p, item["params"], self.data)
+        self._load_params_into_controls(p)
+        self._update_star_display(int(item.get("rating", 0)))
+        self.comment_edit.setText(str(item.get("comment", "")))
+        self.status_label.setText(f"History: {item.get('label', '')}")
+
+    def _update_star_display(self, rating: int):
+        for i, b in enumerate(self.star_btns):
+            b.setText("★" if i < rating else "☆")
+
+    def _rate_selected(self, n: int):
+        item = self._selected_item()
+        if item is None or self._hist_store is None:
+            return
+        new = 0 if int(item.get("rating", 0)) == n else n      # click current star -> clear
+        self._hist_store.set_rating(item, new)
+        self._update_star_display(new)
+        self._relabel_current(item)
+
+    def _comment_selected(self):
+        item = self._selected_item()
+        if item is None or self._hist_store is None:
+            return
+        self._hist_store.set_comment(item, self.comment_edit.text())
+        self._relabel_current(item)
+
+    def _status_selected(self, status: str):
+        item = self._selected_item()
+        if item is None or self._hist_store is None:
+            return
+        new = STATUS_NONE if item.get("status") == status else status   # toggle
+        self._hist_store.set_status(item, new)
+        self._relabel_current(item)
+
+    def _remove_selected(self):
+        item = self._selected_item()
+        if item is None or self._hist_store is None:
+            return
+        self._hist_store.remove(item)
+        self._refresh_history_list()
+
+    def _clear_history(self):
+        if self._hist_store is None or not self._hist_store.items:
+            return
+        if QMessageBox.question(self, "Clear history",
+                                "Delete all history items for this master (files on disk too)?") \
+                != QMessageBox.Yes:
+            return
+        self._hist_store.clear()
+        self._refresh_history_list()
+
+    def _relabel_current(self, item: dict):
+        """Update ONLY the selected row's text/colour after a rating/comment/status edit.
+        Touches neither the selection nor the preview (no re-select, no signal)."""
+        li = self.history_list.item(self.history_list.currentRow())
+        if li is None:
+            return
+        li.setText(self._item_label(item))
+        if item.get("status") == STATUS_DISCARDED:
+            li.setForeground(Qt.gray)
+        else:
+            li.setData(Qt.ForegroundRole, None)     # reset to the theme's default text colour
 
     def _on_failed(self, msg: str):
         self._set_busy(False)
