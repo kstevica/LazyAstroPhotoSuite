@@ -262,6 +262,20 @@ class MainWindow(QWidget):
     def _build_right(self) -> QWidget:
         w = QWidget()
         v = QVBoxLayout(w)
+
+        # --- action buttons, above the image ---
+        top_btns = QHBoxLayout()
+        self.preview_btn = QPushButton("Preview")
+        self.execute_btn = QPushButton("Execute")
+        self.save_btn = QPushButton("Save Result…")
+        self.save_btn.setEnabled(False)
+        self.preview_btn.clicked.connect(lambda: self._run(preview=True, mode="preview"))
+        self.execute_btn.clicked.connect(lambda: self._run(preview=False, mode="execute"))
+        self.save_btn.clicked.connect(self._save_result)
+        for b in (self.preview_btn, self.execute_btn, self.save_btn):
+            top_btns.addWidget(b)
+        v.addLayout(top_btns)
+
         self.preview = PreviewView()
         v.addWidget(self.preview, 7)
 
@@ -331,29 +345,10 @@ class MainWindow(QWidget):
         hgv.addLayout(body)
         self.history_group.setVisible(False)      # appears once there's a run to show
 
-        # --- log (grows tall) beside a vertical column of action buttons ---
+        # --- log (full width; the action buttons live above the image) ---
         self.log_view = QPlainTextEdit()
         self.log_view.setReadOnly(True)
         self.log_view.setMaximumBlockCount(500)
-        log_body = QHBoxLayout()
-        log_body.addWidget(self.log_view, 1)
-        action_col = QVBoxLayout()
-        self.preview_btn = QPushButton("Preview")
-        self.execute_btn = QPushButton("Execute")
-        self.save_btn = QPushButton("Save Result…")
-        self.save_btn.setEnabled(False)
-        self.close_btn = QPushButton("Close")
-        self.preview_btn.clicked.connect(lambda: self._run(preview=True, mode="preview"))
-        self.execute_btn.clicked.connect(lambda: self._run(preview=False, mode="execute"))
-        self.save_btn.clicked.connect(self._save_result)
-        self.close_btn.clicked.connect(self.close)
-        for b in (self.preview_btn, self.execute_btn, self.save_btn, self.close_btn):
-            action_col.addWidget(b)
-        action_col.addStretch(1)
-        action_w = QWidget()
-        action_w.setLayout(action_col)
-        action_w.setFixedWidth(160)
-        log_body.addWidget(action_w)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -361,7 +356,7 @@ class MainWindow(QWidget):
         iv.addWidget(self.detected_label)
         iv.addWidget(self.tools_label)
         iv.addWidget(self.history_group)
-        iv.addLayout(log_body, 1)
+        iv.addWidget(self.log_view, 1)
         iv.addWidget(self.progress)
         iv.addWidget(self.status_label)
 
