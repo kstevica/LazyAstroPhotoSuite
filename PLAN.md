@@ -395,9 +395,21 @@ hard-clipped 0.2-1.2% of pixels to pure white, PI keeps near-white ≈0%). Fixed
 no pixel reaches pure white; residual gap is star-count (needs StarNet/GraXpert). **#3 saturation** — the port
 scaled chroma linearly in RGB (over-boosting saturated colours + clipping, under-boosting subtle ones, PI uses
 CIE L*c*h*); reimplemented as a **CIE Lab** chroma scale (`processes/tone.py`, perceptually uniform, round-trip
-exact), removing the over/under extremes. Remaining P1: `measure_noise` vs MRS, RangeSelection falloff,
-tone/brightness. Bigger lever = install StarNet + GraXpert (closes the star-colour/near-white/core-noise
-confounds). Also remaining: full **SPCC-lite** (scaffolded); P6 packaging.
+exact), removing the over/under extremes.
+
+**P1 CLOSED — 2026-08-05.** StarNet2 + DeepSNR + GraXpert are installed and wired; an execute-mode
+golden survey drove the calibration. Fixed: **HDR core** over-compression (`_HDR_BASE_COMPRESSION`
+0.65→0.85), a **black-point `shadow_anchor`** finishing step, and a **contrast re-anchor** in
+`background_level` (Approach B) — together the cores now match PI (M42 clum −3%, detailRMS +2%) and
+the tools closed the noise gap (detailRMS +44%→+7%). Added user-facing **finishing dials** (Highlights
+= colour-preserving base/detail roll-off; Core transparency; Dim core = masked luminosity cut) that give
+per-image control over the look. **Accepted divergence:** the residual **milky black point** (blk mean
++66%, worst rosette +313%) is a structural stretch/finishing limit (the "emission blk-discriminator wall")
+and is left as a faithful-port divergence — the Dim-core/Highlights dials tune it per image. Minor fixes:
+**star census** ported (`analyze.star_census`, photutils DAOStarFinder, graceful without it); **DATE-OBS
+solve** verified already-correct (astropy WCS carries the header epoch); **XISF stays read-only** (write
+refused with a clear message, PLAN §11). `measure_noise` stays MAD-based (close enough; MRS not ported).
+Next: **P6 packaging** and cross-target robustness. Also open: full **SPCC-lite** (scaffolded).
 
 | Phase | Milestone | Concrete done-criterion |
 |---|---|---|
@@ -454,8 +466,9 @@ zero re-porting**, and the structural work is isolated below.
 and the **Advisor / Analyze-Frame** engine (`objects/analyze.py`: `measure_noise` + `analyze_view` →
 lines + recommendations). All wired into `runcore`, CLI (`--deepen`, `--analyze`), and GUI (Deepen dial,
 Analyze Frame + Apply-recommendations buttons); adversarially verified (one order-of-ops bug in the restore
-mask fixed); tested (117 passing). **Remaining minor:** DATE-OBS (#9, astropy already handles header epoch)
-and the star census (needs a star detector; emits "census unavailable"). Status below: ✅ done, ⏳ remaining.
+mask fixed); tested (117 passing). **Both remaining-minor items are now DONE (P1 close-out, 2026-08-05):**
+DATE-OBS (#9) verified already-correct (astropy WCS carries the header epoch — no code change), and the
+**star census is ported** (`analyze.star_census`, photutils DAOStarFinder, graceful without it). Status below.
 
 | ok | # | Feature (param) | PI source | Tier | Python plan |
 |---|---|---|---|---|---|
@@ -467,7 +480,8 @@ and the star census (needs a star detector; emits "census unavailable"). Status 
 | ✅ | 6 | **Deepen / second pass** (`deepen`) — *1.4.1 headline* | inputStretched path + `restoreSourceHighlights` :4224 | **medium-hard** | `processes/deepen.py` — 30% global MTF + 70% masked lift; restore rides source 30%, blends bright+blue-halo, damps blue-dominant gains |
 | ✅ | 7 | **Advisor / Analyze Frame** | `LS.analyzeView` :2633, `LS.measureNoise` :2554 | **medium** | `objects/analyze.py` — MAD-based `measure_noise` + `analyze_view` (all rec branches verbatim); CLI `--analyze`, GUI Analyze/Apply buttons; star census skipped |
 | ✅ | 8 | **Curated starting recipes** | preset recipe objects `:960-1005` | **easy (data)** | `objects/presets.py` (`curated_for` + `apply_preset`); auto-applied on Identify in CLI + GUI |
-| ⏳ | 9 | **DATE-OBS solver fix** | solver metadata | **easy** | use `DATE-OBS` when solving (`identify/solver.py`) — astropy WCS already handles header epoch; minor |
+| ✅ | 9 | **DATE-OBS solver fix** | solver metadata | **easy** | verified already-correct: `solve_from_header` uses `astropy.wcs.WCS(header)` which carries the epoch/frame; `.icrs` converts. No change needed. |
+| ✅ | — | **Star census** | `LS.starCensus` :2775 | **medium** | `analyze.star_census` — photutils DAOStarFinder → count / per-Mpx / median size / saturated cores; graceful `None` without photutils |
 | — | — | **Step snapshots** | `LS.snapshotWindows` :2880 | **N/A / low** | PI window-management to close stray tool windows — no analog in the port |
 
 ### 12.3 Suggested sequencing

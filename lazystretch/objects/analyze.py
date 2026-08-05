@@ -212,6 +212,62 @@ def _build_vis(a: np.ndarray, data=None):
 # Analyze
 # --------------------------------------------------------------------------- #
 
+def star_census(img) -> "dict | None":
+    """Detect stars and summarize the field: count, per-Mpx, median size, saturated cores.
+
+    Uses photutils' ``DAOStarFinder`` when available; returns ``None`` (graceful) when
+    photutils is absent or nothing is detected — mirroring ``LS.starCensus`` (js:2775-2789),
+    which likewise no-ops when PixInsight's StarDetector is missing. Runs on the linear
+    luminance; the slowest measurement, so callers keep it last.
+    """
+    try:
+        from astropy.stats import sigma_clipped_stats
+        from photutils.detection import DAOStarFinder
+    except ImportError:
+        return None
+    a = np.asarray(img, dtype=np.float64)
+    L = a.mean(axis=2) if a.ndim == 3 else a
+    try:
+        _, med, std = sigma_clipped_stats(L, sigma=3.0)
+    except Exception:
+        return None
+    if not (std > 0):
+        return None
+    try:
+        sources = DAOStarFinder(fwhm=3.0, threshold=6.0 * float(std))(L - med)
+    except Exception:
+        return None
+    if sources is None or len(sources) == 0:
+        return None
+
+    n = int(len(sources))
+    mpx = (L.shape[0] * L.shape[1]) / 1.0e6
+    per_mpx = (n / mpx) if mpx > 0 else 0.0
+    peaks = np.asarray(sources["peak"], dtype=np.float64)
+    xs = np.asarray(sources["xcentroid"], dtype=np.float64)
+    ys = np.asarray(sources["ycentroid"], dtype=np.float64)
+    order = np.argsort(peaks)[::-1]
+
+    # Median diameter: half-max pixel-area on a small cutout, over the brightest sample (fast).
+    diams = []
+    R = 8
+    for idx in order[:200]:
+        cx, cy, pk = int(round(xs[idx])), int(round(ys[idx])), float(peaks[idx])
+        if pk <= 0:
+            continue
+        cut = L[max(0, cy - R):cy + R + 1, max(0, cx - R):cx + R + 1] - med
+        area = int((cut >= 0.5 * pk).sum())
+        if area > 0:
+            diams.append(2.0 * math.sqrt(area / math.pi))
+    med_diam = float(np.median(diams)) if diams else 0.0
+
+    # Saturated cores: of the brightest sample, how many hit ~pure white.
+    sat_checked = int(min(n, 200))
+    saturated = int((peaks[order[:sat_checked]] + med >= 0.99).sum())
+    return {"count": n, "perMpx": per_mpx, "medDiam": med_diam,
+            "saturated": saturated, "satChecked": sat_checked}
+
+
 def analyze_view(img, params, data=None) -> AnalyzeResult:
     """Dry-run measurement + recommendation report (``LS.analyzeView``, js:2633-2815).
 
@@ -398,7 +454,17 @@ def analyze_view(img, params, data=None) -> AnalyzeResult:
             lines.append("   use the wall-to-wall recipe: dark-lane model ON, Background +0.10..+0.12,")
             lines.append("   faint-mask and adaptive floor OFF, crop 10, SCNR ON (IC 1318 recipe).")
 
-    # --- star census: SKIPPED (no star detector in the NumPy port) -----------
-    lines.append("Stars: census unavailable (no star detector in the NumPy port).")
+    # --- star census (photutils DAOStarFinder; slowest, kept last) -----------
+    sc = star_census(a_img)
+    if sc is not None:
+        sat = (f", {sc['saturated']} of the {sc['satChecked']} brightest cores saturated"
+               if sc["saturated"] > 0 else "")
+        lines.append(f"Stars: {sc['count']} detected ({sc['perMpx']:.0f} per Mpx), "
+                     f"median size {sc['medDiam']:.1f} px{sat}.")
+        if sc["saturated"] > 0 and params.doHDR:
+            lines.append("   HDR core compression is ON and will protect the saturated cores.")
+        lines.append("   Star handling is class-tuned; the Stars ± and Small stars dials adjust it to taste.")
+    else:
+        lines.append("Stars: census unavailable (install photutils for a star census).")
 
     return AnalyzeResult(lines=lines, recommendations=changes)

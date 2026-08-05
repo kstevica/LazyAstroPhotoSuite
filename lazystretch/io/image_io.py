@@ -182,6 +182,10 @@ def save_image(path: "str | Path", data: np.ndarray, *, bit_depth: int = 16,
         else:
             arr = np.rint(a * 255.0).astype(np.uint8)
         iio.imwrite(str(p), arr)
+    elif ext in XISF_EXT:
+        raise ValueError(
+            f"XISF write is not supported ({p.name}); XISF is read-only (PLAN §11). "
+            "Save as .fits or .tif instead.")
     else:
         raise ValueError(f"unsupported output extension: {ext!r} ({p.name})")
     return str(p)
