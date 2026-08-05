@@ -71,9 +71,14 @@ class Parameters:
                                    # 1=bright/untouched). Low pulls bright cores / blown
                                    # stars down + reveals core structure. Default 0.20 =
                                    # dialed down. Not a PI param (port-only finishing dial).
-    transparency: float = 0.40     # core-transparency dial 0..1 (0=off): large-scale local
-                                   # contrast masked to bright nebulosity so dust lanes deepen
-                                   # and the core reads transparent. Port-only finishing dial.
+    transparency: float = 0.0      # core-transparency dial 0..1 (0=off, GATED OFF by default):
+                                   # large-scale local contrast masked to bright nebulosity.
+                                   # Over-cranking crushes dust lanes to black ink-blots (the
+                                   # "#2" over-process), so it is opt-in — code kept, off by
+                                   # default. Port-only finishing dial; work with Highlights first.
+    dimCore: float = 0.0           # dim-core dial 0..1 (0=off): mask the large bright veil and
+                                   # multiplicatively lower its luminosity (no ceiling, unlike
+                                   # the highlight roll-off). Opt-in. Port-only finishing dial.
 
     # --- transient narrowband channel arrays (not persisted) ---
     ha: Optional[np.ndarray] = field(default=None, repr=False)

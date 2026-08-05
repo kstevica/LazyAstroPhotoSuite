@@ -34,6 +34,7 @@ from ..pipeline.params import (
 from ..processes import (
     background,
     backgroundlevel,
+    brightcore,
     chromanr,
     colorcal,
     crop,
@@ -397,6 +398,14 @@ def run_pipeline(
         def _transparency():
             ctx["img"] = transparency_mod.core_transparency(ctx["img"], params.transparency)
         add(f"Core transparency ({params.transparency:.2f})", _transparency)
+
+    # --- dim core (P1 calibration): mask the large bright veil and multiplicatively lower
+    #     its luminosity. Unlike the highlight roll-off (which asymptotes at a ceiling), this
+    #     can take an over-bright core well below it, structure + colour preserved. Opt-in. ---
+    if params.dimCore > 0:
+        def _dimcore():
+            ctx["img"] = brightcore.dim_bright_core(ctx["img"], params.dimCore)
+        add(f"Dim core ({params.dimCore:.2f})", _dimcore)
 
     # --- shadow anchor (P1 calibration): pull the (NN-denoised) milky sky floor toward
     #     PI's deep black point without dimming cores. Low-end mirror of the highlight

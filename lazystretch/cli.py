@@ -78,6 +78,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="highlights dial 0..1 (0=dialed down/dim cores+stars, 1=bright/untouched)")
     p.add_argument("--transparency", type=float, dest="transparency",
                    help="core-transparency dial 0..1 (large-scale local contrast in the bright core)")
+    p.add_argument("--dim-core", type=float, dest="dimCore",
+                   help="dim-core dial 0..1 (mask the large bright veil + lower its luminosity)")
     p.add_argument("--analyze", action="store_true", help="print frame analysis + recommendations and exit")
 
     # toggles (store the opposite of the default where useful)
@@ -131,7 +133,7 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
     # explicit CLI dials (None == unset, so a preset/recipe value survives)
     for name in ("satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj",
                  "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen", "highlights",
-                 "transparency"):
+                 "transparency", "dimCore"):
         v = getattr(args, name)
         if v is not None:
             setattr(p, name, v)
