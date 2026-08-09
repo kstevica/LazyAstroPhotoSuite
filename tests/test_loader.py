@@ -14,7 +14,7 @@ from lazystretch.data.loader import (
 def test_schema_and_class_list():
     D = get_data()
     assert D.schema_version == SUPPORTED_SCHEMA_VERSION == 1
-    assert D.source_pi_version == "1.4.1"
+    assert D.source_pi_version == "1.7.0"
     assert D.class_list == (
         "galaxy", "emission", "reflection", "planetary", "globular", "open",
         "milkyway", "generic",

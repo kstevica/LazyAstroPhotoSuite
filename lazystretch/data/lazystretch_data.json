@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "source_pi_version": "1.4.1",
+  "source_pi_version": "1.7.0",
   "source_sha1": "c997b739bc6406fe055fe793bede45b56c003273",
   "_comment": "Shared data layer for LazyStretch (PLAN.md §9.1). Tunable numbers extracted verbatim from reference/pixinsight/LazyStretch.js. Both the PI .js and Python are meant to read this file so a number tweak propagates with zero re-porting. schema_version bumps ONLY on a shape change, never on a value change. Tier-2 (stepParams, palettes) will be added in later phases.",
 

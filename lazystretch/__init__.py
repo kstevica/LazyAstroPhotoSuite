@@ -1,13 +1,14 @@
-"""LazyStretch — standalone Python port of the PixInsight LazyStretch pipeline.
+"""LazyStretch — standalone Python port of the PixInsight LazyStretch suite.
 
-Source of truth: ``reference/pixinsight/LazyStretch.js`` (PI v1.2.1). See ``PLAN.md``.
+Source of truth: ``reference/pixinsight/LazyStretch.js`` (PI v1.7.0) + ``LazyMoonSun.js``.
 This package exposes the deterministic, headless "brain": the pinned MTF primitives,
-image statistics, the auto-stretch, the self-calibrating assessments, and the
-effective-value resolution. No GUI, no PixInsight dependency.
+image statistics, the auto-stretch, the self-calibrating assessments, the effective-value
+resolution, the PROC pin ledger, and the LazyMoonSun burst-stacking engine. No PixInsight
+dependency. A launcher shell hosts LazyStretch + LazyMoonSun (LazyStack in progress).
 """
 from __future__ import annotations
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 from .data.loader import ClassProfile, LazyStretchData, get_data, load_data
 from .pipeline.params import (
