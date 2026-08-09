@@ -80,11 +80,27 @@ def test_shell_launcher_and_lazy_panel(qapp):
     s.show_home(); s.open_tool("stretch")
     assert s._panels["stretch"] is same                   # reuses, no rebuild
     s.open_tool("stack")
-    assert "stack" not in s._panels                        # unavailable -> no-op
+    assert "stack" not in s._panels                        # not built yet -> no-op
     assert not s._tool_actions["stack"].isEnabled()
-    assert not s._tool_actions["moonsun"].isEnabled()
+    assert s._tool_actions["moonsun"].isEnabled()          # LazyMoonSun landed in phase 2
     s.show_home()
     assert s.stack.currentWidget() is s.launcher
+
+
+def test_shell_opens_moonsun_panel(qapp):
+    from lazystretch.gui.moonsun_window import LazyMoonSunPanel
+    from lazystretch.gui.shell import AppShell
+
+    s = AppShell()
+    s.open_tool("moonsun")
+    assert isinstance(s._panels.get("moonsun"), LazyMoonSunPanel)
+    assert s.windowTitle() == "LazyMoonSun"
+    panel = s._panels["moonsun"]
+    # preset round-trips through the dials
+    from lazystretch.moonsun.model import MoonSunParams
+    panel._apply_params(MoonSunParams.preset("moon"))
+    p = panel._collect_params()
+    assert p.tone == "neutral" and abs(p.sat - 0.60) < 1e-6 and abs(p.surface) < 1e-6
 
 
 def test_left_panel_has_setup_and_adjust_tabs(qapp):

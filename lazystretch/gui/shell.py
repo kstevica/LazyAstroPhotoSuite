@@ -32,7 +32,7 @@ _TOOLS = [
     ("stack", "LazyStack",
      "Calibrate, register and integrate a folder of subs into a master.", False),
     ("moonsun", "LazyMoonSun",
-     "Lucky-imaging burst stacking & finishing for the Sun and Moon.", False),
+     "Lucky-imaging burst stacking & finishing for the Sun and Moon.", True),
 ]
 
 _TITLES = {
@@ -156,7 +156,10 @@ class AppShell(QMainWindow):
         if key == "stretch":
             from .main_window import LazyStretchPanel
             return LazyStretchPanel()
-        # "stack" / "moonsun" land in later phases.
+        if key == "moonsun":
+            from .moonsun_window import LazyMoonSunPanel
+            return LazyMoonSunPanel()
+        # "stack" lands in a later phase.
         return None
 
     def open_tool(self, key: str):
