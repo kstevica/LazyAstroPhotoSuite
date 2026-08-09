@@ -19,6 +19,7 @@ class LazyStackParams:
     do_cosmetic: bool = True
     do_debayer: bool = True
     do_register: bool = True
-    normalize: bool = True         # match each frame's background+scale to the reference
+    normalize: bool = True         # match each frame's background+scale to the reference (global)
+    local_normalize: bool = False  # spatially-varying gradient match to the reference (LN)
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory

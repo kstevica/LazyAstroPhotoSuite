@@ -76,6 +76,30 @@ def test_normalize_reference_is_identity():
     assert np.allclose(out, ref, atol=1e-9)
 
 
+def test_local_normalize_removes_spatial_gradient():
+    rng = np.random.default_rng(3)
+    ref = np.clip(rng.normal(0.1, 0.01, (256, 256)), 0, 1)     # flat-ish reference
+    yy, xx = np.mgrid[0:256, 0:256].astype(np.float64)
+    gradient = 0.15 * (xx / 255.0) + 0.10 * (yy / 255.0)       # a ramp global norm can't fix
+    frame = np.clip(ref + gradient, 0, 1)
+    ref_med, ref_sig = nrm.frame_stats(ref)
+
+    glob = nrm.normalize_to_ref(frame, ref_med, ref_sig)       # single offset — ramp remains
+    loc = nrm.local_normalize_to_ref(frame, ref, ref_med, ref_sig)
+    # residual low-frequency gradient vs the reference: LN should be far smaller than global
+    glob_grad = float(np.abs(nrm._low_frequency(glob - ref)).mean())
+    loc_grad = float(np.abs(nrm._low_frequency(loc - ref)).mean())
+    assert loc_grad < 0.2 * glob_grad
+    assert loc.shape == frame.shape
+
+
+def test_local_normalize_reference_near_identity():
+    ref = _disc(200, radius=60) * 0.6 + 0.05
+    ref_med, ref_sig = nrm.frame_stats(ref)
+    out = nrm.local_normalize_to_ref(ref, ref, ref_med, ref_sig)
+    assert np.abs(out - ref).mean() < 5e-3            # ref maps to ~itself
+
+
 def test_calibrate_light_subtracts_dark_and_divides_flat():
     signal = np.full((10, 10), 0.30)
     dark = np.full((10, 10), 0.05)

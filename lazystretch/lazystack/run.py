@@ -307,10 +307,13 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     ref_key = keys[ref_global] if staged else None
     ref = _get(frames[ref_global])
     aligner = reg.Aligner(ref, log=log)
-    normalize = bool(params.normalize)
+    local_norm = bool(params.local_normalize)
+    normalize = bool(params.normalize) or local_norm     # LN includes the global step
     ref_med, ref_sig = nrm.frame_stats(ref) if normalize else (0.0, 1.0)
-    nsuf = "_n" if normalize else ""                      # normalization changes reg output
-    if normalize:
+    nsuf = "_ln" if local_norm else ("_n" if normalize else "")   # changes reg output
+    if local_norm:
+        log("Local normalization: matching each frame's gradient to the reference.")
+    elif normalize:
         log("Normalizing each frame to the reference (background + scale).")
     aligned_handles: list = []
     weights: List[float] = []
@@ -333,7 +336,9 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             except Exception as e:
                 log(f"    dropped ({e})")
                 continue
-        if normalize:
+        if local_norm:
+            aligned = nrm.local_normalize_to_ref(aligned, ref, ref_med, ref_sig)
+        elif normalize:
             aligned = nrm.normalize_to_ref(aligned, ref_med, ref_sig)
         weights.append(w)
         if staged:
