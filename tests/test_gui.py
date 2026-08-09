@@ -79,12 +79,24 @@ def test_shell_launcher_and_lazy_panel(qapp):
     same = s._panels["stretch"]
     s.show_home(); s.open_tool("stretch")
     assert s._panels["stretch"] is same                   # reuses, no rebuild
-    s.open_tool("stack")
-    assert "stack" not in s._panels                        # not built yet -> no-op
-    assert not s._tool_actions["stack"].isEnabled()
-    assert s._tool_actions["moonsun"].isEnabled()          # LazyMoonSun landed in phase 2
+    assert s._tool_actions["stack"].isEnabled()            # all three tools now available
+    assert s._tool_actions["moonsun"].isEnabled()
     s.show_home()
     assert s.stack.currentWidget() is s.launcher
+
+
+def test_shell_opens_stack_panel(qapp):
+    from lazystretch.gui.shell import AppShell
+    from lazystretch.gui.stack_window import LazyStackPanel
+    from lazystretch.lazystack.model import LazyStackParams
+
+    s = AppShell()
+    s.open_tool("stack")
+    assert isinstance(s._panels.get("stack"), LazyStackPanel)
+    assert s.windowTitle() == "LazyStack"
+    panel = s._panels["stack"]
+    p = panel._collect_params()
+    assert isinstance(p, LazyStackParams)
 
 
 def test_shell_opens_moonsun_panel(qapp):
