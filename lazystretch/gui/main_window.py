@@ -26,6 +26,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSplitter,
     QTabWidget,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -47,9 +49,11 @@ from ..io.history import (
     HistoryStore,
 )
 from ..io.image_io import LoadedImage, load_image, save_image
+from ..io.pins import load_pins, save_pins
 from ..io.recipes import apply_recipe, load_recipe, recipe_from_params, save_recipe
 from ..objects.model import Parameters
 from ..objects.presets import curated_for
+from ..pipeline.ledger import DECIDED as _L_DECIDED
 from .preview import FullScreenViewer, PreviewView
 from .widgets import FilePicker, FloatSlider
 from .worker import PipelineWorker
@@ -126,6 +130,7 @@ class LazyStretchPanel(QWidget):
         self._fs_viewer: Optional[FullScreenViewer] = None  # kept alive while full-screen
         self._work_image: Optional[np.ndarray] = None     # base override: a history image to
         #                                                 continue from (else the loaded master)
+        self._pins: Dict[str, object] = {}                # PROC pins for the loaded master
 
         self.checks: Dict[str, QCheckBox] = {}
         self.dials: Dict[str, FloatSlider] = {}
@@ -158,8 +163,47 @@ class LazyStretchPanel(QWidget):
         tabs = QTabWidget()
         tabs.addTab(self._scrolled(self._build_setup_tab()), "Setup")
         tabs.addTab(self._scrolled(self._build_adjust_tab()), "Adjust")
+        tabs.addTab(self._build_process_tab(), "Process")
         tabs.setMinimumWidth(720)
         return tabs
+
+    def _build_process_tab(self) -> QWidget:
+        """Tab 3: the PROC ledger — every computed pipeline value, live, each pinnable."""
+        w = QWidget()
+        v = QVBoxLayout(w)
+        intro = QLabel("Every value the stretch engine decided this run. Select a row and "
+                       "Pin to force a value; the next run re-derives from it. Measured "
+                       "facts (italic) can't be pinned. Pins are saved per-master.")
+        intro.setWordWrap(True)
+        intro.setStyleSheet("color: gray;")
+        v.addWidget(intro)
+
+        self.proc_tree = QTreeWidget()
+        self.proc_tree.setColumnCount(3)
+        self.proc_tree.setHeaderLabels(["Step / value", "Value", "Pinned"])
+        self.proc_tree.setRootIsDecorated(True)
+        self.proc_tree.setAlternatingRowColors(True)
+        self.proc_tree.currentItemChanged.connect(self._on_proc_row)
+        v.addWidget(self.proc_tree, 1)
+
+        row = QHBoxLayout()
+        self.pin_edit = QLineEdit()
+        self.pin_edit.setPlaceholderText("select a decided row…")
+        self.pin_btn = QPushButton("Pin")
+        self.unpin_btn = QPushButton("Unpin")
+        self.unpin_all_btn = QPushButton("Unpin all")
+        self.pin_btn.clicked.connect(self._pin_selected)
+        self.unpin_btn.clicked.connect(self._unpin_selected)
+        self.unpin_all_btn.clicked.connect(self._unpin_all)
+        for wdg in (self.pin_btn, self.unpin_btn, self.unpin_all_btn):
+            wdg.setFocusPolicy(Qt.NoFocus)
+        row.addWidget(self.pin_edit, 1)
+        row.addWidget(self.pin_btn)
+        row.addWidget(self.unpin_btn)
+        row.addWidget(self.unpin_all_btn)
+        v.addLayout(row)
+        self._set_pin_controls_enabled(False)
+        return w
 
     def _build_setup_tab(self) -> QWidget:
         """Tab 1: Target, Identify, Output, Narrowband — the pre-processing setup."""
@@ -474,6 +518,7 @@ class LazyStretchPanel(QWidget):
         # reloads across sessions.
         mpath = getattr(self.loaded, "path", None)
         self._hist_store = HistoryStore(mpath) if mpath else None
+        self._pins = load_pins(mpath) if mpath else {}
         self._refresh_history_list()
         self._show_quick_display()
 
@@ -662,7 +707,8 @@ class LazyStretchPanel(QWidget):
         self.status_label.setText("Preview…" if preview else "Executing…")
 
         self.worker = PipelineWorker(image, params, preview=preview, mode=mode,
-                                     tools=self.tools, solve_result=self.solve_result)
+                                     tools=self.tools, solve_result=self.solve_result,
+                                     pins=dict(self._pins))
         self.worker.progress.connect(self._on_progress)
         self.worker.logline.connect(self._on_log)
         self.worker.finished_ok.connect(self._on_finished)
@@ -682,6 +728,7 @@ class LazyStretchPanel(QWidget):
         self.result_stars = result.stars_layer
         self.preview.set_image(result.image)     # same size -> keeps zoom/pan for comparison
         self.save_btn.setEnabled(True)
+        self._populate_process_tab(getattr(result, "ledger", None))
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
@@ -862,6 +909,121 @@ class LazyStretchPanel(QWidget):
             li.setForeground(Qt.gray)
         else:
             li.setData(Qt.ForegroundRole, None)     # reset to the theme's default text colour
+
+    # --- PROC ledger / pins (Stretch Process tab) ----------------------------
+
+    @staticmethod
+    def _fmt_val(v) -> str:
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        if isinstance(v, float):
+            return f"{v:.4g}"
+        return str(v)
+
+    def _set_pin_controls_enabled(self, on: bool):
+        for wdg in (self.pin_edit, self.pin_btn, self.unpin_btn):
+            wdg.setEnabled(on)
+
+    def _populate_process_tab(self, ledger):
+        self.proc_tree.clear()
+        self._proc_items: Dict[str, QTreeWidgetItem] = {}
+        if ledger is None:
+            return
+        groups: Dict[str, QTreeWidgetItem] = {}
+        for e in ledger.entries:
+            node = groups.get(e.group)
+            if node is None:
+                node = QTreeWidgetItem(self.proc_tree, [e.group, "", ""])
+                groups[e.group] = node
+            item = QTreeWidgetItem(node, [e.name, self._fmt_val(e.computed), ""])
+            item.setData(0, Qt.UserRole, {"key": e.key, "kind": e.kind, "computed": e.computed})
+            self._style_proc_item(item, e.kind, self._pins.get(e.key))
+            self._proc_items[e.key] = item
+        self.proc_tree.expandAll()
+        self.proc_tree.resizeColumnToContents(0)
+        self.proc_tree.resizeColumnToContents(1)
+
+    def _style_proc_item(self, item, kind: str, pin_val):
+        """Set a value row's Pinned column + colour from its kind and any active pin."""
+        pinnable = kind == _L_DECIDED
+        if not pinnable:
+            item.setForeground(0, Qt.gray)
+            font = item.font(0)
+            font.setItalic(True)
+            item.setFont(0, font)
+            return
+        if pin_val is not None:
+            item.setText(2, self._fmt_val(pin_val))
+            for col in range(3):
+                item.setForeground(col, Qt.darkYellow)
+        else:
+            item.setText(2, "")
+            for col in range(3):
+                item.setData(col, Qt.ForegroundRole, None)
+
+    def _on_proc_row(self, current, _prev=None):
+        meta = current.data(0, Qt.UserRole) if current is not None else None
+        if not meta or meta.get("kind") != _L_DECIDED:
+            self._set_pin_controls_enabled(False)
+            self.pin_edit.clear()
+            return
+        self._set_pin_controls_enabled(True)
+        key = meta["key"]
+        cur = self._pins.get(key, meta["computed"])
+        self.pin_edit.setText(self._fmt_val(cur))
+
+    def _selected_proc_meta(self):
+        item = self.proc_tree.currentItem()
+        meta = item.data(0, Qt.UserRole) if item is not None else None
+        if not meta or meta.get("kind") != _L_DECIDED:
+            return None, None
+        return item, meta
+
+    @staticmethod
+    def _parse_pin(text: str, computed):
+        t = text.strip()
+        if isinstance(computed, bool):
+            return t.lower() in ("1", "true", "yes", "on")
+        try:
+            f = float(t)
+        except ValueError:
+            return t
+        return int(round(f)) if isinstance(computed, int) and not isinstance(computed, bool) else f
+
+    def _pin_selected(self):
+        item, meta = self._selected_proc_meta()
+        if item is None:
+            return
+        self._pins[meta["key"]] = self._parse_pin(self.pin_edit.text(), meta["computed"])
+        self._save_pins()
+        self._style_proc_item(item, meta["kind"], self._pins[meta["key"]])
+        self.status_label.setText(f"Pinned {meta['key']} — takes effect on the next Preview.")
+
+    def _unpin_selected(self):
+        item, meta = self._selected_proc_meta()
+        if item is None or meta["key"] not in self._pins:
+            return
+        del self._pins[meta["key"]]
+        self._save_pins()
+        self._style_proc_item(item, meta["kind"], None)
+        self.pin_edit.setText(self._fmt_val(meta["computed"]))
+        self.status_label.setText(f"Unpinned {meta['key']}.")
+
+    def _unpin_all(self):
+        if not self._pins:
+            return
+        self._pins = {}
+        self._save_pins()
+        for key, item in getattr(self, "_proc_items", {}).items():
+            meta = item.data(0, Qt.UserRole)
+            if meta:
+                self._style_proc_item(item, meta["kind"], None)
+        self.status_label.setText("All pins cleared.")
+
+    def _save_pins(self):
+        mpath = getattr(self.loaded, "path", None) if self.loaded is not None else None
+        if mpath:
+            save_pins(mpath, self._pins)
 
     def _on_failed(self, msg: str):
         self._set_busy(False)

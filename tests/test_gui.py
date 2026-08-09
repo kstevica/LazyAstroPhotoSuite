@@ -111,7 +111,7 @@ def test_left_panel_has_setup_and_adjust_tabs(qapp):
     w = MainWindow()
     tabs = w.findChild(QTabWidget)
     assert tabs is not None
-    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Setup", "Adjust"]
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Setup", "Adjust", "Process"]
 
 
 def test_fullscreen_button_needs_an_image_then_opens(qapp):

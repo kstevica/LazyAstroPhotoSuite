@@ -22,6 +22,7 @@ from ..data.loader import LazyStretchData, get_data
 from ..external import Tools
 from ..identify.classify import palette_key
 from ..objects.model import Parameters
+from .ledger import INFO as LEDGER_INFO, MEASURED as LEDGER_MEASURED, Ledger
 from ..palettes.combine import combine_narrowband, combine_osc_narrowband
 from ..pipeline.params import (
     Effective,
@@ -66,6 +67,7 @@ class PipelineResult:
     steps_run: List[str] = field(default_factory=list)
     steps_skipped: List[str] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
+    ledger: Optional[Ledger] = None            # PROC ledger: computed + pinned values
 
 
 def _is_rgb(a: np.ndarray) -> bool:
@@ -80,6 +82,7 @@ def run_pipeline(
     data: "LazyStretchData | None" = None,
     tools: Optional[Tools] = None,
     solve_result=None,
+    pins: Optional[dict] = None,
     log: Optional[Callable[[str], None]] = None,
     progress: Optional[Callable[[int, int, str], None]] = None,
 ) -> PipelineResult:
@@ -89,6 +92,7 @@ def run_pipeline(
     if tools is None:
         tools = Tools.resolve()
     logs: List[str] = []
+    ledger = Ledger(pins)          # PROC ledger: records every decision, applies pin overrides
 
     def _log(msg: str):
         logs.append(msg)
@@ -127,6 +131,16 @@ def run_pipeline(
     cls = params.object_class
     prof = data.profile_for(cls)
     eff = resolve_effective(prof, params.slider_dict(), data)
+    # PROC ledger: surface (and let the user pin) the resolved "look" numbers.
+    ledger.record("Run", "mode", "preview" if preview else "execute", kind=LEDGER_INFO)
+    ledger.record("Profile", "object class", cls, kind=LEDGER_INFO)
+    eff = Effective(
+        bkg=ledger.record("Profile", "stretch background", eff.bkg),
+        sat=ledger.record("Profile", "saturation boost", eff.sat),
+        clip=ledger.record("Profile", "black point (avgDev units)", eff.clip),
+        bgLevel=ledger.record("Profile", "background floor", eff.bgLevel),
+        contrast=ledger.record("Profile", "contrast strength", eff.contrast),
+    )
 
     # --- auto-assess crop % + GradientCorrection (js:3286-3306) ---
     eff_crop = float(params.cropPercent)
@@ -144,6 +158,8 @@ def run_pipeline(
                 _log(f"Auto: frame too small to assess — using manual crop {eff_crop:.0f}%")
         except Exception as e:  # pragma: no cover - defensive, mirrors PI
             _log(f"Auto-assess failed: using manual crop — {e}")
+    eff_crop = float(ledger.record("Crop", "edge crop %", eff_crop))
+    eff_gc = bool(ledger.record("Background", "use GradientCorrection", eff_gc))
 
     ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None}
     steps: List = []
@@ -237,6 +253,10 @@ def run_pipeline(
             out, res = apply_auto_stretch(ctx["img"], eff.clip, eff.bkg, data)
             ctx["img"] = out
             ctx["stretch"] = res
+            ledger.record("Auto-stretch", "measured median", res.median, kind=LEDGER_MEASURED)
+            ledger.record("Auto-stretch", "measured avgDev", res.avgDev, kind=LEDGER_MEASURED)
+            ledger.record("Auto-stretch", "black point c0", res.c0, kind=LEDGER_MEASURED)
+            ledger.record("Auto-stretch", "midtones m", res.m, kind=LEDGER_MEASURED)
             _log(f"   median={res.median:.4f} avgDev={res.avgDev:.4f} -> "
                  f"blackPoint={res.c0:.4f} midtones={res.m:.4f}")
         add("Auto-stretch (STF -> HistogramTransformation)", _stretch)
@@ -271,7 +291,7 @@ def run_pipeline(
         add("Remove green (SCNR)", _scnr)
 
     if params.doHDR:
-        layers = prof.hdrLayers if prof.hdrLayers else 6
+        layers = int(ledger.record("HDR", "layers", prof.hdrLayers if prof.hdrLayers else 6))
         def _hdr():
             ctx["img"] = multiscale.hdr_core(ctx["img"], layers)
         add(f"HDR core compression ({layers} layers)", _hdr)
@@ -290,6 +310,7 @@ def run_pipeline(
             _log(f"   adaptive floor: dust lift {d.lift:.4f} "
                  f"(clean {d.cleanSky:.3f} -> typical {d.typical:.3f}) -> +{raise_amt:.3f} "
                  f"({eff.bgLevel:.2f} -> {eff_floor:.2f})")
+        eff_floor = float(ledger.record("Background", "effective floor", eff_floor))
         ctx["eff_floor"] = eff_floor
         if params.useMask and not mask_darken:
             _log(f"   global darkening (faint-signal mask skipped for {cls} class)")
@@ -374,6 +395,7 @@ def run_pipeline(
     elif do_star:
         if tools.starx.is_available():
             eff_star = float(np.clip(prof.starLevel + params.starsAdj, 0.0, 1.0))
+            eff_star = float(ledger.record("Stars", "reduction level", eff_star))
             def _starred():
                 ctx["img"] = tools.starx.reduce_stars(ctx["img"], eff_star, params.smallStars)
                 _log(f"   via StarNet (level {eff_star:.2f}"
@@ -422,7 +444,8 @@ def run_pipeline(
     #     compensates for accumulated clipping (esp. LHE). Not a PI step; see
     #     calibration/survey.py (the biggest port-vs-PI gap was highlight clipping). ---
     def _rolloff():
-        knee = highlights.knee_for_dial(params.highlights)
+        knee = float(ledger.record("Highlights", "roll-off knee",
+                                   highlights.knee_for_dial(params.highlights)))
         ctx["img"] = highlights.highlight_rolloff(ctx["img"], knee)
         _log(f"   dial {params.highlights:.2f} -> knee {knee:.3f}")
     add(f"Highlight roll-off (dial {params.highlights:.2f})", _rolloff)
@@ -453,4 +476,5 @@ def run_pipeline(
         steps_run=steps_run,
         steps_skipped=steps_skipped,
         log=logs,
+        ledger=ledger,
     )

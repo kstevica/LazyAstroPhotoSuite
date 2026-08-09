@@ -47,20 +47,21 @@ class PipelineWorker(QThread):
 
     def __init__(self, image: Optional[np.ndarray], params: Parameters,
                  preview: bool, mode: str = "preview", tools=None,
-                 solve_result=None, parent=None):
+                 solve_result=None, pins=None, parent=None):
         super().__init__(parent)
         self._image = image
         self._params = params
         self._preview = preview
         self._tools = tools
         self._solve = solve_result
+        self._pins = pins
         self.mode = mode          # "preview" | "execute" (used by the caller on finish)
 
     def run(self):
         try:
             result: PipelineResult = run_pipeline(
                 self._image, self._params, preview=self._preview,
-                tools=self._tools, solve_result=self._solve,
+                tools=self._tools, solve_result=self._solve, pins=self._pins,
                 progress=lambda i, t, n: self.progress.emit(i, t, n),
                 log=lambda line: self.logline.emit(line),
             )
