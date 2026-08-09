@@ -93,6 +93,30 @@ def test_local_normalize_removes_spatial_gradient():
     assert loc.shape == frame.shape
 
 
+def test_low_frequency_rejects_bright_stars():
+    # the LN gradient model must ignore stars — averaging them in punched dark/coloured holes
+    flat = np.full((1024, 1024), 0.10)
+    stars = flat.copy()
+    rng = np.random.default_rng(0)
+    ys, xs = rng.integers(10, 1014, 90), rng.integers(10, 1014, 90)
+    stars[ys, xs] = 0.95
+    lf_flat = nrm._low_frequency(flat)
+    lf_stars = nrm._low_frequency(stars)
+    assert float(np.abs(lf_stars - lf_flat).max()) < 0.02   # background model unmoved by stars
+
+
+def test_local_normalize_does_not_hole_bright_stars():
+    base = _starfield(H=1024, W=1024, n=120, seed=5)        # bright point sources
+    ref = np.clip(base + 0.05, 0, 1)
+    yy, xx = np.mgrid[0:1024, 0:1024].astype(np.float64)
+    frame = np.clip(fftreg.apply_shift(base, 0.7, -0.5) + 0.05 + 0.12 * (xx / 1023), 0, 1)
+    ref_med, ref_sig = nrm.frame_stats(ref)
+    loc = nrm.local_normalize_to_ref(frame, ref, ref_med, ref_sig)
+    # the old bilinear model punched deep dark holes at bright stars; block-median must not
+    assert float(loc.min()) > -0.03
+    assert float(loc.max()) > 0.4                           # bright stars still present
+
+
 def test_local_normalize_reference_near_identity():
     ref = _disc(200, radius=60) * 0.6 + 0.05
     ref_med, ref_sig = nrm.frame_stats(ref)

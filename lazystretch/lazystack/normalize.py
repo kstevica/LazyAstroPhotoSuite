@@ -44,19 +44,26 @@ def normalize_to_ref(frame: np.ndarray, ref_med: float, ref_sig: float, *,
 
 
 def _low_frequency(plane: np.ndarray) -> np.ndarray:
-    """Smooth low-frequency content of a 2-D plane (downsample → blur → upsample).
+    """Robust smooth low-frequency content of a 2-D plane (block-MEDIAN → blur → upsample).
 
-    Fast even on 40 MP frames: the gradient/background lives at very low spatial frequency,
-    so it's modelled at ~256 px and resized back — stars/nebulosity (high frequency) average
-    out and are left untouched.
+    The gradient/background lives at very low spatial frequency, so it's modelled at ~256 px
+    and resized back. Downsampling uses the per-block MEDIAN, not averaging/bilinear, so
+    bright stars (and registration-residual spikes) are rejected as outliers rather than
+    smeared into blobs — averaging them in was what punched dark/coloured holes at stars.
     """
     H, W = plane.shape
-    k = _LF_TARGET / max(H, W)
-    if k < 1.0:
-        small = zoom(plane, k, order=1)
-        small = gaussian_filter(small, sigma=3.0, mode="nearest")
-        return zoom(small, (H / small.shape[0], W / small.shape[1]), order=1)
-    return gaussian_filter(plane, sigma=max(1.0, max(H, W) / 32.0), mode="nearest")
+    bh = max(1, H // _LF_TARGET)
+    bw = max(1, W // _LF_TARGET)
+    if bh > 1 or bw > 1:
+        Hc, Wc = (H // bh) * bh, (W // bw) * bw
+        blocks = plane[:Hc, :Wc].reshape(Hc // bh, bh, Wc // bw, bw)
+        small = np.median(blocks, axis=(1, 3))           # star-robust downsample
+    else:
+        small = plane
+    small = gaussian_filter(small, sigma=2.0, mode="nearest")
+    if small.shape == plane.shape:
+        return small
+    return zoom(small, (H / small.shape[0], W / small.shape[1]), order=1)
 
 
 def local_normalize_to_ref(frame: np.ndarray, ref: np.ndarray, ref_med: float, ref_sig: float,
