@@ -49,6 +49,7 @@ class Parameters:
     doNR: bool = True
     doHDR: bool = False
     doStarReduce: bool = False
+    haloTamer: bool = True          # reflection filter-ring suppression (profile-driven)
     useMask: bool = False
     starProtect: bool = False
     preferSPCC: bool = True
@@ -110,6 +111,7 @@ class Parameters:
         p.doNR = prof.nr
         p.doHDR = prof.hdr
         p.doStarReduce = prof.starReduce
+        p.haloTamer = prof.haloTamer
         valid = {f.name for f in fields(cls)}
         for k, v in overrides.items():
             if k not in valid:

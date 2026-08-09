@@ -61,7 +61,7 @@ def test_recipe_ranges_and_persisted():
     assert {"chromaNR", "deepen", "starsAdj"}.issubset(D.persisted_reals)   # new in 1.4.x
     assert len(D.persisted_reals) == 12
     assert {"darkLaneGC", "removeStars"}.issubset(D.recipe_bools)           # new in 1.4.x
-    assert len(D.recipe_bools) == 20
+    assert len(D.recipe_bools) == 21
 
 
 def test_profile_for_unknown_falls_back_to_generic():

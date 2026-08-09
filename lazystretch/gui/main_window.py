@@ -59,7 +59,8 @@ from .widgets import FilePicker, FloatSlider
 from .worker import PipelineWorker
 
 # (attribute, label) for the option checkboxes. The first six are profile-driven.
-_PROFILE_TOGGLES = ["doSCNR", "doLocalContrast", "doBXT", "doNR", "doHDR", "doStarReduce"]
+_PROFILE_TOGGLES = ["doSCNR", "doLocalContrast", "doBXT", "doNR", "doHDR",
+                    "doStarReduce", "haloTamer"]
 _OPTIONS = [
     ("doBgExtract", "Background / gradient extraction"),
     ("useGradientCorrection", "…use GradientCorrection (stronger)"),
@@ -73,6 +74,7 @@ _OPTIONS = [
     ("doSCNR", "Remove green (SCNR)"),
     ("doHDR", "HDR core compression"),
     ("doStarReduce", "Star reduction"),
+    ("haloTamer", "Halo Tamer (reflection filter-ring suppression)"),
     ("removeStars", "Remove stars (starless + stars layer)"),
     ("useMask", "Protect faint signal with mask"),
     ("adaptiveFloor", "Adaptive shadow floor"),
@@ -468,7 +470,7 @@ class LazyStretchPanel(QWidget):
         prof = self.data.profile_for(cls)
         mapping = {"doSCNR": prof.scnr, "doLocalContrast": prof.localContrast,
                    "doBXT": prof.bxt, "doNR": prof.nr, "doHDR": prof.hdr,
-                   "doStarReduce": prof.starReduce}
+                   "doStarReduce": prof.starReduce, "haloTamer": prof.haloTamer}
         for attr in _PROFILE_TOGGLES:
             cb = self.checks[attr]
             cb.blockSignals(True)

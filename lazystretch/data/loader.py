@@ -35,6 +35,7 @@ class ClassProfile:
     hdrLayers: Optional[int]
     starReduce: bool
     starLevel: float
+    haloTamer: bool = True      # reflection filter-ring suppression (v1.5.1; classes opt out)
 
 
 @dataclass(frozen=True)

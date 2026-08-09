@@ -13,7 +13,7 @@
     "planetary":  { "bkg": 0.18, "clip": -1.50, "sat": 0.55, "contrast": 0.14, "bgLevel": 0.09, "lc": 0.10, "scnr": true,  "localContrast": false, "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 0.70 },
     "globular":   { "bkg": 0.18, "clip": -1.60, "sat": 0.30, "contrast": 0.10, "bgLevel": 0.10, "lc": 0.08, "scnr": false, "localContrast": false, "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
     "open":       { "bkg": 0.20, "clip": -1.50, "sat": 0.35, "contrast": 0.10, "bgLevel": 0.10, "lc": 0.08, "scnr": false, "localContrast": false, "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
-    "milkyway":   { "bkg": 0.25, "clip": -0.95, "sat": 0.50, "contrast": 0.20, "bgLevel": 0.30, "lc": 0.15, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
+    "milkyway":   { "bkg": 0.25, "clip": -0.95, "sat": 0.50, "contrast": 0.20, "bgLevel": 0.30, "lc": 0.15, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 1.00, "haloTamer": false },
     "generic":    { "bkg": 0.25, "clip": -1.25, "sat": 0.40, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.12, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 0.70 }
   },
 
@@ -44,7 +44,7 @@
 
   "persistedReals": ["satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj", "cropPercent", "gradientCleanup", "dehaze", "smallStars", "chromaNR", "deepen", "starsAdj"],
 
-  "recipeBools": ["autoAssess", "doBgExtract", "useGradientCorrection", "darkLaneGC", "doColorCal", "preferSPCC", "doBXT", "doNR", "useNRMask", "doSCNR", "doHDR", "doStarReduce", "removeStars", "useMask", "adaptiveFloor", "starProtect", "doLocalContrast", "protectCores", "enhanceEmission", "reduceCast"],
+  "recipeBools": ["autoAssess", "doBgExtract", "useGradientCorrection", "darkLaneGC", "doColorCal", "preferSPCC", "doBXT", "doNR", "useNRMask", "doSCNR", "doHDR", "doStarReduce", "removeStars", "useMask", "adaptiveFloor", "starProtect", "doLocalContrast", "protectCores", "enhanceEmission", "reduceCast", "haloTamer"],
 
   "classPredicates": {
     "adaptiveFloorAppliesTo": ["emission", "generic"],

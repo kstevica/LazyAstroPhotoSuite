@@ -43,6 +43,7 @@ from ..processes import (
     deconv,
     deepen as deepen_mod,
     finishing,
+    halo,
     highlights,
     masks,
     multiscale,
@@ -404,6 +405,18 @@ def run_pipeline(
             add(f"Star reduction (level {eff_star:.2f})", _starred)
         else:
             _log("-- Star reduction skipped (StarNet not installed)")
+
+    # --- Halo Tamer (v1.5.1): suppress dual-band/LP reflection rings around bright stars.
+    #     Auto scan + per-channel feathered-annulus subtraction, after star reduction so the
+    #     ring is maximally exposed. Profile-driven (milkyway opts out). Detection is heavy
+    #     (star census + radial profiles), so it runs on execute, not preview. ---
+    ledger.record("Halo Tamer", "enabled", params.haloTamer, kind=LEDGER_INFO)
+    if params.haloTamer and preview:
+        _log("-- Halo Tamer skipped (preview: ring scan off)")
+    elif params.haloTamer:
+        def _halo():
+            ctx["img"] = halo.halo_tamer(ctx["img"], log=_log)
+        add("Halo Tamer (reflection ring suppression)", _halo)
 
     # --- restore source highlights: last step of a Deepen 2nd pass (js:4729-4733) ---
     if params.inputStretched and params.deepen > 0 and not narrowband and source_ref is not None:
