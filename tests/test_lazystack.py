@@ -163,6 +163,30 @@ def test_stack_in_memory_mode_creates_no_work_files(tmp_path):
     assert not (tmp_path / "lazystack" / "work").exists()   # in-memory -> no work files
 
 
+def test_stack_reuses_existing_work_files(tmp_path):
+    pytest.importorskip("photutils")
+    lights = tmp_path / "lights"
+    lights.mkdir()
+    base = _starfield(n=40, seed=21)
+    for i in range(6):
+        f = fftreg.apply_shift(base, i - 2, -i + 1)
+        save_image(str(lights / f"l_{i:03d}.fits"), np.clip(f, 0, 1), bit_depth=16)
+    p = LazyStackParams(do_calibrate=False, do_cosmetic=False,
+                        stage_to_disk=True, reuse_cache=True)
+    assert lsrun.stack(str(tmp_path), p) is not None
+    work = tmp_path / "lazystack" / "work"
+    assert work.exists()                                  # kept for reuse (not cleaned up)
+    reg_files = list(work.glob("reg_*.npy"))
+    assert reg_files
+    mtimes = {f.name: f.stat().st_mtime_ns for f in reg_files}
+
+    logs = []
+    assert lsrun.stack(str(tmp_path), p, log=lambda s: logs.append(s)) is not None
+    assert any("reusing cached registration" in s for s in logs)   # 2nd run reused
+    for f in work.glob("reg_*.npy"):
+        assert f.stat().st_mtime_ns == mtimes.get(f.name)          # not rewritten
+
+
 def test_measure_only_advises_without_stacking(tmp_path):
     pytest.importorskip("photutils")
     lights = tmp_path / "lights"

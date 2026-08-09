@@ -8,13 +8,14 @@ FITS carrying the ``LZS*`` contract keywords the LazyStretch tab consumes.
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from ..io.cache import cached_load
+from ..io.cache import _cache_key, cached_load
 from ..io.image_io import RAW_EXT, load_image, save_image
 from . import calibrate as cal, contract, integrate as integ, measure as meas, register as reg
 
@@ -75,8 +76,21 @@ def _make_loader(folder: str, enabled: bool,
 
 
 def _master(paths: List[str], load: Callable, work: Optional[Path], log, label: str, *,
-            bias: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-    """Build a calibration master. Streams to ``work`` (bounded RAM) unless work is None."""
+            bias: Optional[np.ndarray] = None, reuse: bool = False) -> Optional[np.ndarray]:
+    """Build a calibration master. Streams to ``work`` (bounded RAM) unless work is None.
+
+    When ``reuse`` (staged only), a previously-built master is loaded from disk instead of
+    being recombined.
+    """
+    if work is not None and reuse:
+        mp = work / f"master_{label}.npy"
+        if mp.exists():
+            try:
+                m = np.load(str(mp))
+                log(f"  master {label}: reused from cache")
+                return m
+            except Exception:
+                pass
     tmp: List[Path] = []
     loaded: List[np.ndarray] = []
     for i, p in enumerate(paths):
@@ -106,7 +120,37 @@ def _master(paths: List[str], load: Callable, work: Optional[Path], log, label: 
             tp.unlink()
         except OSError:
             pass
+    if reuse:
+        try:
+            np.save(str(work / f"master_{label}.npy"), np.asarray(m, dtype=np.float32))
+        except OSError:
+            pass
     return m
+
+
+def _frame_key(path: str, index: int) -> str:
+    """Cache key for a frame's staged files: source identity, index fallback."""
+    try:
+        return _cache_key(path)
+    except OSError:
+        return f"idx{index:04d}"
+
+
+def _load_measures_cache(work: Path) -> Dict[str, object]:
+    p = work / "measures.json"
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            pass
+    return {}
+
+
+def _save_measures_cache(work: Path, cache: Dict[str, object]) -> None:
+    try:
+        (work / "measures.json").write_text(json.dumps(cache), encoding="utf-8")
+    except OSError:
+        pass
 
 
 def _cleanup(work: Path) -> None:
@@ -155,10 +199,16 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log("Mode: staged (low memory, uses lazystack/work)" if staged
         else "Mode: in-memory (no work files; holds the burst in RAM)")
     load = _make_loader(folder, params.reuse_cache, log)
+    reuse = staged and bool(params.reuse_cache)          # reuse existing work files
+    if reuse:
+        log("Reusing any existing work files (uncheck 'Reuse cached intermediates' to "
+            "force a fresh run).")
 
-    master_bias = _master(sets["biases"], load, work, log, "bias") if params.do_calibrate else None
-    master_dark = _master(sets["darks"], load, work, log, "dark") if params.do_calibrate else None
-    master_flat = (_master(sets["flats"], load, work, log, "flat", bias=master_bias)
+    master_bias = (_master(sets["biases"], load, work, log, "bias", reuse=reuse)
+                   if params.do_calibrate else None)
+    master_dark = (_master(sets["darks"], load, work, log, "dark", reuse=reuse)
+                   if params.do_calibrate else None)
+    master_flat = (_master(sets["flats"], load, work, log, "flat", bias=master_bias, reuse=reuse)
                    if params.do_calibrate else None)
 
     def _get(handle):
@@ -168,24 +218,44 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log(f"Calibrating + measuring {len(lights)} lights…")
     frames: list = []                    # Path (staged) or ndarray (in-memory)
     names: List[str] = []
+    keys: List[Optional[str]] = []
     measures: List[Optional[dict]] = []
+    meas_cache = _load_measures_cache(work) if reuse else {}
     exposure = 0.0
     for i, p in enumerate(lights):
-        log(f"  [{i + 1}/{len(lights)}] {Path(p).name}…")
-        img = load(p)
+        name = Path(p).name
+        log(f"  [{i + 1}/{len(lights)}] {name}…")
+        key = _frame_key(p, i) if staged else None
+        cal_path = (work / f"cal_{key}.npy") if staged else None
+        img = None
+        if reuse and cal_path is not None and cal_path.exists():
+            try:
+                img = np.load(str(cal_path))
+                log("    reusing cached calibration")
+            except Exception:
+                img = None
         if img is None:
-            continue
-        if params.do_calibrate:
-            img = cal.calibrate_light(img, bias=master_bias, dark=master_dark, flat=master_flat)
-        if params.do_cosmetic:
-            img = cal.cosmetic_correct(img, master_dark)
-        img = np.asarray(img, dtype=np.float32)
-        measures.append(meas.measure_frame(img))
-        names.append(Path(p).name)
+            raw = load(p)
+            if raw is None:
+                continue
+            if params.do_calibrate:
+                raw = cal.calibrate_light(raw, bias=master_bias, dark=master_dark, flat=master_flat)
+            if params.do_cosmetic:
+                raw = cal.cosmetic_correct(raw, master_dark)
+            img = np.asarray(raw, dtype=np.float32)
+            if staged:
+                np.save(str(cal_path), img)
+        if reuse and key in meas_cache:
+            m = meas_cache[key]                          # measurement cached by source identity
+        else:
+            m = meas.measure_frame(img)
+            if reuse and key is not None:
+                meas_cache[key] = m
+        measures.append(m)
+        names.append(name)
+        keys.append(key)
         if staged:
-            cp = work / f"cal_{i:04d}.npy"
-            np.save(str(cp), img)
-            frames.append(cp)
+            frames.append(cal_path)
             del img
         else:
             frames.append(img)
@@ -194,8 +264,10 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             exposure += float(exp) if exp is not None else 0.0
         except Exception:
             pass
+    if reuse:
+        _save_measures_cache(work, meas_cache)
     if len(frames) < 2:
-        if work is not None:
+        if work is not None and not reuse:
             _cleanup(work)
         log("Fewer than 2 calibrated lights — nothing to stack.")
         return None
@@ -204,14 +276,23 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     keep = culled["keep"]
     ref_global = culled["reference"] if culled["reference"] in keep else keep[0]
 
-    # --- stage 2: register the kept frames to the reference ---
+    # --- stage 2: register the kept frames to the reference (reg cache keyed src+ref) ---
     log(f"Registering {len(keep)} frames to reference {names[ref_global]}…")
+    ref_key = keys[ref_global] if staged else None
     ref = _get(frames[ref_global])
     aligner = reg.Aligner(ref, log=log)
     aligned_handles: list = []
     weights: List[float] = []
     for j, idx in enumerate(keep):
         log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
+        m = measures[idx]
+        w = max(1e-3, m["snr"]) if m else 1.0
+        reg_path = (work / f"reg_{keys[idx]}_{ref_key}.npy") if staged else None
+        if reuse and reg_path is not None and reg_path.exists():
+            log("    reusing cached registration")
+            aligned_handles.append(reg_path)
+            weights.append(w)
+            continue
         if idx == ref_global:
             aligned = ref
         else:
@@ -221,23 +302,21 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             except Exception as e:
                 log(f"    dropped ({e})")
                 continue
-        m = measures[idx]
-        weights.append(max(1e-3, m["snr"]) if m else 1.0)
+        weights.append(w)
         if staged:
-            rp = work / f"reg_{idx:04d}.npy"
-            np.save(str(rp), np.asarray(aligned, dtype=np.float32))
-            aligned_handles.append(rp)
+            np.save(str(reg_path), np.asarray(aligned, dtype=np.float32))
+            aligned_handles.append(reg_path)
         else:
             aligned_handles.append(np.asarray(aligned, dtype=np.float32))
     del ref
-    if staged:
+    if staged and not reuse:
         for h in frames:                                 # calibrated staging no longer needed
             try:
                 h.unlink()
             except OSError:
                 pass
     if not aligned_handles:
-        if work is not None:
+        if work is not None and not reuse:
             _cleanup(work)
         log("No frames registered — nothing to integrate.")
         return None
@@ -258,7 +337,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     save_image(str(master_path), master, bit_depth=16, header=header)
     log(f"Master: {master_path}  (LZSNSUB={n_stacked}, crop L{edges['L']} R{edges['R']} "
         f"T{edges['T']} B{edges['B']})")
-    if work is not None:
+    if work is not None and not reuse:                   # keep work files for reuse next run
         _cleanup(work)
     return {"master": master, "master_path": str(master_path), "n_stacked": n_stacked,
             "n_lights": len(lights), "cull": culled, "edges": edges,
