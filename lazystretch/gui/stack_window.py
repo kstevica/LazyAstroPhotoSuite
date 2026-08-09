@@ -44,6 +44,7 @@ _CHECKS = [
     ("do_cosmetic", "Cosmetic correction (hot/cold)"),
     ("do_register", "Register frames"),
     ("reuse_cache", "Reuse cached intermediates"),
+    ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
 ]
 
 

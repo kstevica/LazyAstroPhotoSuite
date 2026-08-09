@@ -148,6 +148,21 @@ def test_stack_folder_writes_master_with_contract(tmp_path):
     assert loaded.keyword("LZSCROPL") is not None
 
 
+def test_stack_in_memory_mode_creates_no_work_files(tmp_path):
+    pytest.importorskip("photutils")
+    lights = tmp_path / "lights"
+    lights.mkdir()
+    base = _starfield(n=40, seed=11)
+    for i in range(6):
+        f = fftreg.apply_shift(base, i * 1.2 - 2, -i * 0.8 + 1)
+        save_image(str(lights / f"light_{i:03d}.fits"), np.clip(f, 0, 1), bit_depth=16)
+    params = LazyStackParams(do_calibrate=False, do_cosmetic=False, stage_to_disk=False)
+    res = lsrun.stack(str(tmp_path), params)
+    assert res is not None and res["n_stacked"] >= 2
+    assert (tmp_path / "lazystack" / lsrun.MASTER_NAME).exists()
+    assert not (tmp_path / "lazystack" / "work").exists()   # in-memory -> no work files
+
+
 def test_measure_only_advises_without_stacking(tmp_path):
     pytest.importorskip("photutils")
     lights = tmp_path / "lights"

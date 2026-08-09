@@ -8,6 +8,23 @@ dependency. A launcher shell hosts LazyStretch + LazyMoonSun (LazyStack in progr
 """
 from __future__ import annotations
 
+# Native-library stability guards — MUST run before numpy/scipy/sep/astroalign import.
+# sep (via astroalign) and scipy/numpy each bundle their own OpenMP runtime; loading both
+# aborts with a bus error on macOS ("multiple libomp" / leaked semaphores). Allowing the
+# duplicate and capping native threads makes the heavy libs safe to call from the GUI's
+# worker thread. All setdefault, so power users can override in the environment.
+import os as _os
+
+for _k, _v in (
+    ("KMP_DUPLICATE_LIB_OK", "TRUE"),      # the multiple-OpenMP-runtime abort fix
+    ("OMP_NUM_THREADS", "1"),
+    ("OPENBLAS_NUM_THREADS", "1"),
+    ("VECLIB_MAXIMUM_THREADS", "1"),
+    ("MKL_NUM_THREADS", "1"),
+    ("NUMEXPR_NUM_THREADS", "1"),
+):
+    _os.environ.setdefault(_k, _v)
+
 __version__ = "0.1.0"
 
 from .data.loader import ClassProfile, LazyStretchData, get_data, load_data

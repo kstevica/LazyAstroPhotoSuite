@@ -20,3 +20,4 @@ class LazyStackParams:
     do_debayer: bool = True
     do_register: bool = True
     reuse_cache: bool = True
+    stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory
