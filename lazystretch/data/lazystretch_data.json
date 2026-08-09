@@ -4,7 +4,7 @@
   "source_sha1": "c997b739bc6406fe055fe793bede45b56c003273",
   "_comment": "Shared data layer for LazyStretch (PLAN.md §9.1). Tunable numbers extracted verbatim from reference/pixinsight/LazyStretch.js. Both the PI .js and Python are meant to read this file so a number tweak propagates with zero re-porting. schema_version bumps ONLY on a shape change, never on a value change. Tier-2 (stepParams, palettes) will be added in later phases.",
 
-  "classList": ["galaxy", "emission", "reflection", "planetary", "globular", "open", "generic"],
+  "classList": ["galaxy", "emission", "reflection", "planetary", "globular", "open", "milkyway", "generic"],
 
   "profiles": {
     "galaxy":     { "bkg": 0.16, "clip": -1.30, "sat": 0.45, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.10, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": 8,    "starReduce": true,  "starLevel": 0.60 },
@@ -13,6 +13,7 @@
     "planetary":  { "bkg": 0.18, "clip": -1.50, "sat": 0.55, "contrast": 0.14, "bgLevel": 0.09, "lc": 0.10, "scnr": true,  "localContrast": false, "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 0.70 },
     "globular":   { "bkg": 0.18, "clip": -1.60, "sat": 0.30, "contrast": 0.10, "bgLevel": 0.10, "lc": 0.08, "scnr": false, "localContrast": false, "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
     "open":       { "bkg": 0.20, "clip": -1.50, "sat": 0.35, "contrast": 0.10, "bgLevel": 0.10, "lc": 0.08, "scnr": false, "localContrast": false, "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
+    "milkyway":   { "bkg": 0.25, "clip": -0.95, "sat": 0.50, "contrast": 0.20, "bgLevel": 0.30, "lc": 0.15, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 1.00 },
     "generic":    { "bkg": 0.25, "clip": -1.25, "sat": 0.40, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.12, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": false, "starLevel": 0.70 }
   },
 

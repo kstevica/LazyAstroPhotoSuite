@@ -231,7 +231,10 @@ def dehaze(img, strength, floor, cls, gradient: float = 0.0) -> np.ndarray:
         if cls == "emission":
             key = key + np.maximum(0.0, B - R)
         r = key / (L + 0.03) * 6.0
-        aw = (s * 0.7) * r / np.sqrt(1.0 + r * r)   # soft clamp r/sqrt(1+r^2)
+        # Tint-desat dose (LazyStretch.js:5555-5566). Milky Way class forces it to ZERO —
+        # the gold/blue galactic ramp IS the subject, not a cast to remove.
+        dose = 0.0 if cls == "milkyway" else (s * 0.7)
+        aw = dose * r / np.sqrt(1.0 + r * r)         # soft clamp r/sqrt(1+r^2)
         processed = np.empty_like(out)
         processed[..., 0] = R * (1.0 - aw) + L * aw
         processed[..., 1] = G * (1.0 - aw) + L * aw

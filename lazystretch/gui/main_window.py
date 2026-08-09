@@ -1,6 +1,7 @@
 """The LazyStretch desktop main window (PySide6) — wraps the headless core."""
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Dict, Optional
 
@@ -502,20 +503,36 @@ class LazyStretchPanel(QWidget):
             self.status_label.setText("No solve.")
             return
         cands = get_catalog().find_in_field(res.ra, res.dec, res.fov_radius_deg)
-        if not cands:
+        # A wide field is the Milky Way (widefield) class regardless of any catalog object
+        # in frame (LazyStretch.js:2753-2757).
+        fov_wide = math.isfinite(res.fovDeg) and res.fovDeg >= 14
+        if not cands and not fov_wide:
             self.detected_label.setText("Solved, but no catalog object in field.")
+            self.status_label.setText("Solved.")
             return
-        self.object_combo.clear()
-        self.object_combo.addItems([object_label(c.obj) for c in cands[:12]])
-        top = cands[0].obj
-        cls = classify_object(top, self.data)
+
+        top = None
+        cls = "generic"
+        if cands:
+            self.object_combo.clear()
+            self.object_combo.addItems([object_label(c.obj) for c in cands[:12]])
+            top = cands[0].obj
+            cls = classify_object(top, self.data)
+        if fov_wide:
+            cls = "milkyway"
         self.class_combo.setCurrentText(cls)
-        msg = (f"Identified: {object_label(top)}  ->  class '{cls}'  "
-               f"({'header WCS' if res.fromExisting else 'ASTAP'}).")
-        rec = curated_for(top.id)
-        if rec:
-            self._apply_preset_to_controls(rec["settings"])
-            msg += f"  ·  applied recipe: {rec['name']}"
+
+        src = "header WCS" if res.fromExisting else "ASTAP"
+        if fov_wide:
+            msg = f"Field {res.fovDeg:.1f}° wide -> Milky Way (widefield) class ({src})."
+            if top is not None:
+                msg += f"  ·  nearest: {object_label(top)}"
+        else:
+            msg = f"Identified: {object_label(top)}  ->  class '{cls}'  ({src})."
+            rec = curated_for(top.id)
+            if rec:
+                self._apply_preset_to_controls(rec["settings"])
+                msg += f"  ·  applied recipe: {rec['name']}"
         self.detected_label.setText(msg)
         self.status_label.setText("Identified.")
 

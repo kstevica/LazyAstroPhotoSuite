@@ -16,9 +16,10 @@ def test_schema_and_class_list():
     assert D.schema_version == SUPPORTED_SCHEMA_VERSION == 1
     assert D.source_pi_version == "1.4.1"
     assert D.class_list == (
-        "galaxy", "emission", "reflection", "planetary", "globular", "open", "generic",
+        "galaxy", "emission", "reflection", "planetary", "globular", "open",
+        "milkyway", "generic",
     )
-    assert len(D.profiles) == 7
+    assert len(D.profiles) == 8
 
 
 def test_profile_known_values_verbatim():
