@@ -164,6 +164,25 @@ def _cleanup(work: Path) -> None:
     shutil.rmtree(work, ignore_errors=True)
 
 
+def _prune_work(work: Path, keep: set, log) -> None:
+    """Delete work files not produced by the current run (orphaned reg/cal from earlier
+    runs with a different reference, normalization setting, or frame set)."""
+    try:
+        entries = [f for f in work.iterdir() if f.is_file()]
+    except OSError:
+        return
+    removed = 0
+    for f in entries:
+        if f.name not in keep:
+            try:
+                f.unlink()
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        log(f"Pruned {removed} stale work file(s).")
+
+
 def measure_only(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optional[dict]:
     """The Phase-1 advisor: measure + cull the lights, stack nothing."""
     sets = find_sets(folder)
@@ -352,8 +371,14 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     save_image(str(master_path), master, bit_depth=16, header=header)
     log(f"Master: {master_path}  (LZSNSUB={n_stacked}, crop L{edges['L']} R{edges['R']} "
         f"T{edges['T']} B{edges['B']})")
-    if work is not None and not reuse:                   # keep work files for reuse next run
-        _cleanup(work)
+    if work is not None and not reuse:
+        _cleanup(work)                                   # fresh run — drop all work files
+    elif work is not None and reuse:                     # keep this run's files, prune orphans
+        keep_names = {h.name for h in frames if isinstance(h, Path)}
+        keep_names |= {h.name for h in aligned_handles if isinstance(h, Path)}
+        keep_names |= {f"master_{lbl}.npy" for lbl in ("bias", "dark", "flat")}
+        keep_names.add("measures.json")
+        _prune_work(work, keep_names, log)
     return {"master": master, "master_path": str(master_path), "n_stacked": n_stacked,
             "n_lights": len(lights), "cull": culled, "edges": edges,
             "registered_with": "astroalign" if reg.astroalign_available() else "fft-translation"}

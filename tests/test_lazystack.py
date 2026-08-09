@@ -206,6 +206,28 @@ def test_stack_reuses_existing_work_files(tmp_path):
         assert f.stat().st_mtime_ns == mtimes.get(f.name)          # not rewritten
 
 
+def test_stack_prunes_orphaned_work_files(tmp_path):
+    pytest.importorskip("photutils")
+    lights = tmp_path / "lights"
+    lights.mkdir()
+    base = _starfield(n=40, seed=31)
+    for i in range(5):
+        save_image(str(lights / f"l_{i:03d}.fits"),
+                   np.clip(fftreg.apply_shift(base, i - 2, -i + 1), 0, 1), bit_depth=16)
+    p = LazyStackParams(do_calibrate=False, do_cosmetic=False,
+                        stage_to_disk=True, reuse_cache=True)
+    assert lsrun.stack(str(tmp_path), p) is not None
+    work = tmp_path / "lazystack" / "work"
+    # simulate an orphan from an earlier run (different reference / normalize setting)
+    orphan = work / "reg_deadbeef_cafebabe.npy"
+    orphan.write_bytes(b"stale")
+    logs = []
+    assert lsrun.stack(str(tmp_path), p, log=lambda s: logs.append(s)) is not None
+    assert not orphan.exists()                                     # pruned
+    assert any("Pruned" in s for s in logs)
+    assert list(work.glob("reg_*_n.npy"))                          # current files kept
+
+
 def test_measure_only_advises_without_stacking(tmp_path):
     pytest.importorskip("photutils")
     lights = tmp_path / "lights"
