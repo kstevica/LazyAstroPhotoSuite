@@ -280,7 +280,7 @@ def finish(img: np.ndarray, params, log: Callable[[str], None] = _noop) -> Optio
 
     out = np.clip(out, 0.0, 1.0)
     if getattr(params, "crop", False):
-        cropped = crop_to_disc(out)
+        cropped = crop_to_disc(out, getattr(params, "crop_margin", _CROP_PAD_FRAC))
         if cropped.shape[:2] != out.shape[:2]:
             log(f"Crop to disc: {out.shape[1]}x{out.shape[0]} -> "
                 f"{cropped.shape[1]}x{cropped.shape[0]} (with margin)")

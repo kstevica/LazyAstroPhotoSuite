@@ -107,6 +107,14 @@ def test_finish_crop_shrinks_frame():
     assert res2["image"].shape[:2] == (400, 400)
 
 
+def test_crop_margin_controls_border_size():
+    from dataclasses import replace
+    src = _color_sun(size=500, radius=70)
+    tight = fin.finish(src, replace(MoonSunParams.preset("neutral"), crop=True, crop_margin=0.05))
+    loose = fin.finish(src, replace(MoonSunParams.preset("neutral"), crop=True, crop_margin=0.40))
+    assert loose["image"].shape[0] > tight["image"].shape[0]   # bigger margin -> bigger frame
+
+
 def test_atrous_sharpen_adds_high_frequency():
     src = _disc(256, radius=80)
     sharp = fin.atrous_sharpen(src, 0.6)

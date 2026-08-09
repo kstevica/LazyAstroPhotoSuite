@@ -49,6 +49,7 @@ _MS_DIALS = [
     ("ht_sh", "Black point", 0.0, 0.2, 3),
     ("ht_mid", "Midtones", 0.35, 0.65, 3),
     ("ht_hi", "Highlights", 0.7, 1.0, 3),
+    ("crop_margin", "Crop margin", 0.0, 0.5, 2),
     ("ap_size", "AP size", 48, 192, 0),
     ("ap_keep", "Keep per AP", 0.05, 1.0, 2),
     ("ap_search", "AP search", 4, 16, 0),
