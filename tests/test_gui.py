@@ -85,6 +85,18 @@ def test_shell_launcher_and_lazy_panel(qapp):
     assert s.stack.currentWidget() is s.launcher
 
 
+def test_shell_launcher_toolbar_toggles(qapp):
+    from lazystretch.gui.shell import AppShell
+
+    s = AppShell()
+    assert s.toolbar.isHidden()                            # hidden on the launcher
+    s.open_tool("stretch")
+    assert not s.toolbar.isHidden()                        # back-to-launcher button shown in a tool
+    assert s._tool_name_label.text() == "LazyStretch"
+    s.show_home()
+    assert s.toolbar.isHidden()                            # hidden again at home
+
+
 def test_shell_opens_stack_panel(qapp):
     from lazystretch.gui.shell import AppShell
     from lazystretch.gui.stack_window import LazyStackPanel

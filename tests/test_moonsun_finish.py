@@ -39,6 +39,18 @@ def test_finish_none_on_black_frame():
     assert fin.finish(np.zeros((128, 128, 3)), MoonSunParams.preset("sun")) is None
 
 
+def test_finish_full_disc_runs_ring_eraser_without_crashing():
+    # a large, fill~1 disc triggers the ring eraser; its bin index must stay in range
+    size = 900
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    r = np.sqrt((xx - size / 2) ** 2 + (yy - size / 2) ** 2)
+    disc = np.where(r < 360, 0.45 + 0.1 * np.sqrt(np.clip(1 - (r / 360) ** 2, 0, 1)), 0.0)
+    rgb = np.clip(np.stack([disc, disc * 0.85, disc * 0.6], axis=-1), 0, 1)
+    res = fin.finish(rgb, MoonSunParams.preset("sun"))
+    assert res is not None and res["image"].shape == (size, size, 3)
+    assert np.isfinite(res["image"]).all()
+
+
 def test_wb_neutralizes_tint_neutral_tone():
     p = MoonSunParams.preset("neutral")             # neutral tone, no surface/tone recolor
     res = fin.finish(_color_sun(tint=(1.0, 0.8, 0.55)), p)

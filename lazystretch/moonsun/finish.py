@@ -351,7 +351,10 @@ def _ring_eraser(out, geom, wkK, nch, log) -> np.ndarray:
     patch = out[by0:by1 + 1, bx0:bx1 + 1]
     lum = patch.mean(axis=2) if patch.ndim == 3 else patch
     band = (r >= r_in) & (r < r_out)
-    bidx = np.minimum(NB - 1, ((r - r_in) / bw).astype(int))
+    # clip to [0, NB-1]: bidx is evaluated over the whole patch (incl. r < r_in, which
+    # would be a large negative index) before `band` masks it — the out-of-band values
+    # are discarded by np.where but must still be valid indices.
+    bidx = np.clip(((r - r_in) / bw).astype(int), 0, NB - 1)
     prof = np.zeros(NB)
     last = 0.0
     for i in range(NB):

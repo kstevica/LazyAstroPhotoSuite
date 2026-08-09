@@ -65,7 +65,9 @@ def test_measure_and_cull_rejects_trailed():
 
 # --- registration (FFT fallback) ---
 
-def test_register_aligns_shifted_frames():
+def test_register_fft_fallback_aligns_shifted_frames(monkeypatch):
+    # force the translation-only FFT fallback (deterministic, no astroalign needed)
+    monkeypatch.setattr(reg, "astroalign_available", lambda: False)
     base = _disc(200, radius=60)
     frames = [base,
               fftreg.apply_shift(base, 4.0, -3.0),
@@ -75,6 +77,18 @@ def test_register_aligns_shifted_frames():
     core = slice(60, 140)
     for a in aligned:
         assert np.abs(a[core, core] - base[core, core]).mean() < 0.03
+
+
+def test_register_astroalign_aligns_star_field():
+    pytest.importorskip("astroalign")
+    if not reg.astroalign_available():
+        pytest.skip("astroalign not importable")
+    base = _starfield(H=300, W=300, n=60, seed=2)
+    frames = [base, fftreg.apply_shift(base, 6.0, -4.0)]
+    aligned, kept = reg.register(frames, reference=0)
+    assert len(kept) == 2
+    core = slice(60, 240)
+    assert np.abs(aligned[1][core, core] - base[core, core]).mean() < 0.02
 
 
 # --- contract ---

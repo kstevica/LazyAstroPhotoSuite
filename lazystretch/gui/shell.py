@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QPushButton,
     QStackedWidget,
+    QToolBar,
     QVBoxLayout,
     QWidget,
 )
@@ -134,6 +135,7 @@ class AppShell(QMainWindow):
     def _build_menu(self):
         menu = self.menuBar().addMenu("Tools")
         home = QAction("Home (launcher)", self)
+        home.setShortcut("Ctrl+Shift+H")
         home.triggered.connect(self.show_home)
         menu.addAction(home)
         menu.addSeparator()
@@ -145,11 +147,26 @@ class AppShell(QMainWindow):
             menu.addAction(act)
             self._tool_actions[key] = act
 
+        # A persistent back-to-launcher button, shown only while a tool is open (the
+        # tools are stacked pages in one window, so there is no per-tool window to close).
+        self.toolbar = QToolBar("Navigation")
+        self.toolbar.setMovable(False)
+        self.addToolBar(self.toolbar)
+        self.home_btn = QAction("⌂  Launcher", self)
+        self.home_btn.setToolTip("Back to the tool selector (Ctrl+Shift+H)")
+        self.home_btn.triggered.connect(self.show_home)
+        self.toolbar.addAction(self.home_btn)
+        self._tool_name_label = QLabel("")
+        self._tool_name_label.setStyleSheet("margin-left: 12px; font-weight: bold;")
+        self.toolbar.addWidget(self._tool_name_label)
+        self.toolbar.setVisible(False)
+
     # --------------------------------------------------------------- navigation
 
     def show_home(self):
         self.stack.setCurrentWidget(self.launcher)
         self.setWindowTitle(_TITLES["home"])
+        self.toolbar.setVisible(False)
 
     def _make_panel(self, key: str) -> Optional[QWidget]:
         """Construct a tool panel on first open. Only LazyStretch exists so far."""
@@ -173,3 +190,5 @@ class AppShell(QMainWindow):
             self._panels[key] = panel
         self.stack.setCurrentWidget(self._panels[key])
         self.setWindowTitle(_TITLES.get(key, _TITLES["home"]))
+        self._tool_name_label.setText(_TITLES.get(key, ""))
+        self.toolbar.setVisible(True)
