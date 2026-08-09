@@ -61,11 +61,12 @@ def integrate(frames: Sequence[np.ndarray], *, weights: Optional[Sequence[float]
 
 def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[float]] = None,
                   sigma_low: float = 4.0, sigma_high: float = 3.0,
-                  target_bytes: int = 200_000_000) -> np.ndarray:
+                  target_bytes: int = 200_000_000, log=None) -> np.ndarray:
     """Memory-bounded combine: mmap float32 ``.npy`` frames, sigma-clip in row bands.
 
     Never materialises the full N×H×W cube — only ``N × band × W × C`` at a time — so a large
-    burst integrates in a bounded, few-hundred-MB footprint instead of tens of GB.
+    burst integrates in a bounded, few-hundred-MB footprint instead of tens of GB. Emits
+    per-band progress through ``log`` (integration is otherwise a long silent step).
     """
     paths = [str(p) for p in paths]
     if not paths:
@@ -76,10 +77,14 @@ def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[f
     n = len(paths)
     row_bytes = int(np.prod(shape[1:])) * 4 * n            # float32 per output row × N frames
     band = int(max(1, min(H, target_bytes // max(1, row_bytes))))
+    n_bands = (H + band - 1) // band
     out = np.empty(shape, dtype=np.float32)
-    for y0 in range(0, H, band):
+    for bi, y0 in enumerate(range(0, H, band)):
         y1 = min(H, y0 + band)
         cube = np.stack([np.asarray(m[y0:y1], dtype=np.float64) for m in mm], axis=0)
         out[y0:y1] = sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high,
                                      weights=weights).astype(np.float32)
+        if log is not None:
+            log(f"   integrating rows {y0}-{y1} ({bi + 1}/{n_bands}, "
+                f"{100 * y1 // H}%)")
     return out

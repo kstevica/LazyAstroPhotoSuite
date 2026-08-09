@@ -326,7 +326,8 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log(f"Integrating {n_stacked} frame(s)…")
     if staged:
         master = integ.combine_files(aligned_handles, weights=weights,
-                                     sigma_low=params.sigma_low, sigma_high=params.sigma_high)
+                                     sigma_low=params.sigma_low, sigma_high=params.sigma_high,
+                                     log=log)
     else:
         master = integ.integrate(aligned_handles, weights=weights,
                                  sigma_low=params.sigma_low, sigma_high=params.sigma_high)
