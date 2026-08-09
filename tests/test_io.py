@@ -71,6 +71,25 @@ def test_png_8bit_roundtrip(tmp_path):
     assert np.max(np.abs(back.data - img)) < 1.0 / 255 + 1e-9
 
 
+def test_png_rgb_16bit_falls_back_to_8bit(tmp_path):
+    # Pillow can't encode 16-bit RGB PNG; saving must not crash (writes 8-bit instead).
+    rgb = np.clip(np.random.default_rng(0).random((24, 32, 3)), 0, 1)
+    p = tmp_path / "rgb16.png"
+    save_image(p, rgb, bit_depth=16)                    # would raise "Cannot handle... <u2" before
+    back = load_image(p)
+    assert back.data.shape == (24, 32, 3)
+    assert np.max(np.abs(back.data - rgb)) < 1.0 / 255 + 1e-6
+
+
+def test_png_mono_16bit_roundtrip(tmp_path):
+    img = np.linspace(0, 1, 40 * 40).reshape(40, 40)
+    p = tmp_path / "mono16.png"
+    save_image(p, img, bit_depth=16)                    # 16-bit grayscale PNG is supported
+    back = load_image(p)
+    assert back.data.shape == (40, 40)
+    assert np.max(np.abs(back.data - img)) < 1.0 / 65535 + 1e-6
+
+
 # --- real masters ------------------------------------------------------------
 
 @pytest.mark.skipif(not _HAVE_EXAMPLES, reason="example masters not present")

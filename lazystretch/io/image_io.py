@@ -210,7 +210,9 @@ def save_image(path: "str | Path", data: np.ndarray, *, bit_depth: int = 16,
     elif ext in PNG_EXT:
         import imageio.v3 as iio
 
-        if bit_depth == 16:
+        # PNG: the Pillow writer supports 16-bit only for GRAYSCALE (mode I;16); it can't
+        # encode 16-bit RGB, so an RGB frame is written 8-bit (use TIFF/FITS for 16-bit RGB).
+        if bit_depth == 16 and a.ndim == 2:
             arr = np.rint(a * 65535.0).astype(np.uint16)
         else:
             arr = np.rint(a * 255.0).astype(np.uint8)
