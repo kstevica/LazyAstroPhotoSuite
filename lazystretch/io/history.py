@@ -1,10 +1,16 @@
 """Per-master run history, persisted to disk.
 
 Each processed master keeps a ``history/`` subfolder next to it holding one JSON index
-(``<stem>.history.json``) plus one 8-bit PNG per remembered run. The index records the
+(``<stem>.history.json``) plus one 16-bit TIFF per remembered run. The index records the
 master's full path and, per item, its rendered-image filename, the settings that produced
 it (a ``.lsrecipe``-style dict), a 1-5 star rating, a select/discard status, and a one-line
 comment. Images live on disk (not RAM); they are loaded only when previewed.
+
+The images are stored at 16 bits (not 8) so a run can be *continued* from — used as the
+working base for further polishing — without the banding an 8-bit round-trip would leave.
+TIFF (not PNG) because the PNG writer here can't encode 16-bit RGB. ``load_image_data``
+reconstructs float64 ``[0, 1]`` from whatever bit depth is on disk, so it doubles as both the
+preview loader and the raw-precision base for "continue from this".
 
 Capacity is bounded (``MAX_ITEMS``); when full, the oldest UNrated + non-selected item is
 evicted first so rated/kept work survives. The store is UI-agnostic — the GUI drives it.
@@ -67,8 +73,9 @@ class HistoryStore:
         self.dir.mkdir(parents=True, exist_ok=True)
         iid = f"{self._next_id:04d}"
         self._next_id += 1
-        fname = f"{self.stem}_{iid}.png"
-        save_image(str(self.dir / fname), np.asarray(image), bit_depth=8)
+        fname = f"{self.stem}_{iid}.tif"
+        # 16-bit TIFF so the run can be continued from without banding (see module docstring).
+        save_image(str(self.dir / fname), np.asarray(image), bit_depth=16)
         item = {
             "id": iid, "file": fname, "label": label, "mode": mode, "steps": int(steps),
             "rating": 0, "status": STATUS_NONE, "comment": "",
@@ -118,6 +125,11 @@ class HistoryStore:
         return str(self.dir / item["file"])
 
     def load_image_data(self, item: dict) -> Optional[np.ndarray]:
+        """Load the item's rendered image as float64 ``[0, 1]``.
+
+        Full precision from the stored 16-bit TIFF — this is both the preview image and the
+        raw base a "continue from this" run resumes processing on.
+        """
         p = self.dir / item["file"]
         if not p.exists():
             return None

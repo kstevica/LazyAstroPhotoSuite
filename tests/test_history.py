@@ -28,6 +28,17 @@ def test_add_writes_image_and_index(tmp_path):
     assert s.load_image_data(it).shape[:2] == (40, 50)  # loads back
 
 
+def test_stores_more_than_8bit_precision_for_continue(tmp_path):
+    """History images are 16-bit so a run can be *continued* from without 8-bit banding."""
+    s = HistoryStore(_master(tmp_path))
+    ramp = np.linspace(0.10, 0.90, 40 * 50).reshape(40, 50)   # fine values off the 8-bit grid
+    img = np.stack([ramp] * 3, axis=-1)
+    it = s.add(img, {}, "grad", "preview", 1)
+    back = s.load_image_data(it)
+    err = float(np.abs(back - img).max())
+    assert err < 1e-3        # 8-bit round-trip would be ~2e-3; 16-bit is ~1.5e-5
+
+
 def test_persists_across_reopen(tmp_path):
     master = _master(tmp_path)
     s = HistoryStore(master)
