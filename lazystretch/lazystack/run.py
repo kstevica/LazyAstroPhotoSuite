@@ -118,7 +118,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
                    if params.do_calibrate else None)
 
     log(f"Calibrating {len(lights)} lights…")
-    cframes, exposure = [], 0.0
+    cframes, cnames, exposure = [], [], 0.0
     for i, p in enumerate(lights):
         log(f"  [{i + 1}/{len(lights)}] {Path(p).name}…")
         img = load(p)
@@ -129,6 +129,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         if params.do_cosmetic:
             img = cal.cosmetic_correct(img, master_dark)
         cframes.append(img)
+        cnames.append(Path(p).name)
         try:
             exp = load_image(p).keyword("EXPTIME")
             exposure += float(exp) if exp is not None else 0.0
@@ -138,8 +139,11 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         log("Fewer than 2 calibrated lights — nothing to stack.")
         return None
 
-    log("Measuring + culling…")
-    measures = [meas.measure_frame(f) for f in cframes]
+    log(f"Measuring + culling {len(cframes)} lights…")
+    measures = []
+    for i, f in enumerate(cframes):
+        log(f"  [{i + 1}/{len(cframes)}] {cnames[i]}: measuring…")
+        measures.append(meas.measure_frame(f))
     culled = meas.cull(measures, params, log=log)
     keep = culled["keep"]
     ref_global = culled["reference"]
