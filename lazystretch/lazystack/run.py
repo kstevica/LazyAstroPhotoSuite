@@ -66,10 +66,11 @@ def find_sets(folder: str) -> Dict[str, List[str]]:
     return sub
 
 
-def _make_loader(folder: str, enabled: bool) -> Callable[[str], Optional[np.ndarray]]:
-    """A frame loader that caches decoded raws under <folder>/lazystack/cache."""
+def _make_loader(folder: str, enabled: bool,
+                 log: Callable[[str], None] = _noop) -> Callable[[str], Optional[np.ndarray]]:
+    """A frame loader that caches decoded raws under <folder>/lazystack/cache (and logs them)."""
     cache_dir = Path(folder) / "lazystack" / "cache"
-    return lambda path: cached_load(path, cache_dir, enabled=enabled)
+    return lambda path: cached_load(path, cache_dir, enabled=enabled, log=log)
 
 
 def _master(paths: List[str], load: Callable, log, label: str, *,
@@ -91,8 +92,11 @@ def measure_only(folder: str, params, *, log: Callable[[str], None] = _noop) -> 
         log(f"Found {len(lights)} light(s) — need at least 2.")
         return None
     log(f"Measuring {len(lights)} lights…")
-    load = _make_loader(folder, params.reuse_cache)
-    measures = [meas.measure_frame(load(p)) for p in lights]
+    load = _make_loader(folder, params.reuse_cache, log)
+    measures = []
+    for i, p in enumerate(lights):
+        log(f"  [{i + 1}/{len(lights)}] {Path(p).name}: measuring…")
+        measures.append(meas.measure_frame(load(p)))
     culled = meas.cull(measures, params, log=log)
     return {"measures": measures, "cull": culled, "lights": lights}
 
@@ -107,15 +111,16 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log(f"LazyStack: {folder} — {len(lights)} lights, {len(sets['darks'])} darks, "
         f"{len(sets['flats'])} flats, {len(sets['biases'])} biases.")
 
-    load = _make_loader(folder, params.reuse_cache)
+    load = _make_loader(folder, params.reuse_cache, log)
     master_bias = _master(sets["biases"], load, log, "bias") if params.do_calibrate else None
     master_dark = _master(sets["darks"], load, log, "dark") if params.do_calibrate else None
     master_flat = (_master(sets["flats"], load, log, "flat", bias=master_bias)
                    if params.do_calibrate else None)
 
-    log("Calibrating lights…")
+    log(f"Calibrating {len(lights)} lights…")
     cframes, exposure = [], 0.0
-    for p in lights:
+    for i, p in enumerate(lights):
+        log(f"  [{i + 1}/{len(lights)}] {Path(p).name}…")
         img = load(p)
         if img is None:
             continue

@@ -12,11 +12,15 @@ from __future__ import annotations
 import hashlib
 import os
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional
 
 import numpy as np
 
 from .image_io import RAW_EXT, load_image, save_image
+
+
+def _noop(_m: str) -> None:
+    pass
 
 
 def _cache_key(path: str) -> str:
@@ -29,9 +33,15 @@ def cache_path(path: str, cache_dir: "str | Path") -> Path:
     return Path(cache_dir) / f"{Path(path).stem}_{_cache_key(path)}.tif"
 
 
-def cached_load(path: str, cache_dir: "str | Path", *, enabled: bool = True) -> Optional[np.ndarray]:
-    """Load ``path`` as float64 [0,1]; cache raws under ``cache_dir``. None on failure."""
+def cached_load(path: str, cache_dir: "str | Path", *, enabled: bool = True,
+                log: Callable[[str], None] = _noop) -> Optional[np.ndarray]:
+    """Load ``path`` as float64 [0,1]; cache raws under ``cache_dir``. None on failure.
+
+    Raw decodes are slow, so each one is logged (cache hit vs. the expensive decode) — a
+    silent 30-raw pass otherwise looks stuck.
+    """
     ext = Path(path).suffix.lower()
+    name = Path(path).name
     if not enabled or ext not in RAW_EXT:
         try:
             return load_image(path).data
@@ -43,9 +53,12 @@ def cached_load(path: str, cache_dir: "str | Path", *, enabled: bool = True) -> 
         cp = None
     if cp is not None and cp.exists():
         try:
-            return load_image(str(cp)).data
+            data = load_image(str(cp)).data
+            log(f"   {name}: loaded from cache")
+            return data
         except Exception:
             pass                                    # corrupt cache -> re-decode
+    log(f"   {name}: decoding raw…")
     try:
         data = load_image(path).data                # the expensive rawpy decode
     except Exception:
@@ -54,6 +67,7 @@ def cached_load(path: str, cache_dir: "str | Path", *, enabled: bool = True) -> 
         try:
             cp.parent.mkdir(parents=True, exist_ok=True)
             save_image(str(cp), data, bit_depth=16)
+            log(f"   {name}: decoded + cached")
         except Exception:
             pass                                    # caching is best-effort
     return data

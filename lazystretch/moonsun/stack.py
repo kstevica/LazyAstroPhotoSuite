@@ -9,6 +9,7 @@ alignment is the FFT phase-correlation math in :mod:`.register`; there are no PI
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Callable, List, Optional, Sequence
 
 import numpy as np
@@ -35,17 +36,21 @@ def grade_frames(frames: Sequence, load: Callable, *, workdim: int = reg.WORKDIM
                  log: Callable[[str], None] = _noop) -> List[dict]:
     """Grade sharpness + brightness for every readable frame (SUN.stackBurst [1/3])."""
     graded = []
+    n = len(frames)
     for i, f in enumerate(frames):
+        name = Path(f).name if isinstance(f, (str, Path)) else f"frame {i + 1}"
         try:
             img = load(f)
         except Exception:
             img = None
         if img is None:
-            log(f"  frame {i} unreadable, skipped")
+            log(f"  [{i + 1}/{n}] {name}: unreadable, skipped")
             continue
         wk, k = reg.working(img, workdim)
         g = reg.gradient(wk)
-        graded.append({"f": f, "sharp": float(g.std()), "k": k, "p999": _p999(wk)})
+        sharp = float(g.std())
+        graded.append({"f": f, "sharp": sharp, "k": k, "p999": _p999(wk)})
+        log(f"  [{i + 1}/{n}] {name}: sharpness {sharp:.5f}")
     return graded
 
 
