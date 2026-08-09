@@ -113,8 +113,10 @@ class LazyMoonSunPanel(QWidget):
         av.addLayout(trow)
         self.wb_check = QCheckBox("Neutralize filter tint")
         self.finish_check = QCheckBox("Finish after stacking")
+        self.crop_check = QCheckBox("Crop to disc when finished")
         av.addWidget(self.wb_check)
         av.addWidget(self.finish_check)
+        av.addWidget(self.crop_check)
         col.addWidget(g_adj)
         col.addStretch(1)
 
@@ -168,6 +170,7 @@ class LazyMoonSunPanel(QWidget):
         p.tone = self.tone_combo.currentText()
         p.do_wb = self.wb_check.isChecked()
         p.auto_finish = self.finish_check.isChecked()
+        p.crop = self.crop_check.isChecked()
         return p
 
     def _apply_params(self, p: MoonSunParams):
@@ -176,6 +179,7 @@ class LazyMoonSunPanel(QWidget):
         self.tone_combo.setCurrentText(p.tone)
         self.wb_check.setChecked(p.do_wb)
         self.finish_check.setChecked(p.auto_finish)
+        self.crop_check.setChecked(p.crop)
 
     # ---------------------------------------------------------------- actions
 

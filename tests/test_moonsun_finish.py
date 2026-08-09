@@ -83,6 +83,30 @@ def test_golden_tone_orders_channels():
     assert (lit[:, 1] >= lit[:, 2] - 1e-6).mean() > 0.95     # G >= B
 
 
+def test_crop_to_disc_trims_whitespace_with_margin():
+    # a small disc in a large frame -> crop removes the surrounding black, keeps a margin
+    size = 400
+    yy, xx = np.mgrid[0:size, 0:size].astype(np.float64)
+    r = np.sqrt((xx - 200) ** 2 + (yy - 200) ** 2)
+    disc = np.where(r < 60, 0.7, 0.0)
+    out = fin.crop_to_disc(disc, pad_frac=0.15)
+    assert out.shape[0] < size and out.shape[1] < size    # trimmed
+    assert out.shape[0] > 2 * 60 and out.shape[1] > 2 * 60  # disc + margin kept
+    assert float(out.max()) > 0.5                          # the disc is still there
+
+
+def test_finish_crop_shrinks_frame():
+    from dataclasses import replace
+    src = _color_sun(size=400, radius=70)
+    p = replace(MoonSunParams.preset("neutral"), crop=True)
+    res = fin.finish(src, p)
+    assert res is not None
+    assert res["image"].shape[0] < 400 and res["image"].shape[1] < 400
+    # without crop the frame keeps its size
+    res2 = fin.finish(src, MoonSunParams.preset("neutral"))
+    assert res2["image"].shape[:2] == (400, 400)
+
+
 def test_atrous_sharpen_adds_high_frequency():
     src = _disc(256, radius=80)
     sharp = fin.atrous_sharpen(src, 0.6)

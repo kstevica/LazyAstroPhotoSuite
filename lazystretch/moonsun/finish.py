@@ -20,6 +20,7 @@ from . import register as reg
 
 SKY_ANCHOR = 0.60
 _NRB = 96
+_CROP_PAD_FRAC = 0.15      # margin around the lit disc when cropping (fraction of its size)
 
 
 def _noop(_m: str) -> None:
@@ -277,7 +278,15 @@ def finish(img: np.ndarray, params, log: Callable[[str], None] = _noop) -> Optio
         out = _ht(out, sh, mid, hi)
         log(f"Tone triple: black {sh:.3f}, midtones {mid:.3f}, highlights {hi:.3f}")
 
-    return {"image": np.clip(out, 0.0, 1.0), "body": body["body"], "do_surface": do_surface}
+    out = np.clip(out, 0.0, 1.0)
+    if getattr(params, "crop", False):
+        cropped = crop_to_disc(out)
+        if cropped.shape[:2] != out.shape[:2]:
+            log(f"Crop to disc: {out.shape[1]}x{out.shape[0]} -> "
+                f"{cropped.shape[1]}x{cropped.shape[0]} (with margin)")
+        out = cropped
+
+    return {"image": out, "body": body["body"], "do_surface": do_surface}
 
 
 def _working_rgb(a: np.ndarray) -> np.ndarray:
@@ -406,6 +415,24 @@ def _lhe(img: np.ndarray, amount: float, mask: Optional[np.ndarray]) -> np.ndarr
     else:
         out = a + boost
     return np.clip(out, 0.0, 1.0)
+
+
+def crop_to_disc(img: np.ndarray, pad_frac: float = _CROP_PAD_FRAC) -> np.ndarray:
+    """Crop to the lit body's bounding box + a proportional margin (Sun/Moon/crescent)."""
+    a = np.asarray(img)
+    lum = a[..., :3].mean(axis=2) if a.ndim == 3 else a
+    p = float(np.quantile(lum, 0.999))
+    thr = max(0.04, 0.12 * p)                         # catches the whole disc incl. dim limb
+    ys, xs = np.nonzero(lum > thr)
+    if xs.size < 50:
+        return a                                      # nothing lit to crop to
+    H, W = lum.shape
+    y0, y1 = int(ys.min()), int(ys.max())
+    x0, x1 = int(xs.min()), int(xs.max())
+    pad = int(round(pad_frac * max(y1 - y0 + 1, x1 - x0 + 1)))
+    y0, y1 = max(0, y0 - pad), min(H, y1 + 1 + pad)
+    x0, x1 = max(0, x0 - pad), min(W, x1 + 1 + pad)
+    return a[y0:y1, x0:x1]
 
 
 def _golden_tone(img: np.ndarray) -> np.ndarray:

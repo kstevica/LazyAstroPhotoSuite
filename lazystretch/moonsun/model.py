@@ -16,6 +16,7 @@ class MoonSunParams:
     disc_target: float = 0.72   # DISC_TARGET — disc median after the MTF lift
     do_wb: bool = True          # DO_WB — neutralize the filter tint
     auto_finish: bool = True    # AUTO_FINISH — finish right after stacking
+    crop: bool = False          # crop the finished frame to the lit disc + a margin
     surface: float = 6.0        # SURFACE — residual-contrast (limb-flatten) boost
     flatten: float = 0.35       # FLATTEN — fraction of limb darkening removed
     tone: str = "golden"        # TONE — "neutral" | "golden"
