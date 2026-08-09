@@ -194,7 +194,8 @@ class LazyMoonSunPanel(QWidget):
     def _open_image(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open image to finish", "",
-            "Images (*.fits *.fit *.fts *.tif *.tiff *.png *.xisf)")
+            "Images (*.fits *.fit *.fts *.tif *.tiff *.png *.xisf "
+            "*.cr2 *.cr3 *.nef *.arw *.raf *.dng *.orf *.rw2 *.pef *.srw *.raw)")
         if not path:
             return
         try:

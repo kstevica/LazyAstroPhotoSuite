@@ -22,6 +22,8 @@ FITS_EXT = {".fit", ".fits", ".fts"}
 TIFF_EXT = {".tif", ".tiff"}
 PNG_EXT = {".png"}
 XISF_EXT = {".xisf"}
+RAW_EXT = {".cr2", ".cr3", ".nef", ".arw", ".raf", ".dng", ".orf", ".rw2",
+           ".pef", ".srw", ".raw"}
 
 
 @dataclass
@@ -122,8 +124,37 @@ def _load_xisf(path: Path) -> LoadedImage:
                        source_dtype=str(raw.dtype), source_format="xisf")
 
 
+def _load_raw(path: Path) -> LoadedImage:
+    """Decode a camera raw to linear RGB via rawpy — VNG demosaic, no white balance.
+
+    Mirrors the .js ``convertRaws`` hint ('vng no-white-balance'): a linear (gamma 1),
+    auto-bright-off, WB-neutral 16-bit RGB so calibration/stretch see the sensor's linear
+    signal. Bursts of raws therefore behave like linear FITS/XISF frames.
+    """
+    try:
+        import rawpy
+    except ImportError as exc:  # pragma: no cover - optional dep
+        raise ImportError(
+            "reading camera raws needs the 'rawpy' package (pip install rawpy)"
+        ) from exc
+    with rawpy.imread(str(path)) as raw:
+        try:
+            algo = rawpy.DemosaicAlgorithm.VNG
+        except Exception:  # pragma: no cover - older rawpy
+            algo = None
+        kwargs = dict(gamma=(1, 1), no_auto_bright=True, use_camera_wb=False,
+                      use_auto_wb=False, user_wb=[1.0, 1.0, 1.0, 1.0],
+                      output_bps=16, four_color_rgb=False)
+        if algo is not None:
+            kwargs["demosaic_algorithm"] = algo
+        rgb = raw.postprocess(**kwargs)                 # (H, W, 3) uint16, linear
+    data = _norm_dtype(_canonicalize(rgb, planes_first=False))
+    return LoadedImage(data=data, path=str(path),
+                       source_dtype=str(rgb.dtype), source_format="raw")
+
+
 def load_image(path: "str | Path") -> LoadedImage:
-    """Load an image from FITS / TIFF / PNG / XISF into the normalised contract."""
+    """Load an image from FITS / TIFF / PNG / XISF / camera-raw into the normalised contract."""
     p = Path(path)
     ext = p.suffix.lower()
     if ext in FITS_EXT:
@@ -134,6 +165,8 @@ def load_image(path: "str | Path") -> LoadedImage:
         return _load_png(p)
     if ext in XISF_EXT:
         return _load_xisf(p)
+    if ext in RAW_EXT:
+        return _load_raw(p)
     raise ValueError(f"unsupported image extension: {ext!r} ({p.name})")
 
 

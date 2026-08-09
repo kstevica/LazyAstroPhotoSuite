@@ -13,14 +13,25 @@ from typing import Callable, List, Optional
 
 import numpy as np
 
-from ..io.image_io import load_image, save_image
+from ..io.image_io import RAW_EXT as RAW_EXTS, load_image, save_image
 from . import finish as finish_mod, stack
 
 FRAME_EXTS = {".xisf", ".fits", ".fit", ".fts", ".tif", ".tiff", ".png"}
-RAW_EXTS = {".cr2", ".cr3", ".nef", ".arw", ".raf", ".dng", ".orf", ".rw2"}
-
 MASTER_NAME = "burst_master.fits"
 MP_MASTER_NAME = "burst_master_mp.fits"
+_RAWPY_OK = None
+
+
+def _rawpy_available() -> bool:
+    """rawpy is optional; camera raws are only loadable when it's installed."""
+    global _RAWPY_OK
+    if _RAWPY_OK is None:
+        try:
+            import rawpy  # noqa: F401
+            _RAWPY_OK = True
+        except Exception:
+            _RAWPY_OK = False
+    return _RAWPY_OK
 
 
 def _noop(_m: str) -> None:
@@ -28,7 +39,7 @@ def _noop(_m: str) -> None:
 
 
 def find_frames(folder: str) -> dict:
-    """List readable burst frames in ``folder``; report any raws we can't decode."""
+    """List readable burst frames in ``folder`` (camera raws included when rawpy is present)."""
     p = Path(folder)
     frames, raws = [], []
     for f in sorted(p.iterdir()) if p.is_dir() else []:
@@ -36,7 +47,7 @@ def find_frames(folder: str) -> dict:
         if ext in FRAME_EXTS:
             frames.append(str(f))
         elif ext in RAW_EXTS:
-            raws.append(str(f))
+            (frames if _rawpy_available() else raws).append(str(f))
     return {"frames": frames, "raws": raws}
 
 

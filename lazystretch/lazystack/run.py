@@ -13,12 +13,29 @@ from typing import Callable, Dict, List, Optional
 
 import numpy as np
 
-from ..io.image_io import load_image, save_image
+from ..io.image_io import RAW_EXT, load_image, save_image
 from . import calibrate as cal, contract, integrate as integ, measure as meas, register as reg
 
 FRAME_EXTS = {".xisf", ".fits", ".fit", ".fts", ".tif", ".tiff", ".png"}
 _SUBSETS = ("lights", "darks", "flats", "biases")
 MASTER_NAME = "lazystack_master.fits"
+_RAWPY_OK = None
+
+
+def _rawpy_available() -> bool:
+    """Camera raws (demosaiced on load) are only usable when rawpy is installed."""
+    global _RAWPY_OK
+    if _RAWPY_OK is None:
+        try:
+            import rawpy  # noqa: F401
+            _RAWPY_OK = True
+        except Exception:
+            _RAWPY_OK = False
+    return _RAWPY_OK
+
+
+def _loadable_exts() -> set:
+    return FRAME_EXTS | RAW_EXT if _rawpy_available() else FRAME_EXTS
 
 
 def _noop(_m: str) -> None:
@@ -28,7 +45,8 @@ def _noop(_m: str) -> None:
 def _list(folder: Path) -> List[str]:
     if not folder.is_dir():
         return []
-    return [str(f) for f in sorted(folder.iterdir()) if f.suffix.lower() in FRAME_EXTS]
+    exts = _loadable_exts()
+    return [str(f) for f in sorted(folder.iterdir()) if f.suffix.lower() in exts]
 
 
 def find_sets(folder: str) -> Dict[str, List[str]]:

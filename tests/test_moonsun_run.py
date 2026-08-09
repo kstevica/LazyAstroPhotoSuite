@@ -25,7 +25,12 @@ def test_find_frames_lists_and_flags_raws(tmp_path):
     (tmp_path / "c.cr2").write_bytes(b"x")
     (tmp_path / "notes.txt").write_bytes(b"x")
     scan = msrun.find_frames(str(tmp_path))
-    assert len(scan["frames"]) == 2 and len(scan["raws"]) == 1
+    names = {p.rsplit("/", 1)[-1] for p in scan["frames"]}
+    assert {"a.fits", "b.tif"} <= names
+    if msrun._rawpy_available():                          # raws load when rawpy is present
+        assert "c.cr2" in names and scan["raws"] == []
+    else:
+        assert any(p.endswith("c.cr2") for p in scan["raws"])
 
 
 def test_stack_burst_folder_writes_master(tmp_path):

@@ -70,7 +70,9 @@ class FilePicker(QWidget):
     fileChosen = Signal(str)
 
     def __init__(self, caption: str = "Choose…",
-                 name_filter: str = "Images (*.fits *.fit *.fts *.tif *.tiff *.png *.xisf)",
+                 name_filter: str = ("Images (*.fits *.fit *.fts *.tif *.tiff *.png *.xisf "
+                                     "*.cr2 *.cr3 *.nef *.arw *.raf *.dng *.orf *.rw2 "
+                                     "*.pef *.srw *.raw)"),
                  parent=None):
         super().__init__(parent)
         self._caption = caption
