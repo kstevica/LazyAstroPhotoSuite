@@ -18,7 +18,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -31,7 +30,7 @@ from ..io.image_io import save_image
 from ..lazystack import run as lsrun
 from ..lazystack.model import LazyStackParams
 from .preview import PreviewView
-from .widgets import FloatSlider
+from .widgets import FloatSlider, RunLogView
 from .worker import CallableWorker
 
 _DIALS = [
@@ -129,9 +128,7 @@ class LazyStackPanel(QWidget):
 
         self.preview = PreviewView()
         v.addWidget(self.preview, 6)
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(800)
+        self.log_view = RunLogView()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.status_label = QLabel("Pick a dataset folder, then Measure or Stack.")
@@ -219,6 +216,7 @@ class LazyStackPanel(QWidget):
         self.worker.start()
 
     def _on_finished(self, result):
+        self.log_view.finish()
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
@@ -241,6 +239,7 @@ class LazyStackPanel(QWidget):
             "Open the master in LazyStretch to finish.")
 
     def _on_failed(self, msg: str):
+        self.log_view.finish()
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)

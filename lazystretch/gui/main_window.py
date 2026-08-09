@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -55,7 +54,7 @@ from ..objects.model import Parameters
 from ..objects.presets import curated_for
 from ..pipeline.ledger import DECIDED as _L_DECIDED
 from .preview import FullScreenViewer, PreviewView
-from .widgets import FilePicker, FloatSlider
+from .widgets import FilePicker, FloatSlider, RunLogView
 from .worker import PipelineWorker
 
 # (attribute, label) for the option checkboxes. The first six are profile-driven.
@@ -433,9 +432,7 @@ class LazyStretchPanel(QWidget):
         self.history_group.setVisible(False)      # appears once there's a run to show
 
         # --- log (full width; the action buttons live above the image) ---
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(500)
+        self.log_view = RunLogView()
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -616,6 +613,7 @@ class LazyStretchPanel(QWidget):
         else:
             self.apply_reco_btn.setEnabled(False)
             self.status_label.setText("Analyzed — no changes recommended.")
+        self.log_view.finish()
 
     def _apply_recommendations(self):
         if not self._recommendations:
@@ -726,6 +724,7 @@ class LazyStretchPanel(QWidget):
         self.log_view.appendPlainText(line)
 
     def _on_finished(self, result):
+        self.log_view.finish()
         self.result_image = result.image
         self.result_stars = result.stars_layer
         self.preview.set_image(result.image)     # same size -> keeps zoom/pan for comparison
@@ -1028,6 +1027,7 @@ class LazyStretchPanel(QWidget):
             save_pins(mpath, self._pins)
 
     def _on_failed(self, msg: str):
+        self.log_view.finish()
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)

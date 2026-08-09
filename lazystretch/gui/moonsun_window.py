@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMessageBox,
-    QPlainTextEdit,
     QProgressBar,
     QPushButton,
     QScrollArea,
@@ -33,7 +32,7 @@ from ..io.image_io import load_image, save_image
 from ..moonsun import run as msrun
 from ..moonsun.model import MoonSunParams
 from .preview import PreviewView
-from .widgets import FloatSlider
+from .widgets import FloatSlider, RunLogView
 from .worker import CallableWorker
 
 # (attr, label, lo, hi, decimals)
@@ -152,9 +151,7 @@ class LazyMoonSunPanel(QWidget):
         self.preview = PreviewView()
         v.addWidget(self.preview, 7)
 
-        self.log_view = QPlainTextEdit()
-        self.log_view.setReadOnly(True)
-        self.log_view.setMaximumBlockCount(600)
+        self.log_view = RunLogView()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.status_label = QLabel("Pick a burst folder, then Stack.")
@@ -268,6 +265,7 @@ class LazyMoonSunPanel(QWidget):
         self.worker.start()
 
     def _on_finished(self, result):
+        self.log_view.finish()
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(100)
@@ -283,6 +281,7 @@ class LazyMoonSunPanel(QWidget):
         self.status_label.setText("Done.")
 
     def _on_failed(self, msg: str):
+        self.log_view.finish()
         self._set_busy(False)
         self.progress.setRange(0, 100)
         self.progress.setValue(0)
