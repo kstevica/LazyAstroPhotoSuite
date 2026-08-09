@@ -77,6 +77,9 @@ class Parameters:
                                    # Over-cranking crushes dust lanes to black ink-blots (the
                                    # "#2" over-process), so it is opt-in — code kept, off by
                                    # default. Port-only finishing dial; work with Highlights first.
+    starShrink: float = 0.0        # software star reduction 0..1 (0=off): thin the star carpet
+                                   # morphologically (no StarNet). Reveals dust/nebulosity on
+                                   # dense widefields. Port-only finishing dial.
     dimCore: float = 0.0           # dim-core dial 0..1 (0=off): mask the large bright veil and
                                    # multiplicatively lower its luminosity (no ceiling, unlike
                                    # the highlight roll-off). Opt-in. Port-only finishing dial.

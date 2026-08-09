@@ -49,6 +49,7 @@ from ..processes import (
     multiscale,
     scnr as scnr_mod,
     shadowanchor,
+    starreduce,
     tone,
     transparency as transparency_mod,
 )
@@ -405,6 +406,14 @@ def run_pipeline(
             add(f"Star reduction (level {eff_star:.2f})", _starred)
         else:
             _log("-- Star reduction skipped (StarNet not installed)")
+
+    # --- software star reduction (port-only): thin the star carpet morphologically, no
+    #     StarNet. Runs in preview + execute so dense widefields can reveal dust/nebulosity. ---
+    if params.starShrink > 0 and not do_remove:
+        amt = float(ledger.record("Stars", "software reduction", params.starShrink))
+        def _shrink():
+            ctx["img"] = starreduce.shrink_stars(ctx["img"], amt, params.smallStars)
+        add(f"Reduce stars (software, {params.starShrink:.2f})", _shrink)
 
     # --- Halo Tamer (v1.5.1): suppress dual-band/LP reflection rings around bright stars.
     #     Auto scan + per-channel feathered-annulus subtraction, after star reduction so the

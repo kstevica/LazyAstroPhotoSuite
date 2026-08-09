@@ -104,6 +104,7 @@ _DIALS = [
     ("highlights", "Highlights (0 dim → 1 bright)", 0.0, 1.0, 2, 0.20),
     ("transparency", "Core transparency (0 = off)", 0.0, 1.0, 2, 0.0),
     ("dimCore", "Dim core (0 = off)", 0.0, 1.0, 2, 0.0),
+    ("starShrink", "Reduce stars (no StarNet, 0 = off)", 0.0, 1.0, 2, 0.0),
 ]
 
 
