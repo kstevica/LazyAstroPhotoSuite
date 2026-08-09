@@ -127,6 +127,28 @@ def test_shell_opens_moonsun_panel(qapp):
     assert p.tone == "neutral" and abs(p.sat - 0.60) < 1e-6 and abs(p.surface) < 1e-6
 
 
+def test_moonsun_finish_runs_from_source_not_shown(qapp):
+    from lazystretch.gui.moonsun_window import LazyMoonSunPanel
+
+    p = LazyMoonSunPanel()
+    master = np.full((8, 8, 3), 0.3)
+    shown = np.full((8, 8, 3), 0.7)
+    # a stack result: 'master' is the base, 'image' is the (finished) display
+    p._on_finished({"image": shown, "master": master})
+    assert np.allclose(p._source_image, master)        # base = the stacked master
+    assert np.allclose(p.result_image, shown)
+    # a finish result has no 'master' -> the base is left intact (finish is from ground 0)
+    finished = np.full((8, 8, 3), 0.9)
+    p._on_finished({"image": finished})
+    assert np.allclose(p._source_image, master)        # unchanged, not the finished output
+    assert np.allclose(p.result_image, finished)
+    # nothing loaded/stacked -> finish is a guarded no-op
+    p._source_image = None
+    p.worker = None
+    p._do_finish()
+    assert p.worker is None
+
+
 def test_left_panel_has_setup_and_adjust_tabs(qapp):
     from PySide6.QtWidgets import QTabWidget
 

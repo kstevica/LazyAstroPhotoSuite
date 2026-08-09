@@ -62,7 +62,8 @@ class LazyMoonSunPanel(QWidget):
         super().__init__()
         self.setWindowTitle("LazyMoonSun")
         self._folder: Optional[str] = None
-        self.result_image: Optional[np.ndarray] = None
+        self.result_image: Optional[np.ndarray] = None    # what's shown / saved
+        self._source_image: Optional[np.ndarray] = None   # the pristine loaded/stacked base
         self.worker: Optional[CallableWorker] = None
         self.dials: Dict[str, FloatSlider] = {}
 
@@ -204,10 +205,12 @@ class LazyMoonSunPanel(QWidget):
         if not path:
             return
         try:
-            self.result_image = load_image(path).data
+            data = load_image(path).data
         except Exception as e:
             QMessageBox.critical(self, "Load failed", str(e))
             return
+        self._source_image = np.asarray(data, dtype=np.float64)   # the base to finish from
+        self.result_image = self._source_image
         self.preview.set_image(self.result_image, keep_view=False)
         self.save_btn.setEnabled(True)
         self.status_label.setText(f"Loaded {Path(path).name} — Finish active to process it.")
@@ -236,13 +239,16 @@ class LazyMoonSunPanel(QWidget):
         self._start(fn, "multi-point stack" if multipoint else "global stack")
 
     def _do_finish(self):
-        if self.result_image is None:
+        # always finish from the pristine loaded/stacked base — never re-finish the
+        # currently-shown result (that would compound the finish each click).
+        if self._source_image is None:
             self.status_label.setText("Nothing to finish — stack a burst or Open an image.")
             return
-        src = self.result_image
+        src = self._source_image
         params = self._collect_params()
 
         def fn(log, _progress):
+            log("Finishing from the loaded/stacked base…")
             fimg = msrun.finish_array(src, params, log=log)
             return {"image": fimg} if fimg is not None else None
 
@@ -268,6 +274,9 @@ class LazyMoonSunPanel(QWidget):
         if not result or result.get("image") is None:
             self.status_label.setText("Done — no output (see the log).")
             return
+        # a stack produces a fresh base ('master'); a finish does not — leave the base intact
+        if result.get("master") is not None:
+            self._source_image = np.asarray(result["master"], dtype=np.float64)
         self.result_image = np.asarray(result["image"], dtype=np.float64)
         self.preview.set_image(self.result_image, keep_view=False)
         self.save_btn.setEnabled(True)
