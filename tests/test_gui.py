@@ -63,6 +63,30 @@ def test_float_slider_maps_range(qapp):
     assert abs(fs.value() - 0.25) < 1e-3
 
 
+def test_shell_launcher_and_lazy_panel(qapp):
+    from lazystretch.gui.main_window import LazyStretchPanel, MainWindow
+    from lazystretch.gui.shell import AppShell
+
+    assert MainWindow is LazyStretchPanel                 # backward-compat alias
+    s = AppShell()
+    assert s.stack.currentWidget() is s.launcher          # starts on the launcher
+    assert s.windowTitle() == "LazyStretch Suite"
+    assert s._panels == {}                                # panels built lazily
+    s.open_tool("stretch")
+    assert isinstance(s._panels.get("stretch"), LazyStretchPanel)
+    assert s.stack.currentWidget() is s._panels["stretch"]
+    assert s.windowTitle() == "LazyStretch"
+    same = s._panels["stretch"]
+    s.show_home(); s.open_tool("stretch")
+    assert s._panels["stretch"] is same                   # reuses, no rebuild
+    s.open_tool("stack")
+    assert "stack" not in s._panels                        # unavailable -> no-op
+    assert not s._tool_actions["stack"].isEnabled()
+    assert not s._tool_actions["moonsun"].isEnabled()
+    s.show_home()
+    assert s.stack.currentWidget() is s.launcher
+
+
 def test_left_panel_has_setup_and_adjust_tabs(qapp):
     from PySide6.QtWidgets import QTabWidget
 

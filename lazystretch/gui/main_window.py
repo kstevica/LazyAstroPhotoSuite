@@ -101,7 +101,13 @@ _DIALS = [
 ]
 
 
-class MainWindow(QWidget):
+class LazyStretchPanel(QWidget):
+    """The LazyStretch tool as an embeddable panel (hosted by gui/shell.py).
+
+    Self-contained ``QWidget`` — the only top-level chrome it sets (title/size) is
+    harmless when embedded in the shell's ``QStackedWidget`` and useful if shown alone.
+    """
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("LazyStretch")
@@ -870,3 +876,7 @@ class MainWindow(QWidget):
             self.status_label.setText(msg)
         except Exception as e:
             QMessageBox.critical(self, "Save failed", str(e))
+
+
+# Backward-compatible alias: the LazyStretch panel used to be the top-level window.
+MainWindow = LazyStretchPanel

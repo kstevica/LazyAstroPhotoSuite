@@ -7,11 +7,11 @@ import sys
 def main() -> int:
     from PySide6.QtWidgets import QApplication
 
-    from .main_window import MainWindow
+    from .shell import AppShell
 
     app = QApplication.instance() or QApplication(sys.argv)
     app.setApplicationName("LazyStretch")
-    win = MainWindow()
+    win = AppShell()          # launcher → LazyStretch / LazyStack / LazyMoonSun
     win.show()
     return app.exec()
 
