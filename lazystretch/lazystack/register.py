@@ -41,34 +41,49 @@ def _align_astroalign(frame: np.ndarray, ref: np.ndarray):
     return np.clip(out, 0.0, 1.0)
 
 
+class Aligner:
+    """Aligns single frames to a fixed reference (astroalign, else FFT translation).
+
+    Prepared once from the reference so the FFT fallback doesn't re-transform it per frame;
+    lets the caller register + stage frames one at a time (bounded memory) instead of holding
+    the whole aligned stack in RAM.
+    """
+
+    def __init__(self, ref: np.ndarray, *, log: Callable[[str], None] = _noop):
+        self.ref = np.asarray(ref, dtype=np.float64)
+        self.use_aa = astroalign_available()
+        self._ref_fft = None
+        if self.use_aa:
+            log("Registration: astroalign (asterism-matched affine).")
+        else:
+            log("Registration: astroalign not installed — FFT translation-only fallback "
+                "(no rotation correction; install astroalign for tracked/rotated sets).")
+            ref_wk, _ = fftreg.working(self.ref)
+            self._ref_fft = fftreg.make_ref(fftreg.gradient(ref_wk),
+                                            ref_wk.shape[1], ref_wk.shape[0])
+
+    def align(self, frame: np.ndarray) -> Optional[np.ndarray]:
+        f = np.asarray(frame, dtype=np.float64)
+        if self.use_aa:
+            return _align_astroalign(f, self.ref)
+        wk, k = fftreg.working(f)
+        dx, dy = fftreg.measure_against(self._ref_fft, fftreg.gradient(wk),
+                                        wk.shape[1], wk.shape[0])
+        return fftreg.apply_shift(f, -dx / k, -dy / k)
+
+
 def register(frames: List[np.ndarray], reference: int, *,
              log: Callable[[str], None] = _noop) -> Tuple[List[np.ndarray], List[int]]:
     """Align every frame to ``frames[reference]``. Returns (aligned, kept-indices)."""
-    ref = np.asarray(frames[reference], dtype=np.float64)
-    use_aa = astroalign_available()
-    if use_aa:
-        log("Registration: astroalign (asterism-matched affine).")
-    else:
-        log("Registration: astroalign not installed — FFT translation-only fallback "
-            "(no rotation correction; install astroalign for tracked/rotated sets).")
-        ref_wk, _ = fftreg.working(ref)
-        ref_fft = fftreg.make_ref(fftreg.gradient(ref_wk), ref_wk.shape[1], ref_wk.shape[0])
-
+    aligner = Aligner(np.asarray(frames[reference], dtype=np.float64), log=log)
     aligned, kept = [], []
     for i, f in enumerate(frames):
-        f = np.asarray(f, dtype=np.float64)
         if i == reference:
-            aligned.append(f)
+            aligned.append(np.asarray(f, dtype=np.float64))
             kept.append(i)
             continue
         try:
-            if use_aa:
-                aligned.append(_align_astroalign(f, ref))
-            else:
-                wk, k = fftreg.working(f)
-                dx, dy = fftreg.measure_against(ref_fft, fftreg.gradient(wk),
-                                                wk.shape[1], wk.shape[0])
-                aligned.append(fftreg.apply_shift(f, -dx / k, -dy / k))
+            aligned.append(aligner.align(f))
             kept.append(i)
         except Exception as e:
             log(f"  frame {i} failed to register ({e}) — dropped")

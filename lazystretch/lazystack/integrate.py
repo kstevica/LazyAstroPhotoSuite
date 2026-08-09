@@ -3,9 +3,14 @@
 Pure numpy: an iterative sigma-clip about the per-pixel mean (the port's stand-in for PI's
 WinsorizedSigmaClip), with optional per-frame weights (the PSFSignalWeight analogue). Used
 both to build calibration masters and to integrate the final registered light stack.
+
+``combine_files`` is the memory-bounded path: it memory-maps float32 ``.npy`` frames and
+combines them in row bands, so a big burst never builds an N×H×W cube (holding a whole
+30×40 MP stack at once is the OOM/bus-error that the in-RAM path hits on real data).
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import List, Optional, Sequence
 
 import numpy as np
@@ -52,3 +57,29 @@ def integrate(frames: Sequence[np.ndarray], *, weights: Optional[Sequence[float]
     """Integrate the final registered light stack (weighted sigma-clipped mean)."""
     cube = np.stack([np.asarray(f, dtype=np.float64) for f in frames], axis=0)
     return sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high, weights=weights)
+
+
+def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[float]] = None,
+                  sigma_low: float = 4.0, sigma_high: float = 3.0,
+                  target_bytes: int = 200_000_000) -> np.ndarray:
+    """Memory-bounded combine: mmap float32 ``.npy`` frames, sigma-clip in row bands.
+
+    Never materialises the full N×H×W cube — only ``N × band × W × C`` at a time — so a large
+    burst integrates in a bounded, few-hundred-MB footprint instead of tens of GB.
+    """
+    paths = [str(p) for p in paths]
+    if not paths:
+        raise ValueError("no frames to combine")
+    mm = [np.load(p, mmap_mode="r") for p in paths]
+    shape = mm[0].shape
+    H = shape[0]
+    n = len(paths)
+    row_bytes = int(np.prod(shape[1:])) * 4 * n            # float32 per output row × N frames
+    band = int(max(1, min(H, target_bytes // max(1, row_bytes))))
+    out = np.empty(shape, dtype=np.float32)
+    for y0 in range(0, H, band):
+        y1 = min(H, y0 + band)
+        cube = np.stack([np.asarray(m[y0:y1], dtype=np.float64) for m in mm], axis=0)
+        out[y0:y1] = sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high,
+                                     weights=weights).astype(np.float32)
+    return out

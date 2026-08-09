@@ -31,6 +31,32 @@ def test_sigma_clip_rejects_outliers():
     assert np.allclose(out, 0.4, atol=0.01)                   # outlier clipped away
 
 
+def test_combine_files_matches_in_memory(tmp_path):
+    rng = np.random.default_rng(0)
+    frames = [np.clip(rng.random((40, 50, 3)), 0, 1).astype(np.float32) for _ in range(6)]
+    paths = []
+    for i, f in enumerate(frames):
+        p = tmp_path / f"f_{i}.npy"
+        np.save(str(p), f)
+        paths.append(p)
+    streamed = integ.combine_files(paths, sigma_low=4, sigma_high=3)
+    in_mem = integ.integrate(frames, sigma_low=4, sigma_high=3)
+    assert streamed.shape == (40, 50, 3)
+    assert np.allclose(streamed, in_mem, atol=1e-5)       # bounded path == in-memory result
+
+
+def test_combine_files_row_banding(tmp_path):
+    # force multiple bands (tiny target) and confirm the result is unchanged
+    rng = np.random.default_rng(1)
+    frames = [np.clip(rng.random((64, 20, 3)), 0, 1).astype(np.float32) for _ in range(5)]
+    paths = [tmp_path / f"g_{i}.npy" for i in range(5)]
+    for p, f in zip(paths, frames):
+        np.save(str(p), f)
+    banded = integ.combine_files(paths, target_bytes=4000)   # ~1-2 rows per band
+    full = integ.integrate(frames)
+    assert np.allclose(banded, full, atol=1e-5)
+
+
 def test_calibrate_light_subtracts_dark_and_divides_flat():
     signal = np.full((10, 10), 0.30)
     dark = np.full((10, 10), 0.05)

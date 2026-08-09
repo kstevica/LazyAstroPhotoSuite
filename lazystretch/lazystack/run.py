@@ -8,6 +8,7 @@ FITS carrying the ``LZS*`` contract keywords the LazyStretch tab consumes.
 """
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
@@ -73,15 +74,34 @@ def _make_loader(folder: str, enabled: bool,
     return lambda path: cached_load(path, cache_dir, enabled=enabled, log=log)
 
 
-def _master(paths: List[str], load: Callable, log, label: str, *,
+def _master(paths: List[str], load: Callable, work: Path, log, label: str, *,
             bias: Optional[np.ndarray] = None) -> Optional[np.ndarray]:
-    frames = [f for f in (load(p) for p in paths) if f is not None]
-    if not frames:
+    """Build a calibration master, streaming each frame to disk (bounded memory)."""
+    tmp: List[Path] = []
+    for i, p in enumerate(paths):
+        f = load(p)
+        if f is None:
+            continue
+        if bias is not None:                             # flats are bias-calibrated first
+            f = cal.bias_calibrate(f, bias)
+        tp = work / f"m_{label}_{i:04d}.npy"
+        np.save(str(tp), np.asarray(f, dtype=np.float32))
+        tmp.append(tp)
+        del f
+    if not tmp:
         return None
-    if bias is not None:                                 # flats are bias-calibrated first
-        frames = [cal.bias_calibrate(f, bias) for f in frames]
-    log(f"  master {label}: combining {len(frames)} frame(s)")
-    return integ.combine_master(frames)
+    log(f"  master {label}: combining {len(tmp)} frame(s)")
+    m = integ.combine_files(tmp, sigma_low=5.0, sigma_high=5.0)
+    for tp in tmp:
+        try:
+            tp.unlink()
+        except OSError:
+            pass
+    return m
+
+
+def _cleanup(work: Path) -> None:
+    shutil.rmtree(work, ignore_errors=True)
 
 
 def measure_only(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optional[dict]:
@@ -102,7 +122,12 @@ def measure_only(folder: str, params, *, log: Callable[[str], None] = _noop) -> 
 
 
 def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optional[dict]:
-    """Full chain: calibrate → cosmetic → measure/cull → register → integrate → stamp."""
+    """Full chain: calibrate → cosmetic → measure/cull → register → integrate → stamp.
+
+    Memory-bounded: calibrated and registered frames are staged to disk as float32 ``.npy``
+    and streamed, so a large burst never holds the whole stack in RAM (that OOM'd/bus-errored
+    on real data). Peak RAM is a handful of frames regardless of burst size.
+    """
     sets = find_sets(folder)
     lights = sets["lights"]
     if len(lights) < 2:
@@ -111,14 +136,22 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log(f"LazyStack: {folder} — {len(lights)} lights, {len(sets['darks'])} darks, "
         f"{len(sets['flats'])} flats, {len(sets['biases'])} biases.")
 
+    out_dir = Path(folder) / "lazystack"
+    work = out_dir / "work"
+    work.mkdir(parents=True, exist_ok=True)
     load = _make_loader(folder, params.reuse_cache, log)
-    master_bias = _master(sets["biases"], load, log, "bias") if params.do_calibrate else None
-    master_dark = _master(sets["darks"], load, log, "dark") if params.do_calibrate else None
-    master_flat = (_master(sets["flats"], load, log, "flat", bias=master_bias)
+
+    master_bias = _master(sets["biases"], load, work, log, "bias") if params.do_calibrate else None
+    master_dark = _master(sets["darks"], load, work, log, "dark") if params.do_calibrate else None
+    master_flat = (_master(sets["flats"], load, work, log, "flat", bias=master_bias)
                    if params.do_calibrate else None)
 
-    log(f"Calibrating {len(lights)} lights…")
-    cframes, cnames, exposure = [], [], 0.0
+    # --- stage 1: calibrate + cosmetic + measure, staging each light to disk ---
+    log(f"Calibrating + measuring {len(lights)} lights…")
+    cal_paths: List[Path] = []
+    names: List[str] = []
+    measures: List[Optional[dict]] = []
+    exposure = 0.0
     for i, p in enumerate(lights):
         log(f"  [{i + 1}/{len(lights)}] {Path(p).name}…")
         img = load(p)
@@ -128,43 +161,76 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             img = cal.calibrate_light(img, bias=master_bias, dark=master_dark, flat=master_flat)
         if params.do_cosmetic:
             img = cal.cosmetic_correct(img, master_dark)
-        cframes.append(img)
-        cnames.append(Path(p).name)
+        img = np.asarray(img, dtype=np.float32)
+        measures.append(meas.measure_frame(img))
+        cp = work / f"cal_{i:04d}.npy"
+        np.save(str(cp), img)
+        cal_paths.append(cp)
+        names.append(Path(p).name)
         try:
             exp = load_image(p).keyword("EXPTIME")
             exposure += float(exp) if exp is not None else 0.0
         except Exception:
             pass
-    if len(cframes) < 2:
+        del img
+    if len(cal_paths) < 2:
+        _cleanup(work)
         log("Fewer than 2 calibrated lights — nothing to stack.")
         return None
 
-    log(f"Measuring + culling {len(cframes)} lights…")
-    measures = []
-    for i, f in enumerate(cframes):
-        log(f"  [{i + 1}/{len(cframes)}] {cnames[i]}: measuring…")
-        measures.append(meas.measure_frame(f))
     culled = meas.cull(measures, params, log=log)
     keep = culled["keep"]
-    ref_global = culled["reference"]
-    kept_frames = [cframes[i] for i in keep]
-    ref_local = keep.index(ref_global) if ref_global in keep else 0
+    ref_global = culled["reference"] if culled["reference"] in keep else keep[0]
 
-    aligned, kept_idx = reg.register(kept_frames, ref_local, log=log)
-    log(f"Integrating {len(aligned)} frame(s)…")
-    weights = [max(1e-3, measures[keep[i]]["snr"]) if measures[keep[i]] else 1.0
-               for i in kept_idx]
-    master = integ.integrate(aligned, weights=weights,
-                             sigma_low=params.sigma_low, sigma_high=params.sigma_high)
+    # --- stage 2: register the kept frames to the reference, streaming to disk ---
+    log(f"Registering {len(keep)} frames to reference {names[ref_global]}…")
+    ref = np.load(str(cal_paths[ref_global]))
+    aligner = reg.Aligner(ref, log=log)
+    reg_paths: List[Path] = []
+    weights: List[float] = []
+    for j, idx in enumerate(keep):
+        log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
+        if idx == ref_global:
+            aligned = ref
+        else:
+            frame = np.load(str(cal_paths[idx]))
+            try:
+                aligned = aligner.align(frame)
+            except Exception as e:
+                log(f"    dropped ({e})")
+                del frame
+                continue
+            del frame
+        rp = work / f"reg_{idx:04d}.npy"
+        np.save(str(rp), np.asarray(aligned, dtype=np.float32))
+        reg_paths.append(rp)
+        m = measures[idx]
+        weights.append(max(1e-3, m["snr"]) if m else 1.0)
+        if idx != ref_global:
+            del aligned
+    del ref
+    for cp in cal_paths:                                 # calibrated staging no longer needed
+        try:
+            cp.unlink()
+        except OSError:
+            pass
+    if not reg_paths:
+        _cleanup(work)
+        log("No frames registered — nothing to integrate.")
+        return None
+
+    # --- stage 3: integrate the registered stack (streamed in row bands) ---
+    log(f"Integrating {len(reg_paths)} frame(s)…")
+    master = integ.combine_files(reg_paths, weights=weights,
+                                 sigma_low=params.sigma_low, sigma_high=params.sigma_high)
 
     edges = contract.measure_edges(master)
-    header = contract.contract_header(len(aligned), edges, exposure)
-    out_dir = Path(folder) / "lazystack"
-    out_dir.mkdir(parents=True, exist_ok=True)
+    header = contract.contract_header(len(reg_paths), edges, exposure)
     master_path = out_dir / MASTER_NAME
     save_image(str(master_path), master, bit_depth=16, header=header)
-    log(f"Master: {master_path}  (LZSNSUB={len(aligned)}, crop L{edges['L']} R{edges['R']} "
+    log(f"Master: {master_path}  (LZSNSUB={len(reg_paths)}, crop L{edges['L']} R{edges['R']} "
         f"T{edges['T']} B{edges['B']})")
-    return {"master": master, "master_path": str(master_path), "n_stacked": len(aligned),
+    _cleanup(work)
+    return {"master": master, "master_path": str(master_path), "n_stacked": len(reg_paths),
             "n_lights": len(lights), "cull": culled, "edges": edges,
             "registered_with": "astroalign" if reg.astroalign_available() else "fft-translation"}
