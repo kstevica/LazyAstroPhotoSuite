@@ -17,7 +17,14 @@ import numpy as np
 
 from ..io.cache import _cache_key, cached_load
 from ..io.image_io import RAW_EXT, load_image, save_image
-from . import calibrate as cal, contract, integrate as integ, measure as meas, register as reg
+from . import (
+    calibrate as cal,
+    contract,
+    integrate as integ,
+    measure as meas,
+    normalize as nrm,
+    register as reg,
+)
 
 FRAME_EXTS = {".xisf", ".fits", ".fit", ".fts", ".tif", ".tiff", ".png"}
 _SUBSETS = ("lights", "darks", "flats", "biases")
@@ -281,13 +288,18 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     ref_key = keys[ref_global] if staged else None
     ref = _get(frames[ref_global])
     aligner = reg.Aligner(ref, log=log)
+    normalize = bool(params.normalize)
+    ref_med, ref_sig = nrm.frame_stats(ref) if normalize else (0.0, 1.0)
+    nsuf = "_n" if normalize else ""                      # normalization changes reg output
+    if normalize:
+        log("Normalizing each frame to the reference (background + scale).")
     aligned_handles: list = []
     weights: List[float] = []
     for j, idx in enumerate(keep):
         log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
         m = measures[idx]
         w = max(1e-3, m["snr"]) if m else 1.0
-        reg_path = (work / f"reg_{keys[idx]}_{ref_key}.npy") if staged else None
+        reg_path = (work / f"reg_{keys[idx]}_{ref_key}{nsuf}.npy") if staged else None
         if reuse and reg_path is not None and reg_path.exists():
             log("    reusing cached registration")
             aligned_handles.append(reg_path)
@@ -302,6 +314,8 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             except Exception as e:
                 log(f"    dropped ({e})")
                 continue
+        if normalize:
+            aligned = nrm.normalize_to_ref(aligned, ref_med, ref_sig)
         weights.append(w)
         if staged:
             np.save(str(reg_path), np.asarray(aligned, dtype=np.float32))

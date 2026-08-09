@@ -19,5 +19,6 @@ class LazyStackParams:
     do_cosmetic: bool = True
     do_debayer: bool = True
     do_register: bool = True
+    normalize: bool = True         # match each frame's background+scale to the reference
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory

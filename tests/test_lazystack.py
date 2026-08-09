@@ -4,7 +4,7 @@ import pytest
 
 from lazystretch.io.image_io import load_image, save_image
 from lazystretch.lazystack import calibrate as cal, contract, integrate as integ
-from lazystretch.lazystack import measure as meas, register as reg, run as lsrun
+from lazystretch.lazystack import measure as meas, normalize as nrm, register as reg, run as lsrun
 from lazystretch.lazystack.model import LazyStackParams
 from lazystretch.moonsun import register as fftreg
 from tests.test_moonsun_register import _disc
@@ -55,6 +55,25 @@ def test_combine_files_row_banding(tmp_path):
     banded = integ.combine_files(paths, target_bytes=4000)   # ~1-2 rows per band
     full = integ.integrate(frames)
     assert np.allclose(banded, full, atol=1e-5)
+
+
+def test_normalize_matches_background_and_scale():
+    ref = _disc(120, radius=40) * 0.5 + 0.10          # bg ~0.10
+    ref_med, ref_sig = nrm.frame_stats(ref)
+    bright_bg = ref + 0.06                             # sky drifted up
+    out = nrm.normalize_to_ref(bright_bg, ref_med, ref_sig)
+    assert abs(float(np.median(out)) - ref_med) < 0.01    # background matched back
+    dim = (ref - 0.10) * 0.5 + 0.10                    # transparency loss (half signal)
+    out2 = nrm.normalize_to_ref(dim, ref_med, ref_sig)
+    m2, s2 = nrm.frame_stats(out2)
+    assert abs(s2 - ref_sig) < 0.05 * ref_sig + 1e-3      # signal scale restored
+
+
+def test_normalize_reference_is_identity():
+    ref = _disc(120, radius=40) * 0.6 + 0.05
+    ref_med, ref_sig = nrm.frame_stats(ref)
+    out = nrm.normalize_to_ref(ref, ref_med, ref_sig)
+    assert np.allclose(out, ref, atol=1e-9)
 
 
 def test_calibrate_light_subtracts_dark_and_divides_flat():
