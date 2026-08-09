@@ -13,6 +13,7 @@ from typing import Callable, List, Optional
 
 import numpy as np
 
+from ..io.cache import cached_load
 from ..io.image_io import RAW_EXT as RAW_EXTS, load_image, save_image
 from . import finish as finish_mod, stack
 
@@ -51,17 +52,16 @@ def find_frames(folder: str) -> dict:
     return {"frames": frames, "raws": raws}
 
 
-def _loader(path: str) -> Optional[np.ndarray]:
-    try:
-        return load_image(path).data
-    except Exception:
-        return None
-
-
 def _out_dir(folder: str) -> Path:
     d = Path(folder) / "lazysun"
     d.mkdir(parents=True, exist_ok=True)
     return d
+
+
+def _make_loader(folder: str) -> Callable[[str], Optional[np.ndarray]]:
+    """A frame loader that caches decoded raws under <folder>/lazysun/cache."""
+    cache_dir = Path(folder) / "lazysun" / "cache"
+    return lambda path: cached_load(path, cache_dir)
 
 
 def stack_burst_folder(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optional[dict]:
@@ -74,7 +74,7 @@ def stack_burst_folder(folder: str, params, *, log: Callable[[str], None] = _noo
         log(f"Found {len(frames)} readable frame(s) — a burst needs at least 2.")
         return None
     log(f"Burst: {folder} ({len(frames)} frames).")
-    res = stack.stack_burst(frames, _loader, keep=params.keep, log=log)
+    res = stack.stack_burst(frames, _make_loader(folder), keep=params.keep, log=log)
     if res is None:
         return None
     master_path = _out_dir(folder) / MASTER_NAME
@@ -99,7 +99,7 @@ def stack_multipoint_folder(folder: str, params, *,
         log(f"Found {len(frames)} frame(s) — a burst needs at least 2.")
         return None
     log(f"Multi-point: {folder} ({len(frames)} frames). Reference: {MASTER_NAME}")
-    res = stack.stack_multipoint(frames, _loader, master, params, log=log)
+    res = stack.stack_multipoint(frames, _make_loader(folder), master, params, log=log)
     if res is None:
         return None
     mp_path = _out_dir(folder) / MP_MASTER_NAME
