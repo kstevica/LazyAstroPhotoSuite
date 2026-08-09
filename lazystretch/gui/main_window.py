@@ -5,7 +5,8 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -23,6 +24,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QScrollArea,
     QSplitter,
+    QTabWidget,
     QVBoxLayout,
     QWidget,
 )
@@ -47,7 +49,7 @@ from ..io.image_io import LoadedImage, load_image, save_image
 from ..io.recipes import apply_recipe, load_recipe, recipe_from_params, save_recipe
 from ..objects.model import Parameters
 from ..objects.presets import curated_for
-from .preview import PreviewView
+from .preview import FullScreenViewer, PreviewView
 from .widgets import FilePicker, FloatSlider
 from .worker import PipelineWorker
 
@@ -114,6 +116,9 @@ class MainWindow(QWidget):
         self._last_params: Optional[Parameters] = None
         self._hist_store: Optional[HistoryStore] = None   # disk-backed, per-master
         self._refreshing_history = False                  # guard reentrant selection signals
+        self._fs_viewer: Optional[FullScreenViewer] = None  # kept alive while full-screen
+        self._work_image: Optional[np.ndarray] = None     # base override: a history image to
+        #                                                 continue from (else the loaded master)
 
         self.checks: Dict[str, QCheckBox] = {}
         self.dials: Dict[str, FloatSlider] = {}
@@ -132,12 +137,28 @@ class MainWindow(QWidget):
 
     # ---------------------------------------------------------------- left
 
-    def _build_left(self) -> QWidget:
-        # Two columns: [Target/Identify/Output/Narrowband/Recipe] | [Adjustments/Options].
-        col1 = QVBoxLayout()
-        col2 = QVBoxLayout()
+    @staticmethod
+    def _scrolled(inner: QWidget) -> QScrollArea:
+        """Wrap a panel in a resizable scroll area (each tab scrolls on its own)."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(inner)
+        return scroll
 
-        # --- column 1 ---
+    def _build_left(self) -> QWidget:
+        # Two tabs: "Setup" (target/identify/output/narrowband) and "Adjust"
+        # (adjustments + options side by side, plus the recipe buttons).
+        tabs = QTabWidget()
+        tabs.addTab(self._scrolled(self._build_setup_tab()), "Setup")
+        tabs.addTab(self._scrolled(self._build_adjust_tab()), "Adjust")
+        tabs.setMinimumWidth(720)
+        return tabs
+
+    def _build_setup_tab(self) -> QWidget:
+        """Tab 1: Target, Identify, Output, Narrowband — the pre-processing setup."""
+        w = QWidget()
+        col1 = QVBoxLayout(w)
+
         g_target = QGroupBox("Target")
         v = QVBoxLayout(g_target)
         self.target_picker = FilePicker("Open master…")
@@ -183,17 +204,12 @@ class MainWindow(QWidget):
         self.class_combo.currentTextChanged.connect(self._apply_class_profile)
         self.palette_combo = QComboBox()
         self.palette_combo.addItems(palettes_for("auto"))
-        self.crop_slider = FloatSlider("Crop %", 0.0, 10.0, 3.0, decimals=1)
-        self.auto_check = QCheckBox("Auto crop % + gradient tool")
-        self.auto_check.setChecked(True)
         grid.addWidget(QLabel("Data type:"), 0, 0)
         grid.addWidget(self.type_label, 0, 1)
         grid.addWidget(QLabel("Object class:"), 1, 0)
         grid.addWidget(self.class_combo, 1, 1)
         grid.addWidget(QLabel("Palette:"), 2, 0)
         grid.addWidget(self.palette_combo, 2, 1)
-        grid.addWidget(self.crop_slider, 3, 0, 1, 2)
-        grid.addWidget(self.auto_check, 4, 0, 1, 2)
         col1.addWidget(g_out)
 
         g_nb = QGroupBox("Narrowband channels")
@@ -206,21 +222,21 @@ class MainWindow(QWidget):
             grid.addWidget(QLabel(lbl), i, 0)
             grid.addWidget(pk, i, 1)
         col1.addWidget(g_nb)
-
-        g_rec = QGroupBox("Recipe")
-        rv = QHBoxLayout(g_rec)
-        save_rec = QPushButton("Save recipe…")
-        load_rec = QPushButton("Load recipe…")
-        save_rec.clicked.connect(self._save_recipe)
-        load_rec.clicked.connect(self._load_recipe)
-        rv.addWidget(save_rec)
-        rv.addWidget(load_rec)
-        col1.addWidget(g_rec)
         col1.addStretch(1)
+        return w
 
-        # --- column 2 ---
+    def _build_adjust_tab(self) -> QWidget:
+        """Tab 2: Adjustments and Options side by side, with the recipe buttons below."""
+        w = QWidget()
+        outer = QVBoxLayout(w)
+
         g_adj = QGroupBox("Adjustments")
         v = QVBoxLayout(g_adj)
+        self.crop_slider = FloatSlider("Crop %", 0.0, 10.0, 3.0, decimals=1)
+        self.auto_check = QCheckBox("Auto crop % + gradient tool")
+        self.auto_check.setChecked(True)
+        v.addWidget(self.crop_slider)
+        v.addWidget(self.auto_check)
         self._dial_defaults: Dict[str, float] = {}
         for attr, label, lo, hi, dec, dflt in _DIALS:
             fs = FloatSlider(label, lo, hi, dflt, decimals=dec)
@@ -230,7 +246,7 @@ class MainWindow(QWidget):
         reset = QPushButton("Reset to class defaults")
         reset.clicked.connect(self._reset_dials)
         v.addWidget(reset)
-        col2.addWidget(g_adj)
+        v.addStretch(1)
 
         g_opt = QGroupBox("Options")
         ov = QVBoxLayout(g_opt)
@@ -240,22 +256,23 @@ class MainWindow(QWidget):
             cb.setChecked(bool(getattr(defaults, attr)))
             self.checks[attr] = cb
             ov.addWidget(cb)
-        col2.addWidget(g_opt)
-        col2.addStretch(1)
+        ov.addStretch(1)
 
         cols = QHBoxLayout()
-        w1, w2 = QWidget(), QWidget()
-        w1.setLayout(col1)
-        w2.setLayout(col2)
-        cols.addWidget(w1)
-        cols.addWidget(w2)
-        holder = QWidget()
-        holder.setLayout(cols)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(holder)
-        scroll.setMinimumWidth(720)
-        return scroll
+        cols.addWidget(g_adj)
+        cols.addWidget(g_opt)
+        outer.addLayout(cols, 1)
+
+        g_rec = QGroupBox("Recipe")
+        rv = QHBoxLayout(g_rec)
+        save_rec = QPushButton("Save recipe…")
+        load_rec = QPushButton("Load recipe…")
+        save_rec.clicked.connect(self._save_recipe)
+        load_rec.clicked.connect(self._load_recipe)
+        rv.addWidget(save_rec)
+        rv.addWidget(load_rec)
+        outer.addWidget(g_rec)
+        return w
 
     # --------------------------------------------------------------- right
 
@@ -269,11 +286,16 @@ class MainWindow(QWidget):
         self.execute_btn = QPushButton("Execute")
         self.save_btn = QPushButton("Save Result…")
         self.save_btn.setEnabled(False)
+        self.fullscreen_btn = QPushButton("⛶ Full screen")
+        self.fullscreen_btn.setToolTip("Show the current preview full-screen (Esc to close).")
         self.preview_btn.clicked.connect(lambda: self._run(preview=True, mode="preview"))
         self.execute_btn.clicked.connect(lambda: self._run(preview=False, mode="execute"))
         self.save_btn.clicked.connect(self._save_result)
+        self.fullscreen_btn.clicked.connect(self._show_fullscreen)
         for b in (self.preview_btn, self.execute_btn, self.save_btn):
             top_btns.addWidget(b)
+        top_btns.addStretch(1)
+        top_btns.addWidget(self.fullscreen_btn)
         v.addLayout(top_btns)
 
         self.preview = PreviewView()
@@ -296,6 +318,11 @@ class MainWindow(QWidget):
         hdr = QHBoxLayout()
         hdr.addWidget(QLabel(f"History — select to preview (last {MAX_ITEMS}, saved on disk)"))
         hdr.addStretch(1)
+        self.open_folder_btn = QPushButton("Open folder")
+        self.open_folder_btn.setToolTip("Open the history folder in the file manager.")
+        self.open_folder_btn.setFocusPolicy(Qt.NoFocus)
+        self.open_folder_btn.clicked.connect(self._open_history_folder)
+        hdr.addWidget(self.open_folder_btn)
         self.clear_btn = QPushButton("Clear")
         self.clear_btn.setFixedWidth(64)
         self.clear_btn.setFocusPolicy(Qt.NoFocus)
@@ -312,7 +339,6 @@ class MainWindow(QWidget):
 
         ctrl = QVBoxLayout()
         star_row = QHBoxLayout()
-        star_row.addWidget(QLabel("Rate:"))
         self.star_btns = []
         for i in range(5):
             b = QPushButton("☆")
@@ -337,6 +363,14 @@ class MainWindow(QWidget):
         for b in (self.keep_btn, self.discard_btn, self.remove_btn):
             b.setFocusPolicy(Qt.NoFocus)      # keep the list's selection while acting on it
             ctrl.addWidget(b)
+        self.continue_btn = QPushButton("Continue from image ▸")
+        self.continue_btn.setToolTip(
+            "Use this rendered image (16-bit) as the base for further processing, "
+            "instead of the master. Enables polish mode; re-open the master to return to it.")
+        self.continue_btn.setFocusPolicy(Qt.NoFocus)
+        self.continue_btn.clicked.connect(self._continue_from_selected)
+        ctrl.addSpacing(6)
+        ctrl.addWidget(self.continue_btn)
         ctrl.addStretch(1)
         ctrl_w = QWidget()
         ctrl_w.setLayout(ctrl)
@@ -364,6 +398,19 @@ class MainWindow(QWidget):
         return w
 
     # ------------------------------------------------------------- actions
+
+    def _show_fullscreen(self):
+        """Open the image currently in the preview in a full-screen viewer."""
+        arr = self.preview.current_array()
+        if arr is None:
+            self.status_label.setText("Nothing to show full-screen yet — Preview first.")
+            return
+        self._fs_viewer = FullScreenViewer()   # kept on self so it isn't GC'd while open
+        self._fs_viewer.setWindowTitle("LazyStretch — full screen (Esc to close)")
+        self._fs_viewer.set_image(arr, keep_view=False)
+        self._fs_viewer.showFullScreen()
+        self._fs_viewer.raise_()
+        self._fs_viewer.activateWindow()
 
     def _apply_class_profile(self, cls: str):
         """Class selection overwrites the six profile-driven toggles (PI behavior)."""
@@ -406,6 +453,7 @@ class MainWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Load failed", str(e))
             return
+        self._work_image = None       # a fresh master supersedes any "continue from" base
         dtype = detect_data_type(self.loaded.keyword("FILTER"), self.loaded.is_color,
                                  self.loaded.keyword("BAYERPAT"))
         self.type_label.setText(dtype)
@@ -577,7 +625,11 @@ class MainWindow(QWidget):
             return
         params = self._collect_params()
         self._last_params = params
-        image = self.loaded.data if self.loaded is not None else None
+        # A history image the user chose to continue from overrides the master as the base.
+        if self._work_image is not None:
+            image = self._work_image
+        else:
+            image = self.loaded.data if self.loaded is not None else None
         if image is None and params.ha is None:
             self.status_label.setText("Load an image or assign Ha + OIII channels.")
             return
@@ -720,6 +772,51 @@ class MainWindow(QWidget):
             return
         self._hist_store.remove(item)
         self._refresh_history_list()
+
+    def _continue_from_selected(self):
+        """Make the selected history image the base for further processing.
+
+        Loads its full-precision (16-bit) pixels as the working image so Preview/Execute
+        build on it instead of the master, switches to polish mode (no re-stretch or
+        re-calibration of an already-finished frame), and drops crop (the base is already
+        cropped). Re-opening the master returns to it.
+        """
+        item = self._selected_item()
+        if item is None or self._hist_store is None:
+            return
+        img = self._hist_store.load_image_data(item)
+        if img is None:
+            self.status_label.setText("Can't continue — the history image is missing on disk.")
+            return
+        self._work_image = np.asarray(img, dtype=np.float64)
+        self.checks["inputStretched"].setChecked(True)   # finished frame -> polish only
+        self.crop_slider.set_value(0.0)                  # already cropped; don't re-crop
+        self.auto_check.setChecked(False)
+        self.result_image = self._work_image
+        self.result_stars = None
+        self.save_btn.setEnabled(True)
+        self.preview.set_image(self._work_image, keep_view=True)
+        label = item.get("label", "")
+        self.detected_label.setText(
+            f"Base = history image “{label}” (polish mode). Preview/Execute build on it; "
+            "re-open the master to go back.")
+        self.status_label.setText("Continuing from the selected history image.")
+
+    def _open_history_folder(self):
+        """Open the per-master history folder in the OS file manager (Win/mac/Linux).
+
+        ``QDesktopServices.openUrl`` on a ``file://`` URL is Qt's cross-platform shell-open:
+        Explorer on Windows, Finder on macOS, the default file manager (xdg-open) on Linux.
+        """
+        if self._hist_store is None:
+            self.status_label.setText("Load a master first — history is saved next to it.")
+            return
+        d = self._hist_store.dir
+        d.mkdir(parents=True, exist_ok=True)             # may not exist until the first run
+        if QDesktopServices.openUrl(QUrl.fromLocalFile(str(d))):
+            self.status_label.setText(f"Opened {d}")
+        else:
+            self.status_label.setText(f"Couldn't open the file manager — folder is: {d}")
 
     def _clear_history(self):
         if self._hist_store is None or not self._hist_store.items:

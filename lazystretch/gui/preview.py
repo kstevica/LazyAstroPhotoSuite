@@ -4,7 +4,12 @@ from __future__ import annotations
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QImage, QPixmap
-from PySide6.QtWidgets import QGraphicsPixmapItem, QGraphicsScene, QGraphicsView
+from PySide6.QtWidgets import (
+    QGraphicsPixmapItem,
+    QGraphicsScene,
+    QGraphicsView,
+    QLabel,
+)
 
 
 def ndarray_to_qimage(a: np.ndarray) -> QImage:
@@ -49,6 +54,11 @@ class PreviewView(QGraphicsView):
         self._has_image = False
         self._user_zoomed = False
         self._img_size = None            # (w, h) of the current pixmap
+        self._array = None               # last numpy array set (for the full-screen viewer)
+
+    def current_array(self) -> "np.ndarray | None":
+        """The numpy image currently displayed, or ``None`` if nothing is shown yet."""
+        return self._array
 
     def set_image(self, a: np.ndarray, keep_view: bool | None = None):
         """Show ``a``. When the new image is the SAME size as the current one (a
@@ -57,6 +67,7 @@ class PreviewView(QGraphicsView):
         forces the choice: False always fits, True keeps the view when the size matches.
         """
         a = np.asarray(a)
+        self._array = a
         new_size = (a.shape[1], a.shape[0])
         keep = (self._has_image and self._img_size == new_size and keep_view is not False)
         saved = None
@@ -107,3 +118,28 @@ class PreviewView(QGraphicsView):
     def mouseDoubleClickEvent(self, event):
         self.fit()
         super().mouseDoubleClickEvent(event)
+
+
+class FullScreenViewer(PreviewView):
+    """A borderless full-screen image viewer with the same zoom/pan behaviour.
+
+    Opened from the main window's *Full screen* button on whatever image is on the
+    preview. Esc closes it; scroll zooms, drag pans, double-click refits.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._hint = QLabel(
+            "Esc to close   ·   scroll to zoom   ·   drag to pan   ·   double-click to fit",
+            self)
+        self._hint.setStyleSheet(
+            "color: white; background: rgba(0, 0, 0, 150); padding: 5px 10px; "
+            "border-radius: 5px;")
+        self._hint.move(14, 14)
+        self._hint.adjustSize()
+
+    def keyPressEvent(self, event):
+        if event.key() == Qt.Key_Escape:
+            self.close()
+        else:
+            super().keyPressEvent(event)

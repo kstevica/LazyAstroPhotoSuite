@@ -63,6 +63,79 @@ def test_float_slider_maps_range(qapp):
     assert abs(fs.value() - 0.25) < 1e-3
 
 
+def test_left_panel_has_setup_and_adjust_tabs(qapp):
+    from PySide6.QtWidgets import QTabWidget
+
+    from lazystretch.gui.main_window import MainWindow
+
+    w = MainWindow()
+    tabs = w.findChild(QTabWidget)
+    assert tabs is not None
+    assert [tabs.tabText(i) for i in range(tabs.count())] == ["Setup", "Adjust"]
+
+
+def test_fullscreen_button_needs_an_image_then_opens(qapp):
+    from lazystretch.gui.main_window import MainWindow
+    from lazystretch.gui.preview import FullScreenViewer
+
+    w = MainWindow()
+    assert w.preview.current_array() is None
+    w._show_fullscreen()                      # nothing shown yet -> no viewer, just a message
+    assert w._fs_viewer is None
+    w.preview.set_image(np.zeros((20, 30, 3)), keep_view=False)
+    w._show_fullscreen()
+    assert isinstance(w._fs_viewer, FullScreenViewer)
+    assert w._fs_viewer.current_array() is not None
+    w._fs_viewer.close()
+
+
+def test_continue_from_history_sets_base_and_polish_mode(qapp, tmp_path):
+    """Continuing from a history item overrides the master as the base and enters polish mode."""
+    from lazystretch.gui.main_window import MainWindow
+    from lazystretch.io.history import HistoryStore
+
+    w = MainWindow()
+    master = tmp_path / "M42.tif"
+    master.write_bytes(b"x")
+    w._hist_store = HistoryStore(str(master))
+    rendered = np.clip(np.random.default_rng(0).random((24, 32, 3)), 0, 1)
+    w._hist_store.add(rendered, {"objectClass": "emission"}, "run A", "preview", 12)
+    w._refresh_history_list()
+    w.history_list.setCurrentRow(0)
+
+    w.crop_slider.set_value(5.0)
+    w.checks["inputStretched"].setChecked(False)
+    w._continue_from_selected()
+
+    assert w._work_image is not None
+    assert w._work_image.shape == (24, 32, 3)
+    assert w.checks["inputStretched"].isChecked()          # finished frame -> polish only
+    assert abs(w.crop_slider.value()) < 1e-6               # crop dropped (already cropped)
+    # _run would now feed the history image, not the master
+    p = w._collect_params()
+    assert p.inputStretched is True
+
+
+def test_open_history_folder_creates_and_opens_dir(qapp, tmp_path, monkeypatch):
+    from PySide6.QtGui import QDesktopServices
+
+    from lazystretch.gui.main_window import MainWindow
+    from lazystretch.io.history import HistoryStore
+
+    w = MainWindow()
+    w._hist_store = None
+    w._open_history_folder()                       # no master -> graceful, no crash
+    master = tmp_path / "M42.tif"
+    master.write_bytes(b"x")
+    w._hist_store = HistoryStore(str(master))
+    opened = []
+    monkeypatch.setattr(QDesktopServices, "openUrl",
+                        lambda url: (opened.append(url.toLocalFile()) or True))
+    w._open_history_folder()
+    assert w._hist_store.dir.is_dir()              # created even before the first run
+    assert opened and opened[0] == str(w._hist_store.dir)
+
+
 def test_gui_recipe_controls_roundtrip(qapp, tmp_path):
     """Set controls -> save recipe -> load into a fresh window -> controls match."""
     from lazystretch.gui.main_window import MainWindow
