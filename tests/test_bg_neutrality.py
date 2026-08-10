@@ -51,6 +51,16 @@ def test_milkyway_pipeline_uses_darklane_and_reducecast_not_abe():
     assert "ABE" not in steps                     # generic background extraction disabled for MW
 
 
+def test_galaxy_disables_halo_tamer_by_default():
+    # Galaxy execute previously carved dark rings: DeepSNR smooths bright-star halos, which
+    # false-trigger Halo Tamer's ring detector on stars sitting over the galaxy's extended light.
+    p = Parameters.for_object("galaxy")
+    assert p.haloTamer is False
+    res = run_pipeline(_osc(), p, preview=False)
+    assert not any("Halo Tamer" in s for s in res.steps_run)     # step not scheduled for galaxy
+    assert Parameters.for_object("emission").haloTamer is True    # other classes unchanged
+
+
 def test_debug_background_captures_the_model():
     img = _osc()
     on = run_pipeline(img, Parameters.for_object("emission", debugBackground=True), preview=False)
