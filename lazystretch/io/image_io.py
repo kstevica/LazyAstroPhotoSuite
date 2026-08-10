@@ -126,7 +126,7 @@ def _load_xisf(path: Path) -> LoadedImage:
 
 # Bump whenever the raw decode changes in a way that alters pixels — the decode cache key
 # includes this, so a change re-decodes raws (and re-stacks) instead of serving stale TIFFs.
-RAW_DECODER_VERSION = "2-xtrans-markesteijn"
+RAW_DECODER_VERSION = "3-markesteijn-noflip"
 
 
 def _raw_demosaic(raw):
@@ -155,6 +155,11 @@ def _load_raw(path: Path) -> LoadedImage:
     sensor's linear signal; bursts of raws behave like linear FITS/XISF frames. The demosaic is
     chosen by :func:`_raw_demosaic` — **3-pass Markesteijn on X-Trans** (was VNG, whose 1-pass
     produced the red/blue colour speckle), DHT on Bayer.
+
+    ``user_flip=0`` disables EXIF-orientation auto-rotation so every frame decodes in native
+    SENSOR orientation. Without it, a set that mixes portrait/landscape orientation tags (e.g.
+    darks shot with the camera set down) decodes to transposed dimensions and calibration fails
+    to broadcast ("operands could not be broadcast together with shapes (H,W,3) (W,H,3)").
     """
     try:
         import rawpy
@@ -166,7 +171,7 @@ def _load_raw(path: Path) -> LoadedImage:
         algo, _algo_name, _xtrans = _raw_demosaic(raw)
         kwargs = dict(gamma=(1, 1), no_auto_bright=True, use_camera_wb=False,
                       use_auto_wb=False, user_wb=[1.0, 1.0, 1.0, 1.0],
-                      output_bps=16, four_color_rgb=False)
+                      output_bps=16, four_color_rgb=False, user_flip=0)
         if algo is not None:
             kwargs["demosaic_algorithm"] = algo
         rgb = raw.postprocess(**kwargs)                 # (H, W, 3) uint16, linear

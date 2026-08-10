@@ -365,6 +365,14 @@ def test_stack_crops_dithered_master_smaller_than_source(tmp_path):
     assert res["master_path"]
 
 
+def test_calibrate_light_shape_mismatch_raises_clear_error():
+    light = np.zeros((10, 12, 3))
+    dark = np.zeros((12, 10, 3))                       # transposed (portrait vs landscape)
+    with pytest.raises(ValueError) as ei:
+        cal.calibrate_light(light, dark=dark)
+    assert "does not match" in str(ei.value) and "orientation" in str(ei.value).lower()
+
+
 def test_stack_writes_noise_map_companion(tmp_path):
     pytest.importorskip("photutils")
     lights = tmp_path / "lights"

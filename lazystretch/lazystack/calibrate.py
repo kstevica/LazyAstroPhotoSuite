@@ -21,17 +21,29 @@ def _local_median(plane: np.ndarray, size: int = 3) -> np.ndarray:
     return median_filter(plane, size=size, mode="nearest")
 
 
+def _same_shape(name: str, cal: np.ndarray, ref_shape: tuple) -> np.ndarray:
+    """Return ``cal`` as float64, or raise a clear error if it doesn't match the light's shape."""
+    a = np.asarray(cal, dtype=np.float64)
+    if a.shape != ref_shape:
+        raise ValueError(
+            f"master {name} shape {a.shape} does not match the light frame {ref_shape} — the set "
+            f"has inconsistent dimensions/orientation (commonly a mix of portrait/landscape EXIF "
+            f"tags across lights vs. darks/flats). Use one camera in one orientation for the whole set."
+        )
+    return a
+
+
 def calibrate_light(light: np.ndarray, *, bias: Optional[np.ndarray] = None,
                     dark: Optional[np.ndarray] = None,
                     flat: Optional[np.ndarray] = None) -> np.ndarray:
     """Calibrate one light: subtract dark (or bias), divide by the normalized flat."""
     out = np.asarray(light, dtype=np.float64)
     if dark is not None:
-        out = out - np.asarray(dark, dtype=np.float64)      # dark includes the bias
+        out = out - _same_shape("dark", dark, out.shape)    # dark includes the bias
     elif bias is not None:
-        out = out - np.asarray(bias, dtype=np.float64)
+        out = out - _same_shape("bias", bias, out.shape)
     if flat is not None:
-        f = np.asarray(flat, dtype=np.float64)
+        f = _same_shape("flat", flat, out.shape)
         norm = float(np.mean(f)) or 1.0
         fn = f / norm
         out = np.divide(out, fn, out=np.zeros_like(out), where=fn > 1e-6)
