@@ -70,10 +70,26 @@ import numpy as np
 _WHITE_STRUCTURE_FRACTION: float = 0.01
 # Never trust a white reference built from fewer than this many pixels.
 _MIN_STRUCTURE_PIXELS: int = 64
+# Background/sky reference = the darkest luminance fraction. On a wall-to-wall Milky Way the
+# whole-frame median is galactic SIGNAL, not sky, so neutralising to it leaves a cast (the
+# audit's root cause). Keying on the darkest pixels finds the closest-to-empty sky even when no
+# truly empty sky exists — and reduces to the same answer on fields that do have empty sky.
+_SKY_DARKEST_FRACTION: float = 0.30
 
 
 def _is_rgb(a: np.ndarray) -> bool:
     return a.ndim == 3 and a.shape[2] >= 3
+
+
+def _darkest_sky_mask(lum: np.ndarray, frac: float = _SKY_DARKEST_FRACTION) -> np.ndarray:
+    """Boolean mask of the darkest ``frac`` of luminance — the background/sky reference."""
+    finite = np.isfinite(lum)
+    vals = lum[finite]
+    if vals.size == 0:
+        return np.ones(lum.shape, dtype=bool)
+    thr = float(np.quantile(vals, frac))
+    mask = finite & (lum <= thr)
+    return mask if int(mask.sum()) >= _MIN_STRUCTURE_PIXELS else finite
 
 
 def _rescale_as_needed(a: np.ndarray) -> np.ndarray:
@@ -110,8 +126,9 @@ def background_neutralize(img, target: float = 0.001) -> np.ndarray:
 
     out = a.copy()
     n_ch = a.shape[2]
+    sky = _darkest_sky_mask(a[..., :n_ch].mean(axis=2))   # darkest-patch sky, not whole-frame signal
     for c in range(n_ch):
-        bg = float(np.median(a[..., c]))          # robust per-channel background
+        bg = float(np.median(a[..., c][sky]))     # robust per-channel background over the sky
         out[..., c] = a[..., c] - bg + target      # additive offset -> target
     return _rescale_as_needed(out)
 
@@ -165,8 +182,12 @@ def color_calibration(
     if int(np.count_nonzero(struct)) < _MIN_STRUCTURE_PIXELS:
         return a.copy()
 
-    # --- Background reference: pixels inside [background_low, background_high] -----
-    bg_mask = (lum >= background_low) & (lum <= background_high)
+    # --- Background reference: the darkest-patch sky (within [background_low, background_high]) --
+    # Keying the white-reference background subtraction on the darkest sky (not a wide luminance
+    # band that, on a wall-to-wall field, is full of signal) keeps the balance honest.
+    bg_mask = _darkest_sky_mask(lum) & (lum >= background_low) & (lum <= background_high)
+    if int(bg_mask.sum()) < _MIN_STRUCTURE_PIXELS:
+        bg_mask = (lum >= background_low) & (lum <= background_high)
 
     # Per-channel white value W[c] and background value B[c] over the SAME masks.
     w = np.empty(n_ch, dtype=np.float64)

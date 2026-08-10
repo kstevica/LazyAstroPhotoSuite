@@ -426,7 +426,7 @@ def analyze_view(img, params, data=None) -> AnalyzeResult:
             if len(bucket) > 0:
                 line += " - " + bucket
             lines.append(line + ".")
-            if ratio >= 5 and is_color and params.chromaNR < 0.3:
+            if ratio >= 5 and is_color and params.chromaNR < 0.5:   # < recommended 0.6 (OSC classes seed a modest default)
                 changes.append({
                     "key": "chromaNR", "val": 0.6,
                     "label": (f"Chroma NR 0.60 (now {params.chromaNR:.2f}) - colour speckle dominates at this "

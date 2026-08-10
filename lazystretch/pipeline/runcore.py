@@ -328,6 +328,15 @@ def run_pipeline(
         ctx["img"] = tone.contrast(ctx["img"], ctx["eff_floor"], eff.contrast)
     add(f"Contrast curve ({eff.contrast:.2f})", _contrast)
 
+    # --- chroma noise reduction: MMT on chrominance only (js:4679-4681).
+    # Deliberate divergence from PI's post-saturation order: cleaning the R/B chroma speckle
+    # BEFORE the saturation boost stops that boost from amplifying it into colour confetti
+    # (the #1 weakness both external reviewers flagged on OSC widefields). ---
+    if is_color and params.chromaNR > 0:
+        def _chroma():
+            ctx["img"] = chromanr.chroma_nr(ctx["img"], params.chromaNR)
+        add(f"Chroma noise reduction ({params.chromaNR:.2f})", _chroma)
+
     # --- saturation (star-protected via a StarNet mask when available) ---
     if is_color:
         star_protect_here = star_pro and star_protect_applies_to(cls, data)
@@ -373,12 +382,6 @@ def run_pipeline(
             else:
                 ctx["img"] = tone.local_contrast(ctx["img"], prof.lc)
         add("Local contrast (LHE)" + (" core-protected" if params.protectCores else ""), _lhe)
-
-    # --- chroma noise reduction (v1.4.x): MMT on chrominance only (js:4679-4681) ---
-    if is_color and params.chromaNR > 0:
-        def _chroma():
-            ctx["img"] = chromanr.chroma_nr(ctx["img"], params.chromaNR)
-        add(f"Chroma noise reduction ({params.chromaNR:.2f})", _chroma)
 
     # --- star handling: Remove stars (starless output) OR Star reduction (js:4702-4723) ---
     do_remove = params.removeStars and not preview

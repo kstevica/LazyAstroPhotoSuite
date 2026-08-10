@@ -115,6 +115,10 @@ class Parameters:
         p.doHDR = prof.hdr
         p.doStarReduce = prof.starReduce
         p.haloTamer = prof.haloTamer
+        p.chromaNR = prof.chromaNR      # OSC broadband seeds a modest chroma-NR default
+        p.doBgExtract = prof.bgExtract  # MW uses darkLaneGC instead of ill-posed ABE
+        p.darkLaneGC = prof.darkLaneGC
+        p.reduceCast = prof.reduceCast  # masked post-SCNR background re-neutralization
         valid = {f.name for f in fields(cls)}
         for k, v in overrides.items():
             if k not in valid:

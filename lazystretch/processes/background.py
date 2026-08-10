@@ -61,6 +61,23 @@ from __future__ import annotations
 
 import numpy as np
 
+# A low-order gradient surface is smooth by construction, so its box-median samples can be
+# gathered from a downsampled copy — mathematically the same fit, but ~100× faster than medianing
+# full-resolution boxes on a 20-30 MP master (that full-res sampling was the multi-minute
+# "background extraction looks stuck" on execute). The surface is still evaluated at full res.
+_FIT_SAMPLE_MAXDIM = 1400
+
+
+def _downsample_for_fit(chan: np.ndarray) -> np.ndarray:
+    """Downsample ``chan`` to <= ``_FIT_SAMPLE_MAXDIM`` on its long edge (for sampling only)."""
+    H, W = chan.shape
+    m = max(H, W)
+    if m <= _FIT_SAMPLE_MAXDIM:
+        return chan
+    from scipy.ndimage import zoom
+    f = _FIT_SAMPLE_MAXDIM / float(m)
+    return zoom(chan, f, order=1)          # bilinear: averages, diluting stars into the samples
+
 
 def _nterms(degree: int) -> int:
     """Number of coefficients of a 2-D total-degree-``degree`` polynomial."""
@@ -147,7 +164,9 @@ def _fit_channel(
     constant (the sample median).
     """
     H, W = chan.shape
-    xs, ys, zs = _grid_samples(chan, grid)
+    samp = _downsample_for_fit(chan)            # sample the smooth surface cheaply…
+    sh, sw = samp.shape
+    xs, ys, zs = _grid_samples(samp, grid)
     n = zs.size
 
     # Drop degree until we have comfortably more samples than coefficients.
@@ -156,13 +175,14 @@ def _fit_channel(
         d -= 1
     terms = _poly_terms(d)
 
-    # Normalize sample coords to [-1, 1] over the full image extent for good
-    # conditioning of the high powers.
-    cx, cy = (W - 1) / 2.0, (H - 1) / 2.0
-    sx = (W - 1) / 2.0 or 1.0
-    sy = (H - 1) / 2.0 or 1.0
-    xn = (xs - cx) / sx
-    yn = (ys - cy) / sy
+    # Normalize sample coords to [-1, 1] over the (downsampled) image extent for good
+    # conditioning of the high powers. Because both sampling and evaluation normalize to the
+    # same [-1, 1] domain over the full physical frame, the fit transfers to full resolution.
+    scx, scy = (sw - 1) / 2.0, (sh - 1) / 2.0
+    ssx = (sw - 1) / 2.0 or 1.0
+    ssy = (sh - 1) / 2.0 or 1.0
+    xn = (xs - scx) / ssx
+    yn = (ys - scy) / ssy
 
     A_all = _design(xn, yn, terms)
     mask = np.ones(n, dtype=bool)
@@ -203,8 +223,11 @@ def _fit_channel(
     if coef is None:
         return np.full((H, W), float(np.median(zs)), dtype=np.float64)
 
-    xn_full = (np.arange(W, dtype=np.float64) - cx) / sx
-    yn_full = (np.arange(H, dtype=np.float64) - cy) / sy
+    fcx, fcy = (W - 1) / 2.0, (H - 1) / 2.0     # evaluate at FULL resolution ([-1,1] over the frame)
+    fsx = (W - 1) / 2.0 or 1.0
+    fsy = (H - 1) / 2.0 or 1.0
+    xn_full = (np.arange(W, dtype=np.float64) - fcx) / fsx
+    yn_full = (np.arange(H, dtype=np.float64) - fcy) / fsy
     return _eval_surface(coef, terms, xn_full, yn_full)
 
 

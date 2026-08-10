@@ -36,6 +36,12 @@ class ClassProfile:
     starReduce: bool
     starLevel: float
     haloTamer: bool = True      # reflection filter-ring suppression (v1.5.1; classes opt out)
+    chromaNR: float = 0.0       # per-class chroma-NR default (OSC broadband seeds a modest value;
+                                # mono/narrowband is skipped anyway — user dial/recipe overrides)
+    bgExtract: bool = True      # generic ABE/GraXpert background extraction (MW turns it OFF —
+                                # ill-posed on a wall-to-wall field — in favour of darkLaneGC)
+    darkLaneGC: bool = False    # deg-2 dark-lane-anchored gradient model (no-empty-sky fields)
+    reduceCast: bool = False    # masked post-SCNR background re-neutralization (clears residual cast)
 
 
 @dataclass(frozen=True)

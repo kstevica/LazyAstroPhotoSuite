@@ -59,7 +59,7 @@ from .worker import PipelineWorker
 
 # (attribute, label) for the option checkboxes. The first six are profile-driven.
 _PROFILE_TOGGLES = ["doSCNR", "doLocalContrast", "doBXT", "doNR", "doHDR",
-                    "doStarReduce", "haloTamer"]
+                    "doStarReduce", "haloTamer", "doBgExtract", "darkLaneGC", "reduceCast"]
 _OPTIONS = [
     ("doBgExtract", "Background / gradient extraction"),
     ("useGradientCorrection", "…use GradientCorrection (stronger)"),
@@ -464,16 +464,23 @@ class LazyStretchPanel(QWidget):
         self._fs_viewer.activateWindow()
 
     def _apply_class_profile(self, cls: str):
-        """Class selection overwrites the six profile-driven toggles (PI behavior)."""
+        """Class selection overwrites the profile-driven toggles + the chroma-NR default (PI behavior)."""
         prof = self.data.profile_for(cls)
         mapping = {"doSCNR": prof.scnr, "doLocalContrast": prof.localContrast,
                    "doBXT": prof.bxt, "doNR": prof.nr, "doHDR": prof.hdr,
-                   "doStarReduce": prof.starReduce, "haloTamer": prof.haloTamer}
+                   "doStarReduce": prof.starReduce, "haloTamer": prof.haloTamer,
+                   "doBgExtract": prof.bgExtract, "darkLaneGC": prof.darkLaneGC,
+                   "reduceCast": prof.reduceCast}
         for attr in _PROFILE_TOGGLES:
             cb = self.checks[attr]
             cb.blockSignals(True)
             cb.setChecked(bool(mapping[attr]))
             cb.blockSignals(False)
+        if "chromaNR" in self.dials:                    # OSC broadband seeds a modest chroma-NR default
+            fs = self.dials["chromaNR"]
+            fs.blockSignals(True)
+            fs.set_value(prof.chromaNR)
+            fs.blockSignals(False)
 
     def _reset_dials(self):
         for attr, fs in self.dials.items():

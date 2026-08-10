@@ -84,8 +84,8 @@ def test_analyze_fires_expected_recommendations():
     assert isinstance(res, AnalyzeResult) and res.lines
     keys = {r["key"] for r in res.recommendations}
     assert {"gradientCleanup", "reduceCast", "darkLaneGC", "dehaze", "chromaNR"}.issubset(keys)
-    # params must NOT be mutated by analysis
-    assert p.dehaze == 0.0 and p.chromaNR == 0.0 and p.reduceCast is False
+    # params must NOT be mutated by analysis (emission seeds a modest chroma-NR default)
+    assert p.dehaze == 0.0 and p.chromaNR == 0.30 and p.reduceCast is False
 
 
 def test_analyze_mono_suppresses_colour_recs():
