@@ -105,6 +105,7 @@ _DIALS = [
     ("transparency", "Core transparency (0 = off)", 0.0, 1.0, 2, 0.0),
     ("dimCore", "Dim core (0 = off)", 0.0, 1.0, 2, 0.0),
     ("starShrink", "Reduce stars (no StarNet, 0 = off)", 0.0, 1.0, 2, 0.0),
+    ("snrProtect", "SNR protect (0 = off, needs LazyStack map)", 0.0, 1.0, 2, 0.0),
 ]
 
 
@@ -132,6 +133,7 @@ class LazyStretchPanel(QWidget):
         self._fs_viewer: Optional[FullScreenViewer] = None  # kept alive while full-screen
         self._work_image: Optional[np.ndarray] = None     # base override: a history image to
         #                                                 continue from (else the loaded master)
+        self._snr_noise_map: Optional[np.ndarray] = None  # LazyStack noise map for the loaded master
         self._pins: Dict[str, object] = {}                # PROC pins for the loaded master
 
         self.checks: Dict[str, QCheckBox] = {}
@@ -526,6 +528,11 @@ class LazyStretchPanel(QWidget):
         mpath = getattr(self.loaded, "path", None)
         self._hist_store = HistoryStore(mpath) if mpath else None
         self._pins = load_pins(mpath) if mpath else {}
+        # SNR-protect: pick up a LazyStack noise map sitting next to the master (if any).
+        from ..processes.snrmask import load_noise_map
+        self._snr_noise_map = load_noise_map(mpath) if mpath else None
+        if self._snr_noise_map is not None:
+            self.status_label.setText("Loaded. LazyStack noise map found — SNR-protect available.")
         self._refresh_history_list()
         self._show_quick_display()
 
@@ -685,6 +692,7 @@ class LazyStretchPanel(QWidget):
         p.cropPercent = self.crop_slider.value()
         p.autoAssess = self.auto_check.isChecked()
         p.object_id = self.object_combo.currentText()
+        p.snr_noise_map = self._snr_noise_map          # SNR-protect map for the loaded master (or None)
         if self.ha_picker.path() and self.oiii_picker.path():
             p.ha = self._mono(self.ha_picker.path())
             p.oiii = self._mono(self.oiii_picker.path())

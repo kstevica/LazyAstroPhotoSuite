@@ -49,6 +49,7 @@ from ..processes import (
     multiscale,
     scnr as scnr_mod,
     shadowanchor,
+    snrmask,
     starreduce,
     tone,
     transparency as transparency_mod,
@@ -163,8 +164,20 @@ def run_pipeline(
     eff_crop = float(ledger.record("Crop", "edge crop %", eff_crop))
     eff_gc = bool(ledger.record("Background", "use GradientCorrection", eff_gc))
 
-    ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None}
+    ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None,
+           "noise_map": None, "snr_raw": None}
     steps: List = []
+
+    # SNR-protect: LazyStack's measured per-pixel noise map (companion of the master) drives a
+    # mask that protects high-SNR signal from NR and damps local contrast in pure-noise regions.
+    snr_protect = float(getattr(params, "snrProtect", 0.0) or 0.0)
+    _nm = getattr(params, "snr_noise_map", None)
+    if snr_protect > 0 and _nm is not None:
+        _nm = np.asarray(_nm, dtype=np.float64)
+        if _nm.shape == np.asarray(target).shape[:2]:
+            ctx["noise_map"] = _nm
+        else:
+            _log(f"   SNR-protect: noise map {_nm.shape} != image {np.asarray(target).shape[:2]} — disabled")
 
     def add(name: str, fn: Callable[[], None]):
         steps.append((name, fn))
@@ -191,7 +204,19 @@ def run_pipeline(
     if eff_crop > 0:
         def _crop():
             ctx["img"] = crop.crop_edges(ctx["img"], eff_crop / 100.0)
+            if ctx["noise_map"] is not None:            # keep the noise map aligned to the master
+                ctx["noise_map"] = crop.crop_edges(ctx["noise_map"], eff_crop / 100.0)
         add(f"Crop {eff_crop:.1f}% off each edge", _crop)
+
+    # --- SNR-protect mask (built on the linear master, after crop) ---
+    if ctx["noise_map"] is not None and snr_protect > 0:
+        def _snr():
+            # raw protect in [0,1], high where SNR is low (pure noise); strength applied per-use.
+            ctx["snr_raw"] = snrmask.snr_protect_mask(ctx["img"], ctx["noise_map"], strength=1.0)
+            frac = float(np.mean(ctx["snr_raw"] > 0.5))
+            _log(f"   SNR-protect {snr_protect:.2f}: ~{100 * frac:.0f}% low-SNR (protect NR signal, "
+                 f"damp local contrast there)")
+        add("SNR-protect mask (from stack noise map)", _snr)
 
     # --- background / gradient (js:3336-3343) ---
     if params.doBgExtract:
@@ -276,14 +301,26 @@ def run_pipeline(
     elif do_nr:
         masked = params.useNRMask
         def _nr():
+            orig = ctx["img"]
             if tools.deepsnr.is_available():
-                processed = tools.deepsnr.denoise(ctx["img"]); via = "DeepSNR"
+                processed = tools.deepsnr.denoise(orig); via = "DeepSNR"
             elif tools.graxpert.is_available():
-                processed = tools.graxpert.denoise(ctx["img"]); via = "GraXpert"
+                processed = tools.graxpert.denoise(orig); via = "GraXpert"
             else:
-                processed = multiscale.noise_reduction_mmt(ctx["img"]); via = "MMT fallback"
-            ctx["img"] = masks.background_masked(ctx["img"], processed) if masked else processed
-            _log(f"   via {via}{' (background-masked)' if masked else ''}")
+                processed = multiscale.noise_reduction_mmt(orig); via = "MMT fallback"
+            sr = ctx["snr_raw"]
+            if sr is not None:
+                # Protect high-SNR signal/stars from over-smoothing; low-SNR background is denoised
+                # in full. w_sig high where SNR is high (raw is low there).
+                w_sig = snr_protect * (1.0 - sr)
+                a = np.asarray(orig, dtype=np.float64)
+                if a.ndim == 3:
+                    w_sig = w_sig[..., None]
+                ctx["img"] = processed * (1.0 - w_sig) + a * w_sig
+                _log(f"   via {via} (SNR-protected: high-SNR signal preserved)")
+            else:
+                ctx["img"] = masks.background_masked(orig, processed) if masked else processed
+                _log(f"   via {via}{' (background-masked)' if masked else ''}")
         add("Noise reduction", _nr)
 
     # --- nonlinear stage ---
@@ -377,10 +414,20 @@ def run_pipeline(
 
     if params.doLocalContrast:
         def _lhe():
+            pre = ctx["img"]
             if params.protectCores:
-                ctx["img"] = masks.local_contrast_masked(ctx["img"], prof.lc)
+                out = masks.local_contrast_masked(pre, prof.lc)
             else:
-                ctx["img"] = tone.local_contrast(ctx["img"], prof.lc)
+                out = tone.local_contrast(pre, prof.lc)
+            sr = ctx["snr_raw"]
+            if sr is not None:                          # don't amplify noise where SNR is low
+                w_bg = snr_protect * sr
+                a = np.asarray(pre, dtype=np.float64)
+                if a.ndim == 3:
+                    w_bg = w_bg[..., None]
+                out = np.asarray(out, dtype=np.float64) * (1.0 - w_bg) + a * w_bg
+                _log("   SNR-protected: local contrast damped in low-SNR regions")
+            ctx["img"] = out
         add("Local contrast (LHE)" + (" core-protected" if params.protectCores else ""), _lhe)
 
     # --- star handling: Remove stars (starless output) OR Star reduction (js:4702-4723) ---

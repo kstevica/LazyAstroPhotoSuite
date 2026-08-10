@@ -83,11 +83,18 @@ class Parameters:
     dimCore: float = 0.0           # dim-core dial 0..1 (0=off): mask the large bright veil and
                                    # multiplicatively lower its luminosity (no ceiling, unlike
                                    # the highlight roll-off). Opt-in. Port-only finishing dial.
+    snrProtect: float = 0.0        # SNR-protect "ponder" 0..1 (0=off): use LazyStack's measured
+                                   # per-pixel noise map to protect high-SNR signal from NR and
+                                   # damp local-contrast in pure-noise regions. Needs snr_noise_map
+                                   # (a LazyStack master's companion). Port-only finishing dial.
 
     # --- transient narrowband channel arrays (not persisted) ---
     ha: Optional[np.ndarray] = field(default=None, repr=False)
     oiii: Optional[np.ndarray] = field(default=None, repr=False)
     sii: Optional[np.ndarray] = field(default=None, repr=False)
+    # LazyStack's per-pixel noise map for this master (transient; loaded by the caller from the
+    # master's companion file — drives the SNR-protect mask when snrProtect > 0).
+    snr_noise_map: Optional[np.ndarray] = field(default=None, repr=False)
 
     def slider_dict(self) -> Dict[str, float]:
         return {

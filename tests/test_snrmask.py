@@ -43,3 +43,41 @@ def test_load_noise_map_roundtrip(tmp_path):
     np.save(str(tmp_path / "lazystack_master_noise.npy"), np.ones((10, 12), np.float32))
     got = snrmask.load_noise_map(str(mp))
     assert got is not None and got.shape == (10, 12)
+
+
+def _osc(H=200, W=260, seed=0):
+    rng = np.random.default_rng(seed)
+    yy, xx = np.mgrid[0:H, 0:W]
+    gas = 0.30 * np.exp(-(((xx - W / 2) / 60) ** 2 + ((yy - H / 2) / 45) ** 2))
+    L = np.clip(0.06 + gas + rng.normal(0, 0.006, (H, W)), 0, 1)
+    return np.stack([L, L * 0.82, L * 0.7], axis=-1)
+
+
+def test_runcore_snr_protect_active_with_matching_map():
+    from lazystretch.objects.model import Parameters
+    from lazystretch.pipeline.runcore import run_pipeline
+    img = _osc()
+    p = Parameters.for_object("milkyway", snrProtect=0.8)
+    p.snr_noise_map = np.full(img.shape[:2], 0.01, np.float32)
+    res = run_pipeline(img, p, preview=False)
+    assert any("SNR-protect mask" in s for s in res.steps_run)
+
+
+def test_runcore_snr_protect_disabled_on_shape_mismatch():
+    from lazystretch.objects.model import Parameters
+    from lazystretch.pipeline.runcore import run_pipeline
+    img = _osc()
+    p = Parameters.for_object("milkyway", snrProtect=0.8)
+    p.snr_noise_map = np.full((5, 5), 0.01, np.float32)       # wrong shape -> gracefully skipped
+    res = run_pipeline(img, p, preview=False)
+    assert not any("SNR-protect mask" in s for s in res.steps_run)
+
+
+def test_runcore_snr_protect_off_by_default():
+    from lazystretch.objects.model import Parameters
+    from lazystretch.pipeline.runcore import run_pipeline
+    img = _osc()
+    p = Parameters.for_object("milkyway")                     # snrProtect defaults 0
+    p.snr_noise_map = np.full(img.shape[:2], 0.01, np.float32)
+    res = run_pipeline(img, p, preview=False)
+    assert not any("SNR-protect mask" in s for s in res.steps_run)

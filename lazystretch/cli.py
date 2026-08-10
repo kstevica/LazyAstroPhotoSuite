@@ -82,6 +82,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="dim-core dial 0..1 (mask the large bright veil + lower its luminosity)")
     p.add_argument("--star-shrink", type=float, dest="starShrink",
                    help="software star reduction 0..1 (thin the star carpet; no StarNet)")
+    p.add_argument("--snr-protect", type=float, dest="snrProtect",
+                   help="SNR-protect 0..1 using a LazyStack noise map (protect signal in NR, "
+                        "damp local contrast in pure-noise regions)")
     p.add_argument("--analyze", action="store_true", help="print frame analysis + recommendations and exit")
 
     # toggles (store the opposite of the default where useful)
@@ -135,7 +138,7 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
     # explicit CLI dials (None == unset, so a preset/recipe value survives)
     for name in ("satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj",
                  "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen", "highlights",
-                 "transparency", "dimCore", "starShrink"):
+                 "transparency", "dimCore", "starShrink", "snrProtect"):
         v = getattr(args, name)
         if v is not None:
             setattr(p, name, v)
@@ -211,6 +214,12 @@ def main(argv: Optional[list] = None) -> int:
             print(f"Curated recipe: {rec['name']} — {rec['why']}")
     params = _make_params(args, object_class, preset)
     params.ha, params.oiii, params.sii = ha, oiii, sii
+    if args.input and params.snrProtect > 0:                 # SNR-protect needs the master's noise map
+        from .processes.snrmask import load_noise_map
+        params.snr_noise_map = load_noise_map(args.input)
+        if params.snr_noise_map is None:
+            print("note: --snr-protect set but no LazyStack noise map found next to the input "
+                  "(lazystack_master_noise.npy) — SNR-protect will be skipped")
 
     if args.save_recipe:
         save_recipe(args.save_recipe, params, get_data())
