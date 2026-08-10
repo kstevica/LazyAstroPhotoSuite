@@ -17,18 +17,36 @@ import numpy as np
 
 
 def sigma_clip_mean(cube: np.ndarray, *, sigma_low: float = 4.0, sigma_high: float = 3.0,
-                    iters: int = 3, weights: Optional[Sequence[float]] = None) -> np.ndarray:
-    """Per-pixel sigma-clipped (weighted) mean over axis 0 of ``cube`` (N, ...)."""
+                    iters: int = 3, weights: Optional[Sequence[float]] = None,
+                    return_coverage: bool = False, return_noise: bool = False):
+    """Per-pixel sigma-clipped (weighted) mean over axis 0 of ``cube`` (N, ...).
+
+    NaN samples are treated as **no-data** (registration marks the non-overlap border of an
+    aligned frame with NaN, not 0): they are excluded from the clip statistics and from the
+    divisor, so a partial-coverage pixel is the mean of the frames that actually cover it —
+    never divided-by-N against silent zeros (the old bright/dark edge-strip bug).
+
+    Optional extra maps (returned in this order after the mean): with ``return_coverage`` the
+    per-pixel count of frames that had real data (drives the overlap crop); with ``return_noise``
+    a per-pixel **standard error of the mean** (``std(survivors)/√N`` on luminance) — a directly
+    measured noise map that is a far better SNR estimate than post-hoc single-image guesses.
+    """
     data = np.asarray(cube, dtype=np.float64)
     n = data.shape[0]
-    mask = np.ones(data.shape, dtype=bool)
+    valid = np.isfinite(data)                      # no-data (NaN) is excluded everywhere
+    mask = valid.copy()
     for _ in range(max(1, iters)):
         masked = np.where(mask, data, np.nan)
-        m = np.nanmean(masked, axis=0)
-        s = np.nanstd(masked, axis=0)
-        lo = m - sigma_low * s
-        hi = m + sigma_high * s
-        mask = (data >= lo) & (data <= hi)
+        with np.errstate(invalid="ignore"):
+            # Robust center/scale (median + MAD), not mean/std: a hot value present in a
+            # minority-to-slight-majority of frames (undithered walking noise dragged along the
+            # drift) stays inside mean±kσ but not median±k·MAD — the audit's ineffective-rejection fix.
+            m = np.nanmedian(masked, axis=0)
+            mad = np.nanmedian(np.abs(masked - m), axis=0)
+            s = np.maximum(1.4826 * mad, 1e-4)            # tiny floor: still clips a lone spike
+            lo = m - sigma_low * s                        #             among near-identical inliers
+            hi = m + sigma_high * s
+            mask = valid & (data >= lo) & (data <= hi)
     if weights is None:
         w = np.ones(n)
     else:
@@ -36,9 +54,29 @@ def sigma_clip_mean(cube: np.ndarray, *, sigma_low: float = 4.0, sigma_high: flo
     wshape = (n,) + (1,) * (data.ndim - 1)
     wc = w.reshape(wshape) * mask
     wsum = wc.sum(axis=0)
-    out = np.where(wsum > 0, (data * wc).sum(axis=0) / np.where(wsum > 0, wsum, 1.0),
-                   data.mean(axis=0))
-    return np.clip(out, 0.0, 1.0)
+    safe = np.where(mask, data, 0.0)               # NaN·0 would poison the sum
+    with np.errstate(invalid="ignore"):
+        fallback = np.nanmean(np.where(valid, data, np.nan), axis=0)   # NaN only if 0 coverage
+    weighted = (safe * wc).sum(axis=0) / np.where(wsum > 0, wsum, 1.0)
+    out = np.clip(np.where(wsum > 0, weighted, fallback), 0.0, 1.0)    # NaN survives clip
+    if not (return_coverage or return_noise):
+        return out
+    result = [out]
+    if return_coverage:
+        per_px = valid.all(axis=-1) if data.ndim == 4 else valid       # collapse colour
+        result.append(per_px.sum(axis=0).astype(np.int32))
+    if return_noise:
+        if data.ndim == 4:
+            lum_cube = data.mean(axis=-1)                              # (N, H, W) luminance
+            surv_px = mask.all(axis=-1)                                # survivor in every channel
+        else:
+            lum_cube, surv_px = data, mask
+        with np.errstate(invalid="ignore"):
+            sd = np.nanstd(np.where(surv_px, lum_cube, np.nan), axis=0)
+        cnt = surv_px.sum(axis=0)
+        sem = sd / np.sqrt(np.maximum(cnt, 1))                         # standard error of the mean
+        result.append(np.where(cnt > 0, sem, np.nan).astype(np.float32))
+    return tuple(result)
 
 
 def combine_master(frames: Sequence[np.ndarray], *, sigma_low: float = 5.0,
@@ -53,20 +91,29 @@ def combine_master(frames: Sequence[np.ndarray], *, sigma_low: float = 5.0,
 
 
 def integrate(frames: Sequence[np.ndarray], *, weights: Optional[Sequence[float]] = None,
-              sigma_low: float = 4.0, sigma_high: float = 3.0) -> np.ndarray:
-    """Integrate the final registered light stack (weighted sigma-clipped mean)."""
+              sigma_low: float = 4.0, sigma_high: float = 3.0,
+              return_coverage: bool = False, return_noise: bool = False):
+    """Integrate the final registered light stack (weighted sigma-clipped mean).
+
+    With ``return_coverage`` also returns the per-pixel covered-frame count (for the overlap
+    crop); with ``return_noise`` also returns the per-pixel standard-error map (for the SNR mask).
+    """
     cube = np.stack([np.asarray(f, dtype=np.float64) for f in frames], axis=0)
-    return sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high, weights=weights)
+    return sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high, weights=weights,
+                           return_coverage=return_coverage, return_noise=return_noise)
 
 
 def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[float]] = None,
                   sigma_low: float = 4.0, sigma_high: float = 3.0,
-                  target_bytes: int = 200_000_000, log=None) -> np.ndarray:
+                  target_bytes: int = 200_000_000, log=None,
+                  return_coverage: bool = False, return_noise: bool = False):
     """Memory-bounded combine: mmap float32 ``.npy`` frames, sigma-clip in row bands.
 
     Never materialises the full N×H×W cube — only ``N × band × W × C`` at a time — so a large
     burst integrates in a bounded, few-hundred-MB footprint instead of tens of GB. Emits
-    per-band progress through ``log`` (integration is otherwise a long silent step).
+    per-band progress through ``log`` (integration is otherwise a long silent step). Optional
+    per-pixel maps, accumulated across bands, follow the master: ``return_coverage`` (covered-frame
+    count, for the overlap crop) then ``return_noise`` (standard-error map, for the SNR mask).
     """
     paths = [str(p) for p in paths]
     if not paths:
@@ -79,12 +126,32 @@ def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[f
     band = int(max(1, min(H, target_bytes // max(1, row_bytes))))
     n_bands = (H + band - 1) // band
     out = np.empty(shape, dtype=np.float32)
+    coverage = np.empty((H, shape[1]), dtype=np.int32) if return_coverage else None
+    noise = np.empty((H, shape[1]), dtype=np.float32) if return_noise else None
     for bi, y0 in enumerate(range(0, H, band)):
         y1 = min(H, y0 + band)
         cube = np.stack([np.asarray(m[y0:y1], dtype=np.float64) for m in mm], axis=0)
-        out[y0:y1] = sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high,
-                                     weights=weights).astype(np.float32)
+        res = sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high,
+                              weights=weights, return_coverage=return_coverage,
+                              return_noise=return_noise)
+        if return_coverage or return_noise:
+            band_out = res[0]
+            idx = 1
+            if return_coverage:
+                coverage[y0:y1] = res[idx]; idx += 1
+            if return_noise:
+                noise[y0:y1] = res[idx]; idx += 1
+        else:
+            band_out = res
+        out[y0:y1] = band_out.astype(np.float32)
         if log is not None:
             log(f"   integrating rows {y0}-{y1} ({bi + 1}/{n_bands}, "
                 f"{100 * y1 // H}%)")
-    return out
+    if not (return_coverage or return_noise):
+        return out
+    result = [out]
+    if return_coverage:
+        result.append(coverage)
+    if return_noise:
+        result.append(noise)
+    return tuple(result)

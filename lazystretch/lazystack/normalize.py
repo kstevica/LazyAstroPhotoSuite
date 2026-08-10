@@ -22,11 +22,18 @@ _LF_TARGET = 256                  # long-edge size for the low-frequency (gradie
 
 
 def frame_stats(img: np.ndarray) -> Tuple[float, float]:
-    """Robust (background, signal-range) on the frame's luminance."""
+    """Robust (background, signal-range) on the frame's luminance.
+
+    NaN (registration no-data border) is ignored, so a frame's background level is measured
+    over its *covered* pixels only — the fix for the normalization over-brightening large-border
+    frames into visible edge strips.
+    """
     a = np.asarray(img, dtype=np.float64)
     lum = a[..., :3].mean(axis=2) if a.ndim == 3 else a
-    med = float(np.median(lum))
-    sig = float(np.quantile(lum, _SIGNAL_Q)) - med
+    if not np.any(np.isfinite(lum)):
+        return 0.0, 1.0
+    med = float(np.nanmedian(lum))
+    sig = float(np.nanquantile(lum, _SIGNAL_Q)) - med
     return med, max(1e-6, sig)
 
 
@@ -57,9 +64,13 @@ def _low_frequency(plane: np.ndarray) -> np.ndarray:
     if bh > 1 or bw > 1:
         Hc, Wc = (H // bh) * bh, (W // bw) * bw
         blocks = plane[:Hc, :Wc].reshape(Hc // bh, bh, Wc // bw, bw)
-        small = np.median(blocks, axis=(1, 3))           # star-robust downsample
+        with np.errstate(invalid="ignore"):
+            small = np.nanmedian(blocks, axis=(1, 3))    # star- and no-data-robust downsample
     else:
         small = plane
+    if not np.all(np.isfinite(small)):                   # fill no-data blocks so the blur/zoom stay finite
+        fill = np.nanmedian(small) if np.any(np.isfinite(small)) else 0.0
+        small = np.where(np.isfinite(small), small, fill)
     small = gaussian_filter(small, sigma=2.0, mode="nearest")
     if small.shape == plane.shape:
         return small

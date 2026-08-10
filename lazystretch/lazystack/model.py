@@ -17,9 +17,12 @@ class LazyStackParams:
     # pipeline toggles
     do_calibrate: bool = True
     do_cosmetic: bool = True
+    fix_walking_noise: bool = True     # cross-frame static hot-pixel repair (darkless walking-noise fix)
     do_debayer: bool = True
     do_register: bool = True
     normalize: bool = True         # match each frame's background+scale to the reference (global)
     local_normalize: bool = False  # spatially-varying gradient match to the reference (LN)
+    edge_crop: bool = True         # crop the master to the common fully-covered overlap region
+    emit_snr_map: bool = True      # write a per-pixel noise/SNR companion (feeds the stretch's SNR mask)
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory

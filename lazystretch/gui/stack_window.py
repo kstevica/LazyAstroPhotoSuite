@@ -42,9 +42,12 @@ _DIALS = [
 _CHECKS = [
     ("do_calibrate", "Calibrate (bias/dark/flat)"),
     ("do_cosmetic", "Cosmetic correction (hot/cold)"),
+    ("fix_walking_noise", "Fix walking noise (static hot-pixel repair; no darks/dither needed)"),
     ("do_register", "Register frames"),
     ("normalize", "Normalize to reference (background + scale)"),
     ("local_normalize", "Local normalization (spatially-varying gradient match)"),
+    ("edge_crop", "Crop to common overlap (remove ragged registration edges)"),
+    ("emit_snr_map", "Write noise/SNR map (feeds the stretch's SNR-protect mask)"),
     ("reuse_cache", "Reuse cached intermediates"),
     ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
 ]

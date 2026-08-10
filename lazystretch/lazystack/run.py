@@ -29,6 +29,7 @@ from . import (
 FRAME_EXTS = {".xisf", ".fits", ".fit", ".fts", ".tif", ".tiff", ".png"}
 _SUBSETS = ("lights", "darks", "flats", "biases")
 MASTER_NAME = "lazystack_master.fits"
+SNR_MAP_NAME = "lazystack_master_noise.npy"    # per-pixel σ companion (feeds the stretch SNR mask)
 _RAWPY_OK = None
 
 
@@ -302,6 +303,24 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     keep = culled["keep"]
     ref_global = culled["reference"] if culled["reference"] in keep else keep[0]
 
+    # --- stage 1b: static hot/cold pixel repair in SENSOR space (walking-noise fix) ---
+    # Must run before registration: undithered hot pixels sit at a fixed sensor coordinate and,
+    # once dragged along the drift by registration, become sigma-clip-proof diagonal dashes.
+    if getattr(params, "fix_walking_noise", True) and len(keep) >= 3:
+        log("Scanning for static hot/cold pixels (walking-noise fix)…")
+        bad = cal.static_hot_pixel_map((_get(frames[i]) for i in keep), log=log)
+        nbad = int(bad.sum())
+        if nbad:
+            log(f"  repairing {nbad} static bad pixel(s) across {len(keep)} frame(s)…")
+            for i in keep:
+                fixed = cal.repair_bad_pixels(_get(frames[i]), bad)
+                if staged:
+                    np.save(str(frames[i]), np.asarray(fixed, dtype=np.float32))
+                else:
+                    frames[i] = np.asarray(fixed, dtype=np.float32)
+        else:
+            log("  no static bad pixels found.")
+
     # --- stage 2: register the kept frames to the reference (reg cache keyed src+ref) ---
     log(f"Registering {len(keep)} frames to reference {names[ref_global]}…")
     ref_key = keys[ref_global] if staged else None
@@ -310,7 +329,11 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     local_norm = bool(params.local_normalize)
     normalize = bool(params.normalize) or local_norm     # LN includes the global step
     ref_med, ref_sig = nrm.frame_stats(ref) if normalize else (0.0, 1.0)
-    nsuf = "_ln" if local_norm else ("_n" if normalize else "")   # changes reg output
+    # "_c" marks the coverage/NaN-aware reg format; "w" marks walking-noise repair applied — both
+    # keep the reg cache from being reused across a format/repair change (else the repair, done on
+    # the cal frames in stage 1b, is silently bypassed when a stale reg file is reused).
+    wtag = "w" if getattr(params, "fix_walking_noise", True) else ""
+    nsuf = ("_ln" if local_norm else ("_n" if normalize else "")) + "_c" + wtag   # changes reg output
     if local_norm:
         log("Local normalization: matching each frame's gradient to the reference.")
     elif normalize:
@@ -336,10 +359,14 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             except Exception as e:
                 log(f"    dropped ({e})")
                 continue
+        nodata = ~np.isfinite(aligned)                   # registration no-overlap border
         if local_norm:
             aligned = nrm.local_normalize_to_ref(aligned, ref, ref_med, ref_sig)
         elif normalize:
             aligned = nrm.normalize_to_ref(aligned, ref_med, ref_sig)
+        if nodata.any():                                 # keep no-data as no-data (NaN) for coverage
+            aligned = np.asarray(aligned, dtype=np.float64)
+            aligned[nodata] = np.nan
         weights.append(w)
         if staged:
             np.save(str(reg_path), np.asarray(aligned, dtype=np.float32))
@@ -362,20 +389,50 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     # --- stage 3: integrate ---
     n_stacked = len(aligned_handles)
     log(f"Integrating {n_stacked} frame(s)…")
+    emit_snr = getattr(params, "emit_snr_map", True)
     if staged:
-        master = integ.combine_files(aligned_handles, weights=weights,
-                                     sigma_low=params.sigma_low, sigma_high=params.sigma_high,
-                                     log=log)
+        res = integ.combine_files(aligned_handles, weights=weights,
+                                  sigma_low=params.sigma_low, sigma_high=params.sigma_high,
+                                  log=log, return_coverage=True, return_noise=emit_snr)
     else:
-        master = integ.integrate(aligned_handles, weights=weights,
-                                 sigma_low=params.sigma_low, sigma_high=params.sigma_high)
+        res = integ.integrate(aligned_handles, weights=weights,
+                              sigma_low=params.sigma_low, sigma_high=params.sigma_high,
+                              return_coverage=True, return_noise=emit_snr)
+    if emit_snr:
+        master, coverage, noise = res
+    else:
+        master, coverage = res
+        noise = None
 
-    edges = contract.measure_edges(master)
+    edge_crop = getattr(params, "edge_crop", True)
+    if edge_crop:                                        # crop to the common fully-covered overlap
+        edges = contract.coverage_edges(coverage, n_stacked)
+    else:
+        edges = contract.measure_edges(np.nan_to_num(master, nan=0.0))
+    master = np.nan_to_num(master, nan=0.0)              # no NaN (no-data) reaches the 16-bit save
+    if edge_crop:
+        master = contract.crop_to_contract(master, edges)
     header = contract.contract_header(n_stacked, edges, exposure)
     master_path = out_dir / MASTER_NAME
     save_image(str(master_path), master, bit_depth=16, header=header)
     log(f"Master: {master_path}  (LZSNSUB={n_stacked}, crop L{edges['L']} R{edges['R']} "
         f"T{edges['T']} B{edges['B']})")
+
+    # Companion per-pixel noise map (standard error), cropped identically to the master. The
+    # stretch reads it to build an SNR-protect mask that a luminance mask can't (it separates
+    # faint real signal from pure noise). Best-effort — never fails the stack.
+    snr_path = None
+    if emit_snr and noise is not None:
+        try:
+            noise_c = contract.crop_to_contract(noise, edges) if edge_crop else noise
+            fill = float(np.nanmedian(noise_c)) if np.any(np.isfinite(noise_c)) else 0.0
+            noise_c = np.nan_to_num(noise_c, nan=fill).astype(np.float32)
+            snr_path = out_dir / SNR_MAP_NAME
+            np.save(str(snr_path), noise_c)
+            log(f"Noise map: {snr_path}  (per-pixel σ; feeds the stretch SNR mask)")
+        except Exception as e:                           # noise map is optional, never fatal
+            log(f"  (noise map skipped: {e})")
+            snr_path = None
     if work is not None and not reuse:
         _cleanup(work)                                   # fresh run — drop all work files
     elif work is not None and reuse:                     # keep this run's files, prune orphans
@@ -386,4 +443,5 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         _prune_work(work, keep_names, log)
     return {"master": master, "master_path": str(master_path), "n_stacked": n_stacked,
             "n_lights": len(lights), "cull": culled, "edges": edges,
+            "noise_map_path": str(snr_path) if snr_path else None,
             "registered_with": "astroalign" if reg.astroalign_available() else "fft-translation"}

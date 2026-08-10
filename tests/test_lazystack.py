@@ -273,7 +273,113 @@ def test_stack_prunes_orphaned_work_files(tmp_path):
     assert lsrun.stack(str(tmp_path), p, log=lambda s: logs.append(s)) is not None
     assert not orphan.exists()                                     # pruned
     assert any("Pruned" in s for s in logs)
-    assert list(work.glob("reg_*_n.npy"))                          # current files kept
+    assert list(work.glob("reg_*_n_cw.npy"))                       # current files kept (coverage + walking-noise aware)
+
+
+def test_sigma_clip_median_rejects_correlated_minority():
+    # A hot value present in a MINORITY of frames at one pixel: mean/std leaves it in, median/MAD rejects.
+    rng = np.random.default_rng(5)
+    cube = np.stack([np.clip(0.4 + rng.normal(0, 0.003, (16, 16)), 0, 1) for _ in range(12)])
+    cube[:5, 8, 8] = 0.95                              # 5 of 12 frames hot at the same pixel
+    out = integ.sigma_clip_mean(cube, sigma_low=3, sigma_high=3)
+    assert out[8, 8] < 0.5                             # correlated cluster rejected, not averaged to ~0.63
+
+
+def test_static_hot_pixel_map_flags_fixed_not_drifting():
+    base = _starfield(H=140, W=160, n=30, seed=3)
+    hy, hx = 70, 80
+    frames = []
+    for i in range(8):
+        f = np.clip(fftreg.apply_shift(base, 2 * (i - 4), 0), 0, 1).copy()   # fast horizontal drift
+        f[hy, hx] = 1.0                               # a FIXED-sensor hot pixel every frame
+        frames.append(f)
+    bad = cal.static_hot_pixel_map(frames)
+    assert bad[hy, hx]                                 # the persistent fixed pixel is flagged
+    assert bad.sum() < 0.01 * base.size                # drifting stars are NOT mass-flagged
+
+
+def test_repair_bad_pixels_replaces_with_local_median():
+    a = np.full((20, 20), 0.2)
+    a[10, 10] = 0.95
+    mask = np.zeros((20, 20), bool)
+    mask[10, 10] = True
+    out = cal.repair_bad_pixels(a, mask)
+    assert abs(out[10, 10] - 0.2) < 0.01              # repaired toward the local background
+    assert out[0, 0] == 0.2                           # untouched elsewhere
+
+
+def test_stack_runs_walking_noise_stage(tmp_path):
+    pytest.importorskip("photutils")
+    lights = tmp_path / "lights"
+    lights.mkdir()
+    base = _starfield(n=40, seed=12)
+    for i in range(6):
+        save_image(str(lights / f"l_{i:03d}.fits"),
+                   np.clip(fftreg.apply_shift(base, i - 3, 1 - i), 0, 1), bit_depth=16)
+    logs = []
+    p = LazyStackParams(do_calibrate=False, do_cosmetic=False, fix_walking_noise=True,
+                        stage_to_disk=True, reuse_cache=False)
+    assert lsrun.stack(str(tmp_path), p, log=lambda s: logs.append(s)) is not None
+    assert any("static hot" in s.lower() for s in logs)   # the walking-noise stage ran
+
+
+def test_sigma_clip_ignores_nodata_nan():
+    # A pixel covered by only 2 of 4 frames must be the mean of the 2 real values, not /4.
+    cube = np.stack([
+        np.full((4, 4), 0.5),
+        np.full((4, 4), 0.5),
+        np.full((4, 4), np.nan),      # no-data (registration border)
+        np.full((4, 4), np.nan),
+    ])
+    out, cov = integ.sigma_clip_mean(cube, return_coverage=True)
+    assert np.allclose(out, 0.5)                       # not 0.25 (divide-by-N against zeros)
+    assert np.all(cov == 2)
+
+
+def test_coverage_edges_crops_ragged_border_but_not_full_coverage():
+    n = 20
+    full = np.full((100, 120), n, dtype=np.int32)
+    assert contract.coverage_edges(full, n) == {"L": 0, "R": 0, "T": 0, "B": 0}
+    ragged = full.copy()
+    ragged[:6, :] = 0        # top 6 rows never fully covered
+    ragged[:, :4] = 0        # left 4 cols never fully covered
+    e = contract.coverage_edges(ragged, n)
+    assert e["T"] == 6 and e["L"] == 4 and e["B"] == 0 and e["R"] == 0
+
+
+def test_stack_crops_dithered_master_smaller_than_source(tmp_path):
+    pytest.importorskip("photutils")
+    lights = tmp_path / "lights"
+    lights.mkdir()
+    base = _starfield(n=40, seed=7)
+    H, W = base.shape
+    for i in range(6):                                  # dithered shifts leave ragged borders
+        save_image(str(lights / f"l_{i:03d}.fits"),
+                   np.clip(fftreg.apply_shift(base, 2 * i - 5, -2 * i + 4), 0, 1), bit_depth=16)
+    p = LazyStackParams(do_calibrate=False, do_cosmetic=False, edge_crop=True,
+                        stage_to_disk=True, reuse_cache=False)
+    res = lsrun.stack(str(tmp_path), p)
+    assert res is not None
+    mh, mw = res["master"].shape[:2]
+    assert mh < H and mw < W                            # common-overlap crop trimmed the borders
+    assert res["master_path"]
+
+
+def test_stack_writes_noise_map_companion(tmp_path):
+    pytest.importorskip("photutils")
+    lights = tmp_path / "lights"
+    lights.mkdir()
+    base = _starfield(n=40, seed=15)
+    for i in range(6):
+        save_image(str(lights / f"l_{i:03d}.fits"),
+                   np.clip(fftreg.apply_shift(base, i - 3, 2 - i), 0, 1), bit_depth=16)
+    p = LazyStackParams(do_calibrate=False, do_cosmetic=False, emit_snr_map=True,
+                        edge_crop=True, stage_to_disk=True, reuse_cache=False)
+    res = lsrun.stack(str(tmp_path), p)
+    assert res is not None and res["noise_map_path"]
+    noise = np.load(res["noise_map_path"])
+    assert noise.shape == res["master"].shape[:2]      # 2D, aligned to the cropped master
+    assert np.all(np.isfinite(noise)) and float(noise.min()) >= 0.0
 
 
 def test_measure_only_advises_without_stacking(tmp_path):

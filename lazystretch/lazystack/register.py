@@ -11,6 +11,7 @@ from __future__ import annotations
 from typing import Callable, List, Optional, Tuple
 
 import numpy as np
+from scipy.ndimage import shift as _nd_shift
 
 from ..moonsun import register as fftreg
 
@@ -34,11 +35,29 @@ def _align_astroalign(frame: np.ndarray, ref: np.ndarray):
     tgt = ref.mean(axis=2) if color else ref
     transform, _ = astroalign.find_transform(src, tgt)
     if color:
-        out = np.stack([astroalign.apply_transform(transform, frame[..., c], ref[..., c])[0]
-                        for c in range(frame.shape[2])], axis=-1)
+        chans, footprint = [], None
+        for c in range(frame.shape[2]):
+            reg_c, footprint = astroalign.apply_transform(transform, frame[..., c], ref[..., c])
+            chans.append(reg_c)
+        out = np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
+        out[np.broadcast_to(footprint[..., None], out.shape)] = np.nan
     else:
-        out, _ = astroalign.apply_transform(transform, frame, ref)
-    return np.clip(out, 0.0, 1.0)
+        out, footprint = astroalign.apply_transform(transform, frame, ref)
+        out = np.clip(out, 0.0, 1.0)
+        out[footprint] = np.nan                    # footprint True == no source data
+    return out
+
+
+def _shift_with_nodata(img: np.ndarray, dx: float, dy: float) -> np.ndarray:
+    """FFT-fallback shift, then mark the shifted-in border as NaN (no-data), not 0."""
+    shifted = fftreg.apply_shift(img, dx, dy)
+    ones = np.ones(img.shape[:2], dtype=np.float64)
+    covered = _nd_shift(ones, (dy, dx), order=0, mode="constant", cval=0.0) >= 0.5
+    if shifted.ndim == 3:
+        shifted[~covered] = np.nan
+    else:
+        shifted[~covered] = np.nan
+    return shifted
 
 
 class Aligner:
@@ -69,7 +88,7 @@ class Aligner:
         wk, k = fftreg.working(f)
         dx, dy = fftreg.measure_against(self._ref_fft, fftreg.gradient(wk),
                                         wk.shape[1], wk.shape[0])
-        return fftreg.apply_shift(f, -dx / k, -dy / k)
+        return _shift_with_nodata(f, -dx / k, -dy / k)
 
 
 def register(frames: List[np.ndarray], reference: int, *,

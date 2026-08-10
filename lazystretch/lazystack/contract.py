@@ -48,6 +48,38 @@ def measure_edges(master: np.ndarray) -> Dict[str, int]:
     return {"L": L, "R": R, "T": T, "B": B}
 
 
+def coverage_edges(coverage: np.ndarray, n_sub: int, *,
+                   cover_frac: float = 0.98, line_frac: float = 0.90) -> Dict[str, int]:
+    """Common-overlap junk-edge counts from the integration coverage map.
+
+    ``coverage`` is the per-pixel count of frames that actually covered each pixel. A row/col
+    is "junk" if fewer than ``line_frac`` of its pixels reach ``cover_frac``·N coverage — i.e.
+    it is mostly outside the region every (or nearly every) frame overlaps. Leading/trailing
+    junk rows/cols on each side become the crop. An undithered set (uniform full coverage)
+    yields zero crop; a dithered/rotated set trims exactly the ragged partial-coverage border
+    the reviewers saw. Never trims more than 25% per side (degenerate-coverage guard).
+    """
+    cov = np.asarray(coverage)
+    H, W = cov.shape
+    thr = max(1, int(round(cover_frac * max(1, n_sub))))
+    covered = cov >= thr
+    row_ok = covered.mean(axis=1) >= line_frac
+    col_ok = covered.mean(axis=0) >= line_frac
+
+    def _lead(flags: np.ndarray) -> int:
+        n = 0
+        for ok in flags:
+            if ok:
+                break
+            n += 1
+        return n
+
+    T, B = _lead(row_ok), _lead(row_ok[::-1])
+    L, R = _lead(col_ok), _lead(col_ok[::-1])
+    return {"L": min(L, W // 4), "R": min(R, W // 4),
+            "T": min(T, H // 4), "B": min(B, H // 4)}
+
+
 def crop_to_contract(master: np.ndarray, edges: Dict[str, int]) -> np.ndarray:
     """Crop a master by measured edge bounds."""
     a = np.asarray(master)
