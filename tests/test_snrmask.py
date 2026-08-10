@@ -1,0 +1,45 @@
+"""SNR-protect mask: LazyStack noise-map emit + the mask builder that feeds the stretch."""
+import numpy as np
+import pytest
+
+from lazystretch.lazystack import integrate as integ
+from lazystretch.processes import snrmask
+
+
+def test_sigma_clip_returns_noise_map():
+    rng = np.random.default_rng(0)
+    # 10 frames: quiet pixel (low σ) vs noisy pixel (high σ) -> noise map must separate them.
+    cube = np.stack([np.full((8, 8), 0.3) + rng.normal(0, 0.002, (8, 8)) for _ in range(10)])
+    cube[:, 4, 4] += rng.normal(0, 0.05, 10)                  # one high-variance pixel
+    out, cov, noise = integ.sigma_clip_mean(cube, return_coverage=True, return_noise=True)
+    assert noise.shape == (8, 8) and np.all(cov == 10)
+    assert noise[4, 4] > 5 * np.median(noise)                 # the noisy pixel stands out
+
+
+def test_snr_protect_mask_high_in_noise_low_in_signal():
+    H, W = 120, 150
+    yy, xx = np.mgrid[0:H, 0:W]
+    blob = 0.4 * np.exp(-(((xx - W / 2) / 25) ** 2 + ((yy - H / 2) / 20) ** 2))
+    master = np.clip(0.02 + blob, 0, 1)
+    noise = np.full((H, W), 0.01, np.float32)                 # uniform σ -> SNR follows the signal
+    m = snrmask.snr_protect_mask(master, noise, strength=1.0, smooth=4.0)
+    assert m[H // 2, W // 2] < 0.2                            # bright/high-SNR -> not protected
+    assert m[5, 5] > 0.6                                      # dark/low-SNR corner -> protected
+    assert m.min() >= 0.0 and m.max() <= 1.0
+
+
+def test_snr_protect_mask_strength_scales():
+    rng = np.random.default_rng(1)
+    master = rng.uniform(0, 0.3, (64, 80))
+    noise = np.full((64, 80), 0.02, np.float32)
+    assert snrmask.snr_protect_mask(master, noise, strength=0.5).max() <= 0.5 + 1e-9
+    assert np.allclose(snrmask.snr_protect_mask(master, noise, strength=0.0), 0.0)
+
+
+def test_load_noise_map_roundtrip(tmp_path):
+    mp = tmp_path / "lazystack_master.fits"
+    mp.write_bytes(b"")                                       # path only; never opened as an image
+    assert snrmask.load_noise_map(str(mp)) is None            # absent -> None (graceful fallback)
+    np.save(str(tmp_path / "lazystack_master_noise.npy"), np.ones((10, 12), np.float32))
+    got = snrmask.load_noise_map(str(mp))
+    assert got is not None and got.shape == (10, 12)
