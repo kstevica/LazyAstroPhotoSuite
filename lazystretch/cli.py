@@ -104,6 +104,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--load-recipe", help="apply a .lsrecipe file (before CLI dial/toggle overrides)")
     p.add_argument("--save-recipe", help="write the resolved settings to a .lsrecipe file and exit")
     p.add_argument("--input-stretched", action="store_true", help="polish-only mode (non-linear input)")
+    p.add_argument("--debug-background", action="store_true",
+                   help="save the estimated gradient/background model to <out>_background.tif")
     return p
 
 
@@ -169,6 +171,8 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
         p.removeStars = True
     if args.input_stretched:
         p.inputStretched = True
+    if getattr(args, "debug_background", False):
+        p.debugBackground = True
     if args.deconv:
         p.useClassicalDeconv = True
     if args.palette:
@@ -215,8 +219,9 @@ def main(argv: Optional[list] = None) -> int:
     params = _make_params(args, object_class, preset)
     params.ha, params.oiii, params.sii = ha, oiii, sii
     if args.input and params.snrProtect > 0:                 # SNR-protect needs the master's noise map
-        from .processes.snrmask import load_noise_map
+        from .processes.snrmask import load_coverage_map, load_noise_map
         params.snr_noise_map = load_noise_map(args.input)
+        params.snr_coverage_map = load_coverage_map(args.input)
         if params.snr_noise_map is None:
             print("note: --snr-protect set but no LazyStack noise map found next to the input "
                   "(lazystack_master_noise.npy) — SNR-protect will be skipped")
@@ -271,6 +276,13 @@ def main(argv: Optional[list] = None) -> int:
         stars_path = str(Path(out_path).with_name(Path(out_path).stem + "_stars" + Path(out_path).suffix))
         save_image(stars_path, result.stars_layer, bit_depth=args.bit_depth)
         print(f"Stars layer -> {stars_path}")
+    if result.background_model is not None:
+        import numpy as _np
+        bg = result.background_model
+        bg = (bg - float(_np.min(bg))) / (float(_np.ptp(bg)) or 1.0)   # normalize for viewing
+        bg_path = str(Path(out_path).with_name(Path(out_path).stem + "_background" + Path(out_path).suffix))
+        save_image(bg_path, bg, bit_depth=args.bit_depth)
+        print(f"Background model -> {bg_path}  (inspect: it should NOT show galactic structure)")
     return 0
 
 

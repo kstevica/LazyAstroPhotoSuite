@@ -22,8 +22,9 @@ from typing import Optional
 import numpy as np
 from scipy.ndimage import gaussian_filter
 
-# Companion filenames written by lazystack.run (kept in sync with run.SNR_MAP_NAME).
+# Companion filenames written by lazystack.run (kept in sync with run.py).
 _COMPANION_NAMES = ("lazystack_master_noise.npy",)
+_COVERAGE_NAMES = ("lazystack_master_coverage.npy",)
 
 
 def load_noise_map(master_path: "str | Path") -> Optional[np.ndarray]:
@@ -31,6 +32,20 @@ def load_noise_map(master_path: "str | Path") -> Optional[np.ndarray]:
     p = Path(master_path)
     candidates = [p.with_name(n) for n in _COMPANION_NAMES]
     candidates.append(p.with_name(p.stem + "_noise.npy"))
+    for c in candidates:
+        if c.exists():
+            try:
+                return np.load(str(c))
+            except Exception:
+                pass
+    return None
+
+
+def load_coverage_map(master_path: "str | Path") -> Optional[np.ndarray]:
+    """Find + load the per-pixel frame-support (coverage) map beside ``master_path`` (or ``None``)."""
+    p = Path(master_path)
+    candidates = [p.with_name(n) for n in _COVERAGE_NAMES]
+    candidates.append(p.with_name(p.stem + "_coverage.npy"))
     for c in candidates:
         if c.exists():
             try:
@@ -51,18 +66,26 @@ def snr_map(master: np.ndarray, noise: np.ndarray) -> np.ndarray:
 
 
 def snr_protect_mask(master: np.ndarray, noise: np.ndarray, strength: float = 0.5, *,
+                     coverage: Optional[np.ndarray] = None,
                      lo_pct: float = 20.0, hi_pct: float = 70.0, smooth: float = 8.0) -> np.ndarray:
-    """A ``0..strength`` mask: **high** where SNR is low (pure noise), **0** where SNR is high.
+    """A ``0..strength`` mask: **high** where confidence is low, **0** where it is high.
 
-    Self-scaling: full protection at/below the ``lo_pct`` SNR percentile, fading to none at/above
-    ``hi_pct`` — so it adapts to each frame's SNR range instead of a fixed threshold. Smoothed to
-    a low-frequency mask (the per-pixel SNR from ~tens of frames is itself noisy). ``strength`` is
-    the user's 0..1 "ponder". Returns a float64 array in ``[0, strength]``.
+    Confidence combines two stack-measured signals: **SNR** (self-scaling — full protection at/below
+    the ``lo_pct`` SNR percentile, none at/above ``hi_pct``) and, when given, **frame support**
+    (``coverage``) — pixels covered by fewer frames are less reliable and get protected more. The
+    two are combined by taking the stronger protection. Smoothed to a low-frequency mask (the
+    per-pixel estimates from ~tens of frames are themselves noisy). ``strength`` is the user's 0..1
+    "ponder". Returns a float64 array in ``[0, strength]``.
     """
     snr = snr_map(master, noise)
     lo = float(np.nanpercentile(snr, lo_pct))
     hi = float(np.nanpercentile(snr, hi_pct))
     protect = np.clip((hi - snr) / (hi - lo + 1e-9), 0.0, 1.0)     # 1 at/below lo, 0 at/above hi
+    if coverage is not None:
+        cov = np.asarray(coverage, dtype=np.float64)
+        if cov.shape == protect.shape:
+            cmax = float(cov.max()) or 1.0
+            protect = np.maximum(protect, np.clip(1.0 - cov / cmax, 0.0, 1.0))  # low support -> protect
     if smooth and smooth > 0:
         protect = gaussian_filter(protect, float(smooth))
     return float(np.clip(strength, 0.0, 1.0)) * np.clip(protect, 0.0, 1.0)

@@ -43,6 +43,7 @@ _CHECKS = [
     ("do_calibrate", "Calibrate (bias/dark/flat)"),
     ("do_cosmetic", "Cosmetic correction (hot/cold)"),
     ("fix_walking_noise", "Fix walking noise (static hot-pixel repair; no darks/dither needed)"),
+    ("fix_banding", "Suppress column/row banding (fixed-pattern noise; no darks needed)"),
     ("do_register", "Register frames"),
     ("normalize", "Normalize to reference (background + scale)"),
     ("local_normalize", "Local normalization (spatially-varying gradient match)"),

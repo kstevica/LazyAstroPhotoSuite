@@ -83,6 +83,7 @@ _OPTIONS = [
     ("enhanceEmission", "Enhance emission (Ha)"),
     ("reduceCast", "Reduce background color cast"),
     ("inputStretched", "Input already stretched (polish only)"),
+    ("debugBackground", "Show estimated background (debug: saves the model)"),
 ]
 
 # The adjustment dials: (attr, label, lo, hi, decimals, default). The ± nudge dials default
@@ -134,6 +135,7 @@ class LazyStretchPanel(QWidget):
         self._work_image: Optional[np.ndarray] = None     # base override: a history image to
         #                                                 continue from (else the loaded master)
         self._snr_noise_map: Optional[np.ndarray] = None  # LazyStack noise map for the loaded master
+        self._snr_coverage_map: Optional[np.ndarray] = None  # LazyStack frame-support map
         self._pins: Dict[str, object] = {}                # PROC pins for the loaded master
 
         self.checks: Dict[str, QCheckBox] = {}
@@ -529,8 +531,9 @@ class LazyStretchPanel(QWidget):
         self._hist_store = HistoryStore(mpath) if mpath else None
         self._pins = load_pins(mpath) if mpath else {}
         # SNR-protect: pick up a LazyStack noise map sitting next to the master (if any).
-        from ..processes.snrmask import load_noise_map
+        from ..processes.snrmask import load_coverage_map, load_noise_map
         self._snr_noise_map = load_noise_map(mpath) if mpath else None
+        self._snr_coverage_map = load_coverage_map(mpath) if mpath else None
         if self._snr_noise_map is not None:
             self.status_label.setText("Loaded. LazyStack noise map found — SNR-protect available.")
         self._refresh_history_list()
@@ -692,7 +695,8 @@ class LazyStretchPanel(QWidget):
         p.cropPercent = self.crop_slider.value()
         p.autoAssess = self.auto_check.isChecked()
         p.object_id = self.object_combo.currentText()
-        p.snr_noise_map = self._snr_noise_map          # SNR-protect map for the loaded master (or None)
+        p.snr_noise_map = self._snr_noise_map          # SNR-protect maps for the loaded master (or None)
+        p.snr_coverage_map = self._snr_coverage_map
         if self.ha_picker.path() and self.oiii_picker.path():
             p.ha = self._mono(self.ha_picker.path())
             p.oiii = self._mono(self.oiii_picker.path())
@@ -743,6 +747,18 @@ class LazyStretchPanel(QWidget):
         self.log_view.finish()
         self.result_image = result.image
         self.result_stars = result.stars_layer
+        bg = getattr(result, "background_model", None)     # debug: save the estimated background model
+        if bg is not None:
+            try:
+                mpath = getattr(self.loaded, "path", None)
+                if mpath:
+                    norm = (bg - float(np.min(bg))) / (float(np.ptp(bg)) or 1.0)
+                    bg_path = str(Path(mpath).with_name(Path(mpath).stem + "_background.tif"))
+                    save_image(bg_path, norm, bit_depth=16)
+                    self.status_label.setText(f"Background model saved: {Path(bg_path).name} "
+                                              f"(should show NO galactic structure)")
+            except Exception:
+                pass
         self.preview.set_image(result.image)     # same size -> keeps zoom/pan for comparison
         self.save_btn.setEnabled(True)
         self._populate_process_tab(getattr(result, "ledger", None))

@@ -67,6 +67,7 @@ class PipelineResult:
     eff_gc: bool
     stretch: Optional[StretchResult] = None
     stars_layer: Optional[np.ndarray] = None   # from Remove stars: the extracted stars
+    background_model: Optional[np.ndarray] = None  # debug: the estimated gradient/background subtracted
     steps_run: List[str] = field(default_factory=list)
     steps_skipped: List[str] = field(default_factory=list)
     log: List[str] = field(default_factory=list)
@@ -165,19 +166,23 @@ def run_pipeline(
     eff_gc = bool(ledger.record("Background", "use GradientCorrection", eff_gc))
 
     ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None,
-           "noise_map": None, "snr_raw": None}
+           "noise_map": None, "coverage_map": None, "snr_raw": None}
     steps: List = []
 
-    # SNR-protect: LazyStack's measured per-pixel noise map (companion of the master) drives a
-    # mask that protects high-SNR signal from NR and damps local contrast in pure-noise regions.
+    # SNR-protect: LazyStack's measured per-pixel noise + coverage maps (companions of the master)
+    # drive a mask that protects high-SNR signal from NR and damps local contrast in pure-noise regions.
     snr_protect = float(getattr(params, "snrProtect", 0.0) or 0.0)
     _nm = getattr(params, "snr_noise_map", None)
     if snr_protect > 0 and _nm is not None:
         _nm = np.asarray(_nm, dtype=np.float64)
-        if _nm.shape == np.asarray(target).shape[:2]:
+        _hw = np.asarray(target).shape[:2]
+        if _nm.shape == _hw:
             ctx["noise_map"] = _nm
+            _cov = getattr(params, "snr_coverage_map", None)
+            if _cov is not None and np.asarray(_cov).shape == _hw:
+                ctx["coverage_map"] = np.asarray(_cov, dtype=np.float64)
         else:
-            _log(f"   SNR-protect: noise map {_nm.shape} != image {np.asarray(target).shape[:2]} — disabled")
+            _log(f"   SNR-protect: noise map {_nm.shape} != image {_hw} — disabled")
 
     def add(name: str, fn: Callable[[], None]):
         steps.append((name, fn))
@@ -204,41 +209,60 @@ def run_pipeline(
     if eff_crop > 0:
         def _crop():
             ctx["img"] = crop.crop_edges(ctx["img"], eff_crop / 100.0)
-            if ctx["noise_map"] is not None:            # keep the noise map aligned to the master
+            if ctx["noise_map"] is not None:            # keep the maps aligned to the master
                 ctx["noise_map"] = crop.crop_edges(ctx["noise_map"], eff_crop / 100.0)
+            if ctx["coverage_map"] is not None:
+                ctx["coverage_map"] = crop.crop_edges(ctx["coverage_map"], eff_crop / 100.0)
         add(f"Crop {eff_crop:.1f}% off each edge", _crop)
 
     # --- SNR-protect mask (built on the linear master, after crop) ---
     if ctx["noise_map"] is not None and snr_protect > 0:
         def _snr():
-            # raw protect in [0,1], high where SNR is low (pure noise); strength applied per-use.
-            ctx["snr_raw"] = snrmask.snr_protect_mask(ctx["img"], ctx["noise_map"], strength=1.0)
+            # raw protect in [0,1], high where confidence is low (SNR + frame support); strength per-use.
+            ctx["snr_raw"] = snrmask.snr_protect_mask(ctx["img"], ctx["noise_map"], strength=1.0,
+                                                      coverage=ctx["coverage_map"])
             frac = float(np.mean(ctx["snr_raw"] > 0.5))
             _log(f"   SNR-protect {snr_protect:.2f}: ~{100 * frac:.0f}% low-SNR (protect NR signal, "
                  f"damp local contrast there)")
         add("SNR-protect mask (from stack noise map)", _snr)
 
+    # Debug: accumulate the estimated gradient/background (before - after) so it can be inspected
+    # as an image — if you can see galactic dust in the model, the step is stealing real signal.
+    def _capture_bg(before, after):
+        if params.debugBackground:
+            model = np.asarray(before, dtype=np.float64) - np.asarray(after, dtype=np.float64)
+            ctx["bg_model"] = model if ctx.get("bg_model") is None else ctx["bg_model"] + model
+
     # --- background / gradient (js:3336-3343) ---
     if params.doBgExtract:
         if eff_gc:
             def _bg():
+                before = ctx["img"]
                 if tools.graxpert.is_available():
-                    ctx["img"] = tools.graxpert.background_extraction(ctx["img"])
+                    out = tools.graxpert.background_extraction(before)
                     _log("   via GraXpert background-extraction")
                 else:
-                    ctx["img"] = background.background_correct(ctx["img"])
+                    out = background.background_correct(before)
                     _log("   via ABE polynomial (GraXpert not installed)")
+                _capture_bg(before, out)
+                ctx["img"] = out
             add("Background / gradient correction", _bg)
         else:
             def _bg():
-                ctx["img"] = background.background_extract(ctx["img"])
+                before = ctx["img"]
+                out = background.background_extract(before)
+                _capture_bg(before, out)
+                ctx["img"] = out
             add("Background / gradient extraction (ABE)", _bg)
 
     # --- dark-lane gradient (v1.4.x): deg-2 model anchored on dark lanes, for
     #     no-empty-sky wall-to-wall fields where ABE/GC over-flatten (js:4509-4511) ---
     if params.darkLaneGC and not params.inputStretched:
         def _darklane():
-            ctx["img"] = darklane.dark_lane_gradient(ctx["img"])
+            before = ctx["img"]
+            out = darklane.dark_lane_gradient(before)
+            _capture_bg(before, out)
+            ctx["img"] = out
         add("Dark-lane gradient model", _darklane)
 
     # --- deconvolution (BlurX wall -> optional classical RL) (js:3344-3354) ---
@@ -545,6 +569,7 @@ def run_pipeline(
         eff_gc=eff_gc,
         stretch=ctx.get("stretch"),
         stars_layer=ctx.get("stars_layer"),
+        background_model=ctx.get("bg_model"),
         steps_run=steps_run,
         steps_skipped=steps_skipped,
         log=logs,

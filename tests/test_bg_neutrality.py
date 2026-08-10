@@ -49,3 +49,12 @@ def test_milkyway_pipeline_uses_darklane_and_reducecast_not_abe():
     assert "Dark-lane gradient model" in steps
     assert "Reduce background color cast" in steps
     assert "ABE" not in steps                     # generic background extraction disabled for MW
+
+
+def test_debug_background_captures_the_model():
+    img = _osc()
+    on = run_pipeline(img, Parameters.for_object("emission", debugBackground=True), preview=False)
+    assert on.background_model is not None                       # ABE model captured for inspection
+    assert on.background_model.shape[:2] == on.image.shape[:2]
+    off = run_pipeline(img, Parameters.for_object("emission"), preview=False)
+    assert off.background_model is None                          # off by default

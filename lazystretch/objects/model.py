@@ -60,6 +60,8 @@ class Parameters:
     reduceCast: bool = False
     workOnClone: bool = True
     useClassicalDeconv: bool = False   # opt-in Richardson-Lucy when BlurX is absent (weak)
+    debugBackground: bool = False      # capture the estimated gradient/background model for inspection
+                                       # (result.background_model) — verify it isn't stealing real signal
 
     # --- v1.4.x params: data-layer synced (recipes/memory round-trip) but their
     #     pipeline steps are not yet ported — see PLAN §12 catch-up backlog. ---
@@ -92,9 +94,10 @@ class Parameters:
     ha: Optional[np.ndarray] = field(default=None, repr=False)
     oiii: Optional[np.ndarray] = field(default=None, repr=False)
     sii: Optional[np.ndarray] = field(default=None, repr=False)
-    # LazyStack's per-pixel noise map for this master (transient; loaded by the caller from the
-    # master's companion file — drives the SNR-protect mask when snrProtect > 0).
+    # LazyStack's per-pixel noise + coverage maps for this master (transient; loaded by the caller
+    # from the master's companion files — drive the SNR-protect mask when snrProtect > 0).
     snr_noise_map: Optional[np.ndarray] = field(default=None, repr=False)
+    snr_coverage_map: Optional[np.ndarray] = field(default=None, repr=False)
 
     def slider_dict(self) -> Dict[str, float]:
         return {

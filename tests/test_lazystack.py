@@ -1,4 +1,6 @@
 """LazyStack — calibration, integration, measure/cull, register, contract, run."""
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -365,6 +367,22 @@ def test_stack_crops_dithered_master_smaller_than_source(tmp_path):
     assert res["master_path"]
 
 
+def test_suppress_banding_removes_fine_columns_keeps_broad_gradient():
+    # Banding suppression targets the fine column-to-column FPN jumps, NOT broad column trends
+    # (those are indistinguishable from a real horizontal gradient and must be preserved).
+    rng = np.random.default_rng(0)
+    H, W = 300, 400
+    xx = np.mgrid[0:H, 0:W][1]
+    base = np.full((H, W), 0.10) + rng.normal(0, 0.001, (H, W)) + 0.02 * (xx / W)   # + real gradient
+    fine = 0.01 * np.sin(2 * np.pi * np.arange(W) / 3.0)            # fine column FPN (period 3 px)
+    banded = np.clip(base + fine[None, :], 0, 1)
+    fixed = cal.suppress_banding(banded, do_rows=False)
+    resid = np.median(fixed, axis=0) - np.median(base, axis=0)
+    assert np.std(resid) < 0.2 * np.std(fine)                       # fine banding removed
+    cm = np.median(fixed, axis=0)                                   # broad gradient preserved
+    assert abs((cm[-10:].mean() - cm[:10].mean()) - 0.02) < 0.005
+
+
 def test_calibrate_light_shape_mismatch_raises_clear_error():
     light = np.zeros((10, 12, 3))
     dark = np.zeros((12, 10, 3))                       # transposed (portrait vs landscape)
@@ -388,6 +406,10 @@ def test_stack_writes_noise_map_companion(tmp_path):
     noise = np.load(res["noise_map_path"])
     assert noise.shape == res["master"].shape[:2]      # 2D, aligned to the cropped master
     assert np.all(np.isfinite(noise)) and float(noise.min()) >= 0.0
+    cov_path = Path(res["master_path"]).with_name("lazystack_master_coverage.npy")
+    assert cov_path.exists()                            # coverage companion written too
+    cov = np.load(str(cov_path))
+    assert cov.shape == res["master"].shape[:2] and int(cov.max()) <= res["n_stacked"]
 
 
 def test_measure_only_advises_without_stacking(tmp_path):

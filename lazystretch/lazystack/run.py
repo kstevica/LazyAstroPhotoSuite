@@ -29,7 +29,8 @@ from . import (
 FRAME_EXTS = {".xisf", ".fits", ".fit", ".fts", ".tif", ".tiff", ".png"}
 _SUBSETS = ("lights", "darks", "flats", "biases")
 MASTER_NAME = "lazystack_master.fits"
-SNR_MAP_NAME = "lazystack_master_noise.npy"    # per-pixel σ companion (feeds the stretch SNR mask)
+SNR_MAP_NAME = "lazystack_master_noise.npy"        # per-pixel σ companion (feeds the stretch SNR mask)
+COVERAGE_MAP_NAME = "lazystack_master_coverage.npy"  # per-pixel frame-support companion
 _RAWPY_OK = None
 
 
@@ -412,6 +413,9 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     master = np.nan_to_num(master, nan=0.0)              # no NaN (no-data) reaches the 16-bit save
     if edge_crop:
         master = contract.crop_to_contract(master, edges)
+    if getattr(params, "fix_banding", True):             # remove column/row fixed-pattern banding
+        master = cal.suppress_banding(master)
+        log("Suppressed column/row banding (fixed-pattern residual).")
     header = contract.contract_header(n_stacked, edges, exposure)
     master_path = out_dir / MASTER_NAME
     save_image(str(master_path), master, bit_depth=16, header=header)
@@ -429,9 +433,13 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             noise_c = np.nan_to_num(noise_c, nan=fill).astype(np.float32)
             snr_path = out_dir / SNR_MAP_NAME
             np.save(str(snr_path), noise_c)
-            log(f"Noise map: {snr_path}  (per-pixel σ; feeds the stretch SNR mask)")
-        except Exception as e:                           # noise map is optional, never fatal
-            log(f"  (noise map skipped: {e})")
+            # Frame-support (coverage) companion — feeds the same SNR-protect confidence: fewer
+            # frames covering a pixel == less reliable == protect more.
+            cov_c = contract.crop_to_contract(coverage, edges) if edge_crop else coverage
+            np.save(str(out_dir / COVERAGE_MAP_NAME), np.asarray(cov_c, dtype=np.int32))
+            log(f"Noise + coverage maps: {out_dir}  (feed the stretch SNR-protect mask)")
+        except Exception as e:                           # optional companions, never fatal
+            log(f"  (noise/coverage map skipped: {e})")
             snr_path = None
     if work is not None and not reuse:
         _cleanup(work)                                   # fresh run — drop all work files

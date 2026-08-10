@@ -45,6 +45,26 @@ def test_load_noise_map_roundtrip(tmp_path):
     assert got is not None and got.shape == (10, 12)
 
 
+def test_snr_protect_mask_folds_coverage():
+    master = np.full((60, 80, 3), 0.2)                       # uniform SNR -> SNR protect ~0
+    noise = np.full((60, 80), 0.02, np.float32)
+    cov_full = np.full((60, 80), 20, np.int32)
+    cov_partial = cov_full.copy()
+    cov_partial[:, :10] = 3                                   # left columns poorly covered
+    m_full = snrmask.snr_protect_mask(master, noise, strength=1.0, coverage=cov_full, smooth=1)
+    m_part = snrmask.snr_protect_mask(master, noise, strength=1.0, coverage=cov_partial, smooth=1)
+    assert m_part[:, :10].mean() > m_full[:, :10].mean() + 0.2   # low frame-support -> more protection
+
+
+def test_load_coverage_map_roundtrip(tmp_path):
+    mp = tmp_path / "lazystack_master.fits"
+    mp.write_bytes(b"")
+    assert snrmask.load_coverage_map(str(mp)) is None
+    np.save(str(tmp_path / "lazystack_master_coverage.npy"), np.full((8, 9), 20, np.int32))
+    got = snrmask.load_coverage_map(str(mp))
+    assert got is not None and got.shape == (8, 9)
+
+
 def _osc(H=200, W=260, seed=0):
     rng = np.random.default_rng(seed)
     yy, xx = np.mgrid[0:H, 0:W]

@@ -127,6 +127,38 @@ def static_hot_pixel_map(frames: Iterable[np.ndarray], *, sigma: float = 5.0,
     return (hot >= thresh) | (cold >= thresh)
 
 
+def suppress_banding(img: np.ndarray, *, strength: float = 1.0, smooth: int = 25,
+                     do_columns: bool = True, do_rows: bool = True) -> np.ndarray:
+    """Remove column/row fixed-pattern banding from the integrated master.
+
+    Sensor column/row FPN (unavoidable with no darks) survives integration as a coherent
+    per-column/per-row bias — the subtle vertical banding a stretch lifts into the shadows. For
+    each line-direction: take the per-column (per-row) MEDIAN profile (robust to stars), keep only
+    its HIGH-frequency part (profile minus a smooth version), and subtract that. Only the narrow
+    column-to-column jumps go; real large-scale vertical/horizontal structure (the smooth part) is
+    preserved. Self-limiting — if there's no coherent pattern the high-pass profile is ~flat and
+    nothing is removed. Per channel on colour.
+    """
+    from scipy.ndimage import uniform_filter1d
+    a = np.asarray(img, dtype=np.float64)
+    win = max(3, int(smooth))
+    s = float(np.clip(strength, 0.0, 1.0))
+
+    def _correct(plane: np.ndarray) -> np.ndarray:
+        out = plane
+        if do_columns:
+            col = np.median(out, axis=0)                      # one value per column
+            out = out - s * (col - uniform_filter1d(col, win, mode="nearest"))[None, :]
+        if do_rows:
+            rowp = np.median(out, axis=1)
+            out = out - s * (rowp - uniform_filter1d(rowp, win, mode="nearest"))[:, None]
+        return out
+
+    if a.ndim == 3:
+        return np.clip(np.stack([_correct(a[..., c]) for c in range(a.shape[2])], axis=-1), 0.0, 1.0)
+    return np.clip(_correct(a), 0.0, 1.0)
+
+
 def repair_bad_pixels(frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Replace masked sensor pixels with the local (3×3) median of the same frame, per channel."""
     a = np.asarray(frame, dtype=np.float64)
