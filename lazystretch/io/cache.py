@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 import numpy as np
 
-from .image_io import RAW_EXT, load_image, save_image
+from .image_io import RAW_DECODER_VERSION, RAW_EXT, load_image, save_image
 
 
 def _noop(_m: str) -> None:
@@ -25,7 +25,10 @@ def _noop(_m: str) -> None:
 
 def _cache_key(path: str) -> str:
     st = os.stat(path)
-    raw = f"{Path(path).resolve()}|{st.st_mtime_ns}|{st.st_size}"
+    # RAW_DECODER_VERSION is part of the key so a demosaic/decode change re-decodes raws and
+    # re-stages the whole chain (cal/reg files are keyed on this too) instead of serving stale
+    # pixels — e.g. VNG TIFFs after the switch to 3-pass Markesteijn.
+    raw = f"{Path(path).resolve()}|{st.st_mtime_ns}|{st.st_size}|{RAW_DECODER_VERSION}"
     return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:12]
 
 

@@ -124,12 +124,37 @@ def _load_xisf(path: Path) -> LoadedImage:
                        source_dtype=str(raw.dtype), source_format="xisf")
 
 
-def _load_raw(path: Path) -> LoadedImage:
-    """Decode a camera raw to linear RGB via rawpy — VNG demosaic, no white balance.
+# Bump whenever the raw decode changes in a way that alters pixels — the decode cache key
+# includes this, so a change re-decodes raws (and re-stacks) instead of serving stale TIFFs.
+RAW_DECODER_VERSION = "2-xtrans-markesteijn"
 
-    Mirrors the .js ``convertRaws`` hint ('vng no-white-balance'): a linear (gamma 1),
-    auto-bright-off, WB-neutral 16-bit RGB so calibration/stretch see the sensor's linear
-    signal. Bursts of raws therefore behave like linear FITS/XISF frames.
+
+def _raw_demosaic(raw):
+    """Pick the demosaic algorithm for a rawpy handle.
+
+    On Fuji **X-Trans**, libraw routes any quality index > 2 to **3-pass Markesteijn**; VNG
+    (index 1) selects a noisy 1-pass that leaves the colour maze/speckle Fuji is infamous for.
+    AHD (index 3) is the guaranteed, universally-supported way to get 3-pass Markesteijn.
+    **Bayer** prefers DHT (top-tier). Returns ``(algo_or_None, name, is_xtrans)``.
+    """
+    import rawpy
+    pat = getattr(raw, "raw_pattern", None)
+    is_xtrans = pat is not None and getattr(pat, "shape", (0,))[0] >= 6
+    order = ("AHD", "DCB", "DHT", "VNG") if is_xtrans else ("DHT", "AAHD", "AHD", "VNG")
+    for name in order:
+        algo = getattr(rawpy.DemosaicAlgorithm, name, None)
+        if algo is not None and getattr(algo, "isSupported", True) is not False:
+            return algo, name, is_xtrans
+    return None, "libraw-default", is_xtrans
+
+
+def _load_raw(path: Path) -> LoadedImage:
+    """Decode a camera raw to linear RGB via rawpy — quality demosaic, no white balance.
+
+    Linear (gamma 1), auto-bright-off, WB-neutral 16-bit RGB so calibration/stretch see the
+    sensor's linear signal; bursts of raws behave like linear FITS/XISF frames. The demosaic is
+    chosen by :func:`_raw_demosaic` — **3-pass Markesteijn on X-Trans** (was VNG, whose 1-pass
+    produced the red/blue colour speckle), DHT on Bayer.
     """
     try:
         import rawpy
@@ -138,10 +163,7 @@ def _load_raw(path: Path) -> LoadedImage:
             "reading camera raws needs the 'rawpy' package (pip install rawpy)"
         ) from exc
     with rawpy.imread(str(path)) as raw:
-        try:
-            algo = rawpy.DemosaicAlgorithm.VNG
-        except Exception:  # pragma: no cover - older rawpy
-            algo = None
+        algo, _algo_name, _xtrans = _raw_demosaic(raw)
         kwargs = dict(gamma=(1, 1), no_auto_bright=True, use_camera_wb=False,
                       use_auto_wb=False, user_wb=[1.0, 1.0, 1.0, 1.0],
                       output_bps=16, four_color_rgb=False)
