@@ -49,6 +49,7 @@ _CHECKS = [
     ("local_normalize", "Local normalization (spatially-varying gradient match)"),
     ("edge_crop", "Crop to common overlap (remove ragged registration edges)"),
     ("emit_snr_map", "Write noise/SNR map (feeds the stretch's SNR-protect mask)"),
+    ("preserve_meteors", "Preserve meteor trails (detect + save a meteor layer for the stretch)"),
     ("reuse_cache", "Reuse cached intermediates"),
     ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
 ]

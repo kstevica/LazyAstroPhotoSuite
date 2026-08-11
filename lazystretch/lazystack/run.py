@@ -22,6 +22,7 @@ from . import (
     contract,
     integrate as integ,
     measure as meas,
+    meteors as met,
     normalize as nrm,
     register as reg,
 )
@@ -31,6 +32,8 @@ _SUBSETS = ("lights", "darks", "flats", "biases")
 MASTER_NAME = "lazystack_master.fits"
 SNR_MAP_NAME = "lazystack_master_noise.npy"        # per-pixel σ companion (feeds the stretch SNR mask)
 COVERAGE_MAP_NAME = "lazystack_master_coverage.npy"  # per-pixel frame-support companion
+METEOR_MAP_NAME = "lazystack_master_meteors.npy"   # feathered linear-RGB meteor layer (composite in stretch)
+METEOR_META_NAME = "lazystack_master_meteors.json"  # detected-trail metadata
 _RAWPY_OK = None
 
 
@@ -391,19 +394,19 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     n_stacked = len(aligned_handles)
     log(f"Integrating {n_stacked} frame(s)…")
     emit_snr = getattr(params, "emit_snr_map", True)
+    emit_met = getattr(params, "preserve_meteors", True)
+    ikw = dict(return_coverage=True, return_noise=emit_snr, return_transient=emit_met)
     if staged:
-        res = integ.combine_files(aligned_handles, weights=weights,
-                                  sigma_low=params.sigma_low, sigma_high=params.sigma_high,
-                                  log=log, return_coverage=True, return_noise=emit_snr)
+        res = integ.combine_files(aligned_handles, weights=weights, sigma_low=params.sigma_low,
+                                  sigma_high=params.sigma_high, log=log, **ikw)
     else:
-        res = integ.integrate(aligned_handles, weights=weights,
-                              sigma_low=params.sigma_low, sigma_high=params.sigma_high,
-                              return_coverage=True, return_noise=emit_snr)
-    if emit_snr:
-        master, coverage, noise = res
-    else:
-        master, coverage = res
-        noise = None
+        res = integ.integrate(aligned_handles, weights=weights, sigma_low=params.sigma_low,
+                              sigma_high=params.sigma_high, **ikw)
+    res = list(res)                                      # order: master, coverage, [noise], [transient, tframe]
+    master = res.pop(0)
+    coverage = res.pop(0)
+    noise = res.pop(0) if emit_snr else None
+    transient, tframe = (res.pop(0), res.pop(0)) if emit_met else (None, None)
 
     edge_crop = getattr(params, "edge_crop", True)
     if edge_crop:                                        # crop to the common fully-covered overlap
@@ -441,6 +444,26 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         except Exception as e:                           # optional companions, never fatal
             log(f"  (noise/coverage map skipped: {e})")
             snr_path = None
+
+    # Meteor preservation: the transient map holds the high-side-rejected (meteor/plane) light the
+    # clip discarded; detect trails, save the feathered linear-RGB layer for the stretch to composite.
+    meteor_path = None
+    meteor_list: List[dict] = []
+    if emit_met and transient is not None:
+        try:
+            meteor_list, soft = met.detect_meteors(np.nan_to_num(transient, nan=0.0), tframe, log=log)
+            if meteor_list:
+                layer = met.meteor_layer(transient, soft)
+                layer = contract.crop_to_contract(layer, edges) if edge_crop else layer
+                layer = np.nan_to_num(layer, nan=0.0).astype(np.float32)
+                meteor_path = out_dir / METEOR_MAP_NAME
+                np.save(str(meteor_path), layer)
+                (out_dir / METEOR_META_NAME).write_text(
+                    json.dumps({"meteors": meteor_list}), encoding="utf-8")
+                log(f"Meteor layer: {meteor_path}  ({len(meteor_list)} trail(s); composite in the stretch)")
+        except Exception as e:                           # optional, never fatal
+            log(f"  (meteor layer skipped: {e})")
+            meteor_path = None
     if work is not None and not reuse:
         _cleanup(work)                                   # fresh run — drop all work files
     elif work is not None and reuse:                     # keep this run's files, prune orphans
@@ -452,4 +475,6 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     return {"master": master, "master_path": str(master_path), "n_stacked": n_stacked,
             "n_lights": len(lights), "cull": culled, "edges": edges,
             "noise_map_path": str(snr_path) if snr_path else None,
+            "meteor_layer_path": str(meteor_path) if meteor_path else None,
+            "meteors": meteor_list,
             "registered_with": "astroalign" if reg.astroalign_available() else "fft-translation"}

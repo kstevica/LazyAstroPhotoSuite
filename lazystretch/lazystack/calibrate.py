@@ -58,14 +58,38 @@ def bias_calibrate(frame: np.ndarray, bias: Optional[np.ndarray]) -> np.ndarray:
     return np.clip(a, 0.0, 1.0)
 
 
+def _protect_extended(original: np.ndarray, cleaned: np.ndarray, max_component: int) -> np.ndarray:
+    """Only accept SMALL, compact cosmetic repairs — restore original over large/elongated changes.
+
+    Hot pixels and cosmic rays are a few pixels; a **meteor / satellite trail** is a large
+    connected feature. Repairing it would erase exactly what meteor-preservation wants to keep. So
+    any run of changed pixels bigger than ``max_component`` is reverted to the original.
+    """
+    from scipy.ndimage import label
+    a = np.asarray(original, dtype=np.float64)
+    c = np.asarray(cleaned, dtype=np.float64)
+    changed = np.any(np.abs(c - a) > 1e-6, axis=2) if a.ndim == 3 else (np.abs(c - a) > 1e-6)
+    lbl, n = label(changed, structure=np.ones((3, 3)))
+    if n == 0:
+        return c
+    sizes = np.bincount(lbl.ravel())
+    small = np.zeros(sizes.size, dtype=bool)
+    small[1:] = sizes[1:] <= max_component          # label 0 is unchanged background
+    keep = small[lbl]                                # accept the small repairs only
+    m = keep[..., None] if a.ndim == 3 else keep
+    return np.where(m, c, a)
+
+
 def cosmetic_correct(light: np.ndarray, dark: Optional[np.ndarray] = None,
-                     sigma: float = 3.0) -> np.ndarray:
+                     sigma: float = 3.0, max_component: int = 12) -> np.ndarray:
     """Repair hot/cold pixels: astroscrappy L.A.Cosmic if present, else a median-outlier map.
 
-    Fallback: replace pixels that deviate from a 3x3 median by > ``sigma``·(robust noise)
-    with that median — a light-touch stand-in for CosmeticCorrection (hot/cold only).
+    Fallback: replace pixels that deviate from a 3x3 median by > ``sigma``·(robust noise) with that
+    median. Either way, only SMALL compact repairs are accepted (``_protect_extended``) so meteor /
+    satellite trails survive to integration (where meteor-preservation catches them).
     """
     a = np.asarray(light, dtype=np.float64)
+    cleaned = None
     try:
         import astroscrappy
         # Per-channel, not on the luminance mean: a hot pixel lives in one (demosaiced) channel,
@@ -74,22 +98,22 @@ def cosmetic_correct(light: np.ndarray, dark: Optional[np.ndarray] = None,
         if a.ndim == 3:
             chans = [astroscrappy.detect_cosmics(a[..., c], sigclip=sigma)[1]
                      for c in range(a.shape[2])]
-            return np.clip(np.stack(chans, axis=-1), 0.0, 1.0)
-        return np.clip(astroscrappy.detect_cosmics(a, sigclip=sigma)[1], 0.0, 1.0)
+            cleaned = np.stack(chans, axis=-1)
+        else:
+            cleaned = astroscrappy.detect_cosmics(a, sigclip=sigma)[1]
     except Exception:
-        pass
-    from scipy.ndimage import median_filter
-    def _fix(p):
-        med = median_filter(p, size=3, mode="nearest")
-        resid = p - med
-        noise = 1.4826 * np.median(np.abs(resid - np.median(resid))) + 1e-9
-        bad = np.abs(resid) > sigma * noise
-        out = p.copy()
-        out[bad] = med[bad]
-        return out
-    if a.ndim == 3:
-        return np.clip(np.stack([_fix(a[..., c]) for c in range(a.shape[2])], axis=-1), 0, 1)
-    return np.clip(_fix(a), 0.0, 1.0)
+        from scipy.ndimage import median_filter
+        def _fix(p):
+            med = median_filter(p, size=3, mode="nearest")
+            resid = p - med
+            noise = 1.4826 * np.median(np.abs(resid - np.median(resid))) + 1e-9
+            bad = np.abs(resid) > sigma * noise
+            out = p.copy()
+            out[bad] = med[bad]
+            return out
+        cleaned = (np.stack([_fix(a[..., c]) for c in range(a.shape[2])], axis=-1)
+                   if a.ndim == 3 else _fix(a))
+    return np.clip(_protect_extended(a, cleaned, max_component), 0.0, 1.0)
 
 
 def static_hot_pixel_map(frames: Iterable[np.ndarray], *, sigma: float = 5.0,

@@ -166,8 +166,19 @@ def run_pipeline(
     eff_gc = bool(ledger.record("Background", "use GradientCorrection", eff_gc))
 
     ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None,
-           "noise_map": None, "coverage_map": None, "snr_raw": None}
+           "noise_map": None, "coverage_map": None, "snr_raw": None, "meteor_layer": None}
     steps: List = []
+
+    # Meteor preservation: a LazyStack master carries a feathered linear-RGB meteor layer; composite
+    # it (gently developed) onto the finished image so Perseid trails + their colours survive.
+    meteor_strength = float(getattr(params, "meteorStrength", 1.0) or 0.0)
+    _ml = getattr(params, "meteor_layer", None)
+    if meteor_strength > 0 and _ml is not None and _is_rgb(np.asarray(target)):
+        _ml = np.asarray(_ml, dtype=np.float64)
+        if _ml.shape[:2] == np.asarray(target).shape[:2]:
+            ctx["meteor_layer"] = _ml
+        else:
+            _log(f"   meteor layer {_ml.shape[:2]} != image {np.asarray(target).shape[:2]} — disabled")
 
     # SNR-protect: LazyStack's measured per-pixel noise + coverage maps (companions of the master)
     # drive a mask that protects high-SNR signal from NR and damps local contrast in pure-noise regions.
@@ -213,6 +224,8 @@ def run_pipeline(
                 ctx["noise_map"] = crop.crop_edges(ctx["noise_map"], eff_crop / 100.0)
             if ctx["coverage_map"] is not None:
                 ctx["coverage_map"] = crop.crop_edges(ctx["coverage_map"], eff_crop / 100.0)
+            if ctx["meteor_layer"] is not None:         # keep the meteor layer aligned to the master
+                ctx["meteor_layer"] = crop.crop_edges(ctx["meteor_layer"], eff_crop / 100.0)
         add(f"Crop {eff_crop:.1f}% off each edge", _crop)
 
     # --- SNR-protect mask (built on the linear master, after crop) ---
@@ -534,6 +547,18 @@ def run_pipeline(
     def _shadow():
         ctx["img"] = shadowanchor.shadow_anchor(ctx["img"], cls, log=_log)
     add("Shadow anchor (black-point calibration)", _shadow)
+
+    # --- composite preserved meteor trail(s) — before the roll-off so any meteor+sky sum is
+    #     tamed by it. The layer is developed gently + hue-preservingly, so trail colours survive. ---
+    if ctx["meteor_layer"] is not None and meteor_strength > 0:
+        def _meteor():
+            from ..lazystack import meteors as _met
+            dev = _met.develop_meteor(ctx["meteor_layer"], meteor_strength)
+            a = np.asarray(ctx["img"], dtype=np.float64)
+            if np.asarray(dev).shape == a.shape:
+                ctx["img"] = np.clip(a + dev, 0.0, 1.0)
+                _log(f"   meteor trail(s) composited (strength {meteor_strength:.2f})")
+        add("Composite meteor trail(s)", _meteor)
 
     # --- highlight roll-off (P1 calibration): always last. A soft top-end knee so no
     #     channel hard-clips to pure white — matches PI's controlled highlights and

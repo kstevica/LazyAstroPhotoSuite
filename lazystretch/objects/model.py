@@ -85,6 +85,8 @@ class Parameters:
     dimCore: float = 0.0           # dim-core dial 0..1 (0=off): mask the large bright veil and
                                    # multiplicatively lower its luminosity (no ceiling, unlike
                                    # the highlight roll-off). Opt-in. Port-only finishing dial.
+    meteorStrength: float = 1.0    # composite the LazyStack meteor layer 0..1 (0=off, 1=full). Needs
+                                   # a meteor_layer companion (a LazyStack master with preserved trails).
     snrProtect: float = 0.0        # SNR-protect "ponder" 0..1 (0=off): use LazyStack's measured
                                    # per-pixel noise map to protect high-SNR signal from NR and
                                    # damp local-contrast in pure-noise regions. Needs snr_noise_map
@@ -98,6 +100,7 @@ class Parameters:
     # from the master's companion files — drive the SNR-protect mask when snrProtect > 0).
     snr_noise_map: Optional[np.ndarray] = field(default=None, repr=False)
     snr_coverage_map: Optional[np.ndarray] = field(default=None, repr=False)
+    meteor_layer: Optional[np.ndarray] = field(default=None, repr=False)   # LazyStack meteor layer
 
     def slider_dict(self) -> Dict[str, float]:
         return {

@@ -25,5 +25,6 @@ class LazyStackParams:
     local_normalize: bool = False  # spatially-varying gradient match to the reference (LN)
     edge_crop: bool = True         # crop the master to the common fully-covered overlap region
     emit_snr_map: bool = True      # write a per-pixel noise/SNR companion (feeds the stretch's SNR mask)
+    preserve_meteors: bool = True  # detect meteor trails (rejected transients) + save a meteor layer
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory

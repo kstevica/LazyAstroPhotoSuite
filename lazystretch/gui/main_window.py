@@ -107,6 +107,7 @@ _DIALS = [
     ("dimCore", "Dim core (0 = off)", 0.0, 1.0, 2, 0.0),
     ("starShrink", "Reduce stars (no StarNet, 0 = off)", 0.0, 1.0, 2, 0.0),
     ("snrProtect", "SNR protect (0 = off, needs LazyStack map)", 0.0, 1.0, 2, 0.0),
+    ("meteorStrength", "Meteor trails (0 = off, needs LazyStack)", 0.0, 1.0, 2, 1.0),
 ]
 
 
@@ -136,6 +137,7 @@ class LazyStretchPanel(QWidget):
         #                                                 continue from (else the loaded master)
         self._snr_noise_map: Optional[np.ndarray] = None  # LazyStack noise map for the loaded master
         self._snr_coverage_map: Optional[np.ndarray] = None  # LazyStack frame-support map
+        self._meteor_layer: Optional[np.ndarray] = None      # LazyStack meteor layer for the master
         self._pins: Dict[str, object] = {}                # PROC pins for the loaded master
 
         self.checks: Dict[str, QCheckBox] = {}
@@ -531,11 +533,15 @@ class LazyStretchPanel(QWidget):
         self._hist_store = HistoryStore(mpath) if mpath else None
         self._pins = load_pins(mpath) if mpath else {}
         # SNR-protect: pick up a LazyStack noise map sitting next to the master (if any).
+        from ..lazystack.meteors import load_meteor_layer
         from ..processes.snrmask import load_coverage_map, load_noise_map
         self._snr_noise_map = load_noise_map(mpath) if mpath else None
         self._snr_coverage_map = load_coverage_map(mpath) if mpath else None
+        self._meteor_layer = load_meteor_layer(mpath) if mpath else None
         if self._snr_noise_map is not None:
             self.status_label.setText("Loaded. LazyStack noise map found — SNR-protect available.")
+        if self._meteor_layer is not None:
+            self.status_label.setText("Loaded. LazyStack meteor trail(s) found — will composite.")
         self._refresh_history_list()
         self._show_quick_display()
 
@@ -697,6 +703,7 @@ class LazyStretchPanel(QWidget):
         p.object_id = self.object_combo.currentText()
         p.snr_noise_map = self._snr_noise_map          # SNR-protect maps for the loaded master (or None)
         p.snr_coverage_map = self._snr_coverage_map
+        p.meteor_layer = self._meteor_layer            # LazyStack meteor layer for the master (or None)
         if self.ha_picker.path() and self.oiii_picker.path():
             p.ha = self._mono(self.ha_picker.path())
             p.oiii = self._mono(self.oiii_picker.path())
