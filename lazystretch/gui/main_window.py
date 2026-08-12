@@ -101,6 +101,7 @@ _DIALS = [
     ("smallStars", "Small stars", 0.0, 0.5, 2, 0.0),
     ("starsAdj", "Stars ±", -0.3, 0.5, 2, 0.0),
     ("chromaNR", "Chroma NR", 0.0, 1.0, 2, 0.0),
+    ("structure", "Mid-scale structure (galaxy)", 0.0, 1.0, 2, 0.0),
     ("deepen", "Deepen (2nd pass)", 0.0, 1.0, 2, 0.0),
     ("highlights", "Highlights (0 dim → 1 bright)", 0.0, 1.0, 2, 0.20),
     ("transparency", "Core transparency (0 = off)", 0.0, 1.0, 2, 0.0),
@@ -492,11 +493,13 @@ class LazyStretchPanel(QWidget):
             cb.blockSignals(True)
             cb.setChecked(bool(mapping[attr]))
             cb.blockSignals(False)
-        if "chromaNR" in self.dials:                    # OSC broadband seeds a modest chroma-NR default
-            fs = self.dials["chromaNR"]
-            fs.blockSignals(True)
-            fs.set_value(prof.chromaNR)
-            fs.blockSignals(False)
+        for dial, val in (("chromaNR", prof.chromaNR),   # profile-seeded dials (OSC chroma-NR; galaxy
+                          ("structure", prof.structure)):  # mid-scale structure enhancement)
+            if dial in self.dials:
+                fs = self.dials[dial]
+                fs.blockSignals(True)
+                fs.set_value(val)
+                fs.blockSignals(False)
 
     def _populate_meteor_list(self, meta):
         """Fill the checkable trail list from the master's meteor metadata (hidden if none)."""

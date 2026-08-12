@@ -185,6 +185,77 @@ def hdr_core(img, layers, compression: float = _HDR_BASE_COMPRESSION,
 
 
 # ----------------------------------------------------------------------------
+# Scale-separated (mid-scale) structure enhancement — P1 (roadmap-next).
+#
+# HDR core (above) compresses the LARGE-scale base; LHE adds SINGLE-scale local contrast.
+# Neither selectively lifts the MEDIUM scales — spiral-arm segments, dust-lane topology,
+# Milky-Way dust filaments — which is the top visible lever both ChatGPT critiques flagged.
+# structure_boost() does a full à-trous starlet decomposition and applies a per-scale gain:
+# PROTECT the very-small scales (1–2 px stars/noise, gain 1), ENHANCE the medium band
+# (arms/dust), PRESERVE the very-large residual (core/halo continuity, gain 1). The boost
+# is masked to the subject by the large-scale base (the dark sky is left alone, so noise is
+# not amplified) and reconstructed hue-preservingly (ratio-scaled channels).
+# ----------------------------------------------------------------------------
+
+
+def _atrous_planes(L: np.ndarray, n: int):
+    """Full starlet transform: return (``[w_1..w_n]`` detail planes, large-scale residual).
+
+    ``w_i = c_{i-1} - c_i`` is the detail at scale ``i`` (structures ~``2**(i-1)`` px); the
+    residual ``c_n`` holds everything larger. ``sum(w_i) + residual == L`` exactly, so the
+    reconstruction is lossless and a per-scale gain simply re-weights each band.
+    """
+    c = L.astype(np.float64, copy=True)
+    planes = []
+    for i in range(int(n)):
+        c_next = _atrous_smooth(c, 1 << i)          # hole spacing 1, 2, 4, ...
+        planes.append(c - c_next)
+        c = c_next
+    return planes, c
+
+
+def structure_boost(img: np.ndarray, amount: float = 0.6, *, n: int = 6,
+                    medium=(3, 4, 5), fine_protect=(1, 2), fine_gain: float = 1.0,
+                    bg_lo: float = 0.06, bg_hi: float = 0.22) -> np.ndarray:
+    """Enhance MEDIUM-scale structure (arms/dust) while protecting fine and large scales.
+
+    ``amount`` (0..1) scales the medium-band gain (medium detail ×(1 + amount)); ``medium``
+    is the set of 1-based à-trous scales treated as "medium" (~4–32 px at ``n=6``); scales in
+    ``fine_protect`` keep ``fine_gain`` (1.0 = untouched; <1 would gently damp star/noise
+    speckle); the large-scale residual is always preserved. The added detail is gated by a
+    smoothstep on the large-scale base (``bg_lo``→``bg_hi``) so only the subject is enhanced,
+    never the dark sky. Hue-preserving. Input never mutated; output clipped to [0, 1].
+    """
+    a = np.asarray(img, dtype=np.float64)
+    amount = float(np.clip(amount, 0.0, 2.0))
+    if amount <= 0:
+        return a.copy()
+    is_rgb = (a.ndim == 3)
+    L = _lightness(a) if is_rgb else a.astype(np.float64, copy=True)
+    planes, resid = _atrous_planes(L, n)
+
+    med = set(int(s) for s in medium)
+    fine = set(int(s) for s in fine_protect)
+    add = np.zeros_like(L)
+    for i, w in enumerate(planes):
+        s = i + 1                                    # 1-based scale index
+        if s in med:
+            add += amount * w                        # boost medium band
+        elif s in fine and fine_gain != 1.0:
+            add += (fine_gain - 1.0) * w             # optional gentle fine-scale damping
+
+    t = np.clip((resid - bg_lo) / max(bg_hi - bg_lo, 1e-6), 0.0, 1.0)
+    mask = t * t * (3.0 - 2.0 * t)                   # subject mask from the large-scale base
+    newL = np.clip(L + add * mask, 0.0, 1.0)
+
+    if not is_rgb:
+        return newL
+    with np.errstate(divide="ignore", invalid="ignore"):
+        ratio = np.where(L > _HDR_EPS, newL / L, 0.0)
+    return np.clip(a * ratio[..., None], 0.0, 1.0)
+
+
+# ----------------------------------------------------------------------------
 # Pipe.noiseReduction fallback (LazyStretch.js:3090-3101) — MultiscaleMedianTransform.
 # ----------------------------------------------------------------------------
 

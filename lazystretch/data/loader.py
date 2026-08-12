@@ -42,6 +42,8 @@ class ClassProfile:
                                 # ill-posed on a wall-to-wall field — in favour of darkLaneGC)
     darkLaneGC: bool = False    # deg-2 dark-lane-anchored gradient model (no-empty-sky fields)
     reduceCast: bool = False    # masked post-SCNR background re-neutralization (clears residual cast)
+    structure: float = 0.0      # scale-separated MEDIUM-scale (arm/dust) enhancement 0..~1 (galaxy);
+                                # 0 = off. à-trous starlet per-scale gain, subject-masked (P1)
 
 
 @dataclass(frozen=True)

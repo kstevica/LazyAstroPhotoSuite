@@ -7,7 +7,7 @@
   "classList": ["galaxy", "emission", "reflection", "planetary", "globular", "open", "milkyway", "generic"],
 
   "profiles": {
-    "galaxy":     { "bkg": 0.16, "clip": -1.30, "sat": 0.45, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.10, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": 8,    "starReduce": true,  "starLevel": 0.60, "chromaNR": 0.20, "haloTamer": false },
+    "galaxy":     { "bkg": 0.16, "clip": -1.30, "sat": 0.45, "contrast": 0.12, "bgLevel": 0.13, "lc": 0.10, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": 8,    "starReduce": true,  "starLevel": 0.60, "chromaNR": 0.20, "haloTamer": false, "structure": 0.60 },
     "emission":   { "bkg": 0.25, "clip": -1.05, "sat": 0.55, "contrast": 0.12, "bgLevel": 0.20, "lc": 0.15, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": true,  "starLevel": 0.50, "chromaNR": 0.30 },
     "reflection": { "bkg": 0.22, "clip": -1.15, "sat": 0.50, "contrast": 0.16, "bgLevel": 0.14, "lc": 0.12, "scnr": true,  "localContrast": true,  "bxt": true, "nr": true, "hdr": false, "hdrLayers": null, "starReduce": true,  "starLevel": 0.60, "chromaNR": 0.30 },
     "planetary":  { "bkg": 0.18, "clip": -1.50, "sat": 0.55, "contrast": 0.14, "bgLevel": 0.09, "lc": 0.10, "scnr": true,  "localContrast": false, "bxt": true, "nr": true, "hdr": true,  "hdrLayers": null, "starReduce": false, "starLevel": 0.70 },

@@ -87,6 +87,8 @@ class Parameters:
                                    # the highlight roll-off). Opt-in. Port-only finishing dial.
     meteorStrength: float = 1.0    # composite the LazyStack meteor layer 0..1 (0=off, 1=full). Needs
                                    # a meteor_layer companion (a LazyStack master with preserved trails).
+    structure: float = 0.0         # scale-separated MEDIUM-scale (arm/dust) enhancement 0..~1 (galaxy
+                                   # default via profile; 0=off). à-trous starlet per-scale gain (P1)
     snrProtect: float = 0.0        # SNR-protect "ponder" 0..1 (0=off): use LazyStack's measured
                                    # per-pixel noise map to protect high-SNR signal from NR and
                                    # damp local-contrast in pure-noise regions. Needs snr_noise_map
@@ -134,6 +136,7 @@ class Parameters:
         p.doBgExtract = prof.bgExtract  # MW uses darkLaneGC instead of ill-posed ABE
         p.darkLaneGC = prof.darkLaneGC
         p.reduceCast = prof.reduceCast  # masked post-SCNR background re-neutralization
+        p.structure = prof.structure    # scale-separated mid-scale (arm/dust) enhancement (galaxy)
         valid = {f.name for f in fields(cls)}
         for k, v in overrides.items():
             if k not in valid:

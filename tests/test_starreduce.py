@@ -23,11 +23,29 @@ def test_shrink_stars_off_is_identity():
     assert np.allclose(shrink_stars(img, 0.0), img)
 
 
-def test_shrink_stars_reduces_star_flux():
-    img, mask = _star_field(seed=1)
+def _tiered_field(H=200, W=240, seed=0):
+    """A field with faint 1-px carpet stars AND bright anchor stars (small Gaussian profiles)."""
+    rng = np.random.default_rng(seed)
+    img = np.full((H, W), 0.10)
+    faint = np.zeros((H, W), bool)
+    bright = np.zeros((H, W), bool)
+    for _ in range(80):                                      # faint carpet (crush)
+        y, x = rng.integers(6, H - 6), rng.integers(6, W - 6)
+        img[y, x] = max(img[y, x], 0.30)
+        faint[y, x] = True
+    yy, xx = np.mgrid[0:H, 0:W]
+    for _ in range(6):                                       # bright anchors (preserve)
+        cy, cx = rng.integers(15, H - 15), rng.integers(15, W - 15)
+        img = np.maximum(img, 0.10 + 0.85 * np.exp(-(((xx - cx) / 2.0) ** 2 + ((yy - cy) / 2.0) ** 2)))
+        bright[cy, cx] = True
+    return np.clip(img, 0, 1), faint, bright
+
+
+def test_shrink_stars_tiered_crushes_carpet_keeps_anchors():
+    img, faint, bright = _tiered_field(seed=1)
     out = shrink_stars(img, 0.8, small=0.3)
-    # star pixels are dimmed toward the local background
-    assert out[mask].mean() < 0.6 * img[mask].mean()
+    assert out[faint].mean() < 0.85 * img[faint].mean()      # faint carpet is thinned...
+    assert out[bright].mean() > 0.90 * img[bright].mean()    # ...bright anchors preserved (P4 tiering)
 
 
 def test_shrink_stars_preserves_nebulosity():

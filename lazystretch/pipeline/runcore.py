@@ -380,6 +380,16 @@ def run_pipeline(
             ctx["img"] = multiscale.hdr_core(ctx["img"], layers)
         add(f"HDR core compression ({layers} layers)", _hdr)
 
+    # --- scale-separated mid-scale (arm/dust) structure enhancement (P1) — HDR compressed the
+    #     large-scale base above; this lifts the MEDIUM band (arms, dust lanes) while protecting
+    #     the fine (star/noise) and large (core/halo) scales, masked to the subject. ---
+    if params.structure > 0:
+        struct_amt = float(ledger.record("Structure", "mid-scale enhancement", params.structure))
+        if struct_amt > 0:
+            def _structure():
+                ctx["img"] = multiscale.structure_boost(ctx["img"], struct_amt)
+            add(f"Mid-scale structure enhancement ({struct_amt:.2f})", _structure)
+
     # --- lower background to target, with the adaptive floor (js:3401-3420) ---
     mask_darken = params.useMask and masked_darken_applies_to(cls, data)
 

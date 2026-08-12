@@ -87,6 +87,8 @@ def build_parser() -> argparse.ArgumentParser:
                         "damp local contrast in pure-noise regions)")
     p.add_argument("--meteor-strength", type=float, dest="meteorStrength",
                    help="composite preserved meteor trails 0..1 (needs a LazyStack meteor layer)")
+    p.add_argument("--structure", type=float, dest="structure",
+                   help="mid-scale (arm/dust) structure enhancement 0..~1 (galaxy default 0.6; 0=off)")
     p.add_argument("--analyze", action="store_true", help="print frame analysis + recommendations and exit")
 
     # toggles (store the opposite of the default where useful)
@@ -142,7 +144,7 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
     # explicit CLI dials (None == unset, so a preset/recipe value survives)
     for name in ("satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj",
                  "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen", "highlights",
-                 "transparency", "dimCore", "starShrink", "snrProtect", "meteorStrength"):
+                 "transparency", "dimCore", "starShrink", "snrProtect", "meteorStrength", "structure"):
         v = getattr(args, name)
         if v is not None:
             setattr(p, name, v)
