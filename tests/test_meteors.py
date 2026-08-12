@@ -109,6 +109,70 @@ def test_capture_time_from_fits_and_mtime(tmp_path):
     assert capture_time(str(tp))
 
 
+def test_taper_ends_fades_trail_ends_not_middle():
+    # a long horizontal trail, uniform developed amplitude
+    H, W = 60, 800
+    labels = np.zeros((H, W), dtype=np.int16)
+    labels[29:32, 40:760] = 1
+    dev = np.zeros((H, W, 3), np.float64)
+    dev[labels > 0] = [0.2, 0.5, 0.2]                       # green-dominant, constant
+    dev_before = dev.copy()
+    out = meteors.taper_ends(dev, labels)
+    mid = out[30, 400]
+    near_end = out[30, 45]                                  # a few px inside the start
+    assert mid[1] > 0.49                                    # middle unchanged (~full)
+    assert near_end[1] < 0.15                               # end faded down
+    assert out[30, 41, 1] < near_end[1]                    # monotonic toward the tip
+    # hue preserved everywhere the trail survives (same green:red ratio as input 0.5:0.2)
+    m = out[..., 1] > 1e-3
+    assert np.allclose(out[..., 0][m] / out[..., 1][m], 0.2 / 0.5, atol=1e-6)
+    assert not np.shares_memory(out, dev)                   # returns a copy...
+    assert np.array_equal(dev, dev_before)                  # ...and never mutates the input
+
+
+def test_taper_ends_multi_trail_independent():
+    H, W = 120, 600
+    labels = np.zeros((H, W), dtype=np.int16)
+    labels[20:23, 30:560] = 1                               # long trail
+    labels[90:93, 250:330] = 2                              # short trail
+    dev = np.zeros((H, W, 3), np.float64)
+    dev[labels == 1] = 0.4
+    dev[labels == 2] = 0.4
+    out = meteors.taper_ends(dev, labels)
+    assert out[21, 295, 0] > 0.39                           # trail 1 middle untouched by trail 2's fade
+    assert out[21, 32, 0] < 0.2 and out[21, 557, 0] < 0.2   # trail 1 both ends fade
+    assert out[91, 290, 0] > 0.0                            # trail 2 has a bright-ish centre
+    assert out[91, 251, 0] < out[91, 290, 0]                # trail 2 fades at its own end
+
+
+def test_taper_ends_skips_field_of_view_cut():
+    # a trail whose LEFT tip sits on the image border (a FOV cut, not a burn-out)
+    H, W = 80, 400
+    labels = np.zeros((H, W), dtype=np.int16)
+    labels[39:42, 0:300] = 1                                # x starts at 0 = left edge
+    dev = np.zeros((H, W, 3), np.float64)
+    dev[labels > 0] = 0.4
+    out = meteors.taper_ends(dev, labels)
+    assert out[40, 2, 0] > 0.39                             # border end NOT tapered (kept full)
+    assert out[40, 297, 0] < 0.2                            # interior end still fades
+
+
+def test_taper_ends_dim_end_fades_longer():
+    # bright left half, dim right half -> the dim (right) end fades over a LONGER length
+    H, W = 120, 600
+    labels = np.zeros((H, W), dtype=np.int16)
+    labels[59:62, 30:560] = 1
+    dev = np.zeros((H, W, 3), np.float64)
+    dev[59:62, 30:295] = 0.6                                # bright half
+    dev[59:62, 295:560] = 0.15                              # dim half
+    out = meteors.taper_ends(dev, labels)
+    env_bright = out[60, 30 + 40, 0] / 0.6                  # fade fraction 40 px in from the bright tip
+    env_dim = out[60, 559 - 40, 0] / 0.15                   # 40 px in from the dim tip
+    assert env_dim < env_bright - 0.2                       # dim end is less risen at the same offset
+    assert out[60, 100, 0] / 0.6 > 0.95                     # bright-side middle env preserved
+    assert out[60, 295, 0] / 0.15 > 0.95                    # dim-side middle env preserved
+
+
 def test_selection_layer_masks_by_id():
     labels = np.zeros((50, 60), dtype=np.int16)
     labels[10:12, 5:40] = 1

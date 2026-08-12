@@ -563,6 +563,8 @@ def run_pipeline(
             from ..lazystack import meteors as _met
             layer = _met.selection_layer(ctx["meteor_layer"], ctx["meteor_labels"], meteor_select)
             dev = _met.develop_meteor(layer, meteor_strength)
+            if ctx["meteor_labels"] is not None:               # fade trail ends so they don't look cut off
+                dev = _met.taper_ends(dev, ctx["meteor_labels"])
             a = np.asarray(ctx["img"], dtype=np.float64)
             if np.asarray(dev).shape == a.shape:
                 ctx["img"] = np.clip(a + dev, 0.0, 1.0)

@@ -99,6 +99,82 @@ def develop_meteor(layer: np.ndarray, strength: float = 1.0, *,
     return np.clip(dev, 0.0, 1.0)
 
 
+def taper_ends(dev: np.ndarray, labels: np.ndarray, *, fade_frac: float = 0.12,
+               min_fade: float = 25.0, max_fade: float = 180.0, min_ramp: float = 8.0,
+               edge_margin: float = 3.0, asym: float = 0.6) -> np.ndarray:
+    """Fade each labelled trail's amplitude smoothly to zero toward its two longitudinal ends.
+
+    The detector thresholds the transient, so a trail stops at a HARD edge where it dips below the
+    floor — and the adaptive :func:`develop_meteor` then lifts even those last pixels to full
+    brightness, so the ends read as bluntly CUT OFF. Real meteors brighten then fade, so per trail
+    we find its principal (long) axis by PCA, project every pixel onto it, and multiply the developed
+    amplitude by a smoothstep envelope that ramps 0→1 over the first ``fade`` px and 1→0 over the last
+    ``fade`` px. The same scalar scales all channels, so colour is preserved. Base ``fade`` =
+    ``fade_frac`` of the trail length, clamped to [``min_fade``, ``max_fade``].
+
+    Two refinements make the fade honest rather than merely symmetric:
+
+    * **Field-of-view cuts are respected.** An end whose tip lies within ``edge_margin`` px of the
+      image border was cut by the *frame*, not by the meteor burning out — so that end is NOT tapered
+      (fading it would invent a burn-out that didn't happen).
+    * **Brightness-asymmetric fade.** Meteors flare then fade, so the dimmer end (the fading tail)
+      tapers over a LONGER length than the brighter end (the flare). ``asym`` (0 = symmetric) scales
+      how much, driven by the developed-luminance ratio of the two outer thirds. Direction of travel
+      isn't recoverable from a single-frame streak; this keys off brightness, not time.
+    """
+    lab = np.asarray(labels)
+    out = np.array(dev, dtype=np.float64)
+    if lab.shape[:2] != out.shape[:2]:
+        return out
+    is_rgb = out.ndim == 3
+    lum = out[..., :3].mean(axis=2) if is_rgb else out
+    H, W = lab.shape[:2]
+    asym = float(np.clip(asym, 0.0, 1.0))
+    for i in np.unique(lab[lab > 0]):
+        ys, xs = np.where(lab == i)
+        if xs.size < 8:
+            continue
+        cx, cy = xs.mean(), ys.mean()
+        pts = np.stack([xs - cx, ys - cy]).astype(np.float64)
+        _, evecs = np.linalg.eigh(pts @ pts.T / xs.size)       # ascending eigenvalues
+        u = evecs[:, -1]                                        # major (long) axis (x, y)
+        t = (xs - cx) * u[0] + (ys - cy) * u[1]                # position along the trail
+        t0, t1 = float(t.min()), float(t.max())
+        length = t1 - t0
+        if length < 1.0:
+            continue
+        base = min(float(np.clip(fade_frac * length, min_fade, max_fade)), 0.5 * length)
+
+        # brightness-asymmetric fade: dimmer end (tail) fades longer than the brighter (flare) end.
+        lv = lum[ys, xs]
+        seg = length / 3.0
+        b_start = float(np.median(lv[t <= t0 + seg])) if np.any(t <= t0 + seg) else 0.0
+        b_fin = float(np.median(lv[t >= t1 - seg])) if np.any(t >= t1 - seg) else 0.0
+        hi = max(b_start, b_fin)
+        d = asym * (1.0 - min(b_start, b_fin) / hi) if hi > 1e-6 else 0.0
+        f_start = base * (1.0 + d) if b_start <= b_fin else base * (1.0 - 0.6 * d)
+        f_fin = base * (1.0 + d) if b_fin < b_start else base * (1.0 - 0.6 * d)
+
+        # field-of-view cut: an end at the image border is NOT a burn-out — don't taper it.
+        i0, i1 = int(np.argmin(t)), int(np.argmax(t))
+        at_border = (lambda iy, ix: iy <= edge_margin or ix <= edge_margin
+                     or iy >= H - 1 - edge_margin or ix >= W - 1 - edge_margin)
+        f_start = 0.0 if at_border(ys[i0], xs[i0]) else float(np.clip(f_start, min_ramp, max_fade))
+        f_fin = 0.0 if at_border(ys[i1], xs[i1]) else float(np.clip(f_fin, min_ramp, max_fade))
+        if f_start + f_fin > length:                           # keep the two ramps from overlapping
+            s = length / (f_start + f_fin)
+            f_start, f_fin = f_start * s, f_fin * s
+
+        rise = np.ones_like(t) if f_start <= 0 else np.clip((t - t0) / f_start, 0.0, 1.0)
+        fall = np.ones_like(t) if f_fin <= 0 else np.clip((t1 - t) / f_fin, 0.0, 1.0)
+        env = (rise * rise * (3.0 - 2.0 * rise)) * (fall * fall * (3.0 - 2.0 * fall))
+        if is_rgb:
+            out[ys, xs, :] *= env[:, None]
+        else:
+            out[ys, xs] *= env
+    return out
+
+
 def _pca_shape(ys: np.ndarray, xs: np.ndarray) -> Tuple[float, float]:
     """Return (aspect = major/minor, length ≈ 2·major-sigma) of a pixel blob via PCA."""
     if xs.size < 3:
