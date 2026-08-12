@@ -47,6 +47,7 @@ def recipe_from_params(params: Parameters, data: "LazyStretchData | None" = None
     o["snrProtect"] = float(params.snrProtect)
     o["meteorStrength"] = float(params.meteorStrength)
     o["structure"] = float(params.structure)
+    o["deepenBackground"] = float(params.deepenBackground)
     return o
 
 
@@ -92,7 +93,7 @@ def apply_recipe(params: Parameters, recipe: Dict,
     # Port-only finishing dials (see recipe_from_params): tolerant + clamped, applied only
     # when present so a PI recipe (which lacks them) keeps the Parameters default.
     for key in ("highlights", "transparency", "dimCore", "starShrink", "snrProtect",
-                "meteorStrength", "structure"):
+                "meteorStrength", "structure", "deepenBackground"):
         v = recipe.get(key)
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
             setattr(params, key, min(max(float(v), 0.0), 1.0))

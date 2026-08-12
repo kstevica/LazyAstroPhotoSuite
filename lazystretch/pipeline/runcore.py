@@ -42,6 +42,7 @@ from ..processes import (
     darklane,
     deconv,
     deepen as deepen_mod,
+    deveil,
     finishing,
     halo,
     highlights,
@@ -565,6 +566,17 @@ def run_pipeline(
     def _shadow():
         ctx["img"] = shadowanchor.shadow_anchor(ctx["img"], cls, log=_log)
     add("Shadow anchor (black-point calibration)", _shadow)
+
+    # --- de-veil (opt-in): user-controlled, COLOUR-PRESERVING deepen of a milky background
+    #     floor past shadow_anchor's safe global frontier + a gentle deg-2 tilt flatten. Attacks
+    #     brightness not colour, so real faint red nebulosity (which shares the veil's hue)
+    #     survives; self-limiting on already-dark fields. See processes/deveil.py. ---
+    if params.deepenBackground > 0:
+        dv_amt = float(ledger.record("De-veil", "background floor deepen", params.deepenBackground))
+        if dv_amt > 0:
+            def _deveil():
+                ctx["img"] = deveil.deepen_background(ctx["img"], dv_amt, log=_log)
+            add(f"De-veil background floor ({dv_amt:.2f})", _deveil)
 
     # --- composite preserved meteor trail(s) — before the roll-off so any meteor+sky sum is
     #     tamed by it. The layer is developed gently + hue-preservingly, so trail colours survive. ---

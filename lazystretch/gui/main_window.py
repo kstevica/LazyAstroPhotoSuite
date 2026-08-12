@@ -107,6 +107,7 @@ _DIALS = [
     ("transparency", "Core transparency (0 = off)", 0.0, 1.0, 2, 0.0),
     ("dimCore", "Dim core (0 = off)", 0.0, 1.0, 2, 0.0),
     ("starShrink", "Reduce stars (no StarNet, 0 = off)", 0.0, 1.0, 2, 0.0),
+    ("deepenBackground", "De-veil background (0 = off)", 0.0, 1.0, 2, 0.0),
     ("snrProtect", "SNR protect (needs stack)", 0.0, 1.0, 2, 0.0),
     ("meteorStrength", "Meteor trails (needs stack)", 0.0, 1.0, 2, 1.0),
 ]

@@ -89,6 +89,8 @@ class Parameters:
                                    # a meteor_layer companion (a LazyStack master with preserved trails).
     structure: float = 0.0         # scale-separated MEDIUM-scale (arm/dust) enhancement 0..~1 (galaxy
                                    # default via profile; 0=off). à-trous starlet per-scale gain (P1)
+    deepenBackground: float = 0.0  # de-veil 0..1 (0=off): colour-preserving deepen of a milky
+                                   # background floor toward ~0.05 + deg-2 tilt flatten (keeps faint colour)
     snrProtect: float = 0.0        # SNR-protect "ponder" 0..1 (0=off): use LazyStack's measured
                                    # per-pixel noise map to protect high-SNR signal from NR and
                                    # damp local-contrast in pure-noise regions. Needs snr_noise_map
