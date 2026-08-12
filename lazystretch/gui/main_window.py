@@ -106,8 +106,8 @@ _DIALS = [
     ("transparency", "Core transparency (0 = off)", 0.0, 1.0, 2, 0.0),
     ("dimCore", "Dim core (0 = off)", 0.0, 1.0, 2, 0.0),
     ("starShrink", "Reduce stars (no StarNet, 0 = off)", 0.0, 1.0, 2, 0.0),
-    ("snrProtect", "SNR protect (0 = off, needs LazyStack map)", 0.0, 1.0, 2, 0.0),
-    ("meteorStrength", "Meteor trails (0 = off, needs LazyStack)", 0.0, 1.0, 2, 1.0),
+    ("snrProtect", "SNR protect (needs stack)", 0.0, 1.0, 2, 0.0),
+    ("meteorStrength", "Meteor trails (needs stack)", 0.0, 1.0, 2, 1.0),
 ]
 
 
@@ -138,6 +138,7 @@ class LazyStretchPanel(QWidget):
         self._snr_noise_map: Optional[np.ndarray] = None  # LazyStack noise map for the loaded master
         self._snr_coverage_map: Optional[np.ndarray] = None  # LazyStack frame-support map
         self._meteor_layer: Optional[np.ndarray] = None      # LazyStack meteor layer for the master
+        self._meteor_labels: Optional[np.ndarray] = None     # per-meteor id map
         self._pins: Dict[str, object] = {}                # PROC pins for the loaded master
 
         self.checks: Dict[str, QCheckBox] = {}
@@ -322,6 +323,15 @@ class LazyStretchPanel(QWidget):
         cols.addWidget(g_opt)
         outer.addLayout(cols, 1)
 
+        self.meteor_group = QGroupBox("Meteor trails")
+        mv = QVBoxLayout(self.meteor_group)
+        mv.addWidget(QLabel("Detected trails — uncheck to hide from the image:"))
+        self.meteor_list = QListWidget()
+        self.meteor_list.setMaximumHeight(96)
+        mv.addWidget(self.meteor_list)
+        self.meteor_group.setVisible(False)          # shown only when a master has meteor trails
+        outer.addWidget(self.meteor_group)
+
         g_rec = QGroupBox("Recipe")
         rv = QHBoxLayout(g_rec)
         save_rec = QPushButton("Save recipe…")
@@ -488,6 +498,19 @@ class LazyStretchPanel(QWidget):
             fs.set_value(prof.chromaNR)
             fs.blockSignals(False)
 
+    def _populate_meteor_list(self, meta):
+        """Fill the checkable trail list from the master's meteor metadata (hidden if none)."""
+        self.meteor_list.clear()
+        for m in meta:
+            mid = int(m.get("id", 0))
+            src = m.get("source") or "?"
+            it = QListWidgetItem(f"Meteor {mid} — {src}  (len {float(m.get('length', 0)):.0f}px)")
+            it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
+            it.setCheckState(Qt.Checked)
+            it.setData(Qt.UserRole, mid)
+            self.meteor_list.addItem(it)
+        self.meteor_group.setVisible(bool(meta))
+
     def _reset_dials(self):
         for attr, fs in self.dials.items():
             fs.set_value(self._dial_defaults.get(attr, 0.0))
@@ -533,11 +556,13 @@ class LazyStretchPanel(QWidget):
         self._hist_store = HistoryStore(mpath) if mpath else None
         self._pins = load_pins(mpath) if mpath else {}
         # SNR-protect: pick up a LazyStack noise map sitting next to the master (if any).
-        from ..lazystack.meteors import load_meteor_layer
+        from ..lazystack.meteors import load_meteor_labels, load_meteor_layer, load_meteor_meta
         from ..processes.snrmask import load_coverage_map, load_noise_map
         self._snr_noise_map = load_noise_map(mpath) if mpath else None
         self._snr_coverage_map = load_coverage_map(mpath) if mpath else None
         self._meteor_layer = load_meteor_layer(mpath) if mpath else None
+        self._meteor_labels = load_meteor_labels(mpath) if mpath else None
+        self._populate_meteor_list(load_meteor_meta(mpath) if mpath else [])
         if self._snr_noise_map is not None:
             self.status_label.setText("Loaded. LazyStack noise map found — SNR-protect available.")
         if self._meteor_layer is not None:
@@ -704,6 +729,14 @@ class LazyStretchPanel(QWidget):
         p.snr_noise_map = self._snr_noise_map          # SNR-protect maps for the loaded master (or None)
         p.snr_coverage_map = self._snr_coverage_map
         p.meteor_layer = self._meteor_layer            # LazyStack meteor layer for the master (or None)
+        p.meteor_labels = self._meteor_labels
+        if self.meteor_list.count():                   # which trails the user chose to keep visible
+            sel = [self.meteor_list.item(i).data(Qt.UserRole)
+                   for i in range(self.meteor_list.count())
+                   if self.meteor_list.item(i).checkState() == Qt.Checked]
+            p.meteorSelect = None if len(sel) == self.meteor_list.count() else sel
+        else:
+            p.meteorSelect = None
         if self.ha_picker.path() and self.oiii_picker.path():
             p.ha = self._mono(self.ha_picker.path())
             p.oiii = self._mono(self.oiii_picker.path())

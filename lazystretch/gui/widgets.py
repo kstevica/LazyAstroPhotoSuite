@@ -30,7 +30,10 @@ class FloatSlider(QWidget):
         self._lo, self._hi, self._steps, self._dec = lo, hi, steps, decimals
         self._name = QLabel(label)
         self._name.setMinimumWidth(96)
+        self._name.setMaximumWidth(210)          # never let a long label squeeze the slider away
+        self._name.setToolTip(label)             # full text on hover if it ever elides
         self._slider = QSlider(Qt.Horizontal)
+        self._slider.setMinimumWidth(80)         # keep the track draggable regardless of layout
         self._slider.setRange(0, steps)
         self._slider.setValue(self._to_int(value))
         self._value = QLabel()

@@ -101,6 +101,8 @@ class Parameters:
     snr_noise_map: Optional[np.ndarray] = field(default=None, repr=False)
     snr_coverage_map: Optional[np.ndarray] = field(default=None, repr=False)
     meteor_layer: Optional[np.ndarray] = field(default=None, repr=False)   # LazyStack meteor layer
+    meteor_labels: Optional[np.ndarray] = field(default=None, repr=False)  # per-meteor id map
+    meteorSelect: Optional[list] = field(default=None, repr=False)         # trail ids to show (None = all)
 
     def slider_dict(self) -> Dict[str, float]:
         return {

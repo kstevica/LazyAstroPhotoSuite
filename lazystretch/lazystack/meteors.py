@@ -12,29 +12,63 @@ the review step / a later multi-frame classifier.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, List, Optional, Tuple
+import json
+from typing import Callable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 _LAYER_NAMES = ("lazystack_master_meteors.npy",)
+_LABELS_NAMES = ("lazystack_master_meteorlabels.npy",)
+_META_NAMES = ("lazystack_master_meteors.json",)
 
 
 def _noop(_m: str) -> None:
     pass
 
 
+def _beside(master_path: "str | Path", names: Sequence[str], stem_suffix: str) -> Optional["Path"]:
+    p = Path(master_path)
+    for c in [p.with_name(n) for n in names] + [p.with_name(p.stem + stem_suffix)]:
+        if c.exists():
+            return c
+    return None
+
+
 def load_meteor_layer(master_path: "str | Path") -> Optional[np.ndarray]:
     """Find + load the meteor layer written beside ``master_path`` (or ``None``)."""
-    p = Path(master_path)
-    candidates = [p.with_name(n) for n in _LAYER_NAMES]
-    candidates.append(p.with_name(p.stem + "_meteors.npy"))
-    for c in candidates:
-        if c.exists():
-            try:
-                return np.load(str(c))
-            except Exception:
-                pass
-    return None
+    c = _beside(master_path, _LAYER_NAMES, "_meteors.npy")
+    try:
+        return np.load(str(c)) if c else None
+    except Exception:
+        return None
+
+
+def load_meteor_labels(master_path: "str | Path") -> Optional[np.ndarray]:
+    """Find + load the per-meteor id map beside ``master_path`` (or ``None``)."""
+    c = _beside(master_path, _LABELS_NAMES, "_meteorlabels.npy")
+    try:
+        return np.load(str(c)) if c else None
+    except Exception:
+        return None
+
+
+def load_meteor_meta(master_path: "str | Path") -> List[dict]:
+    """Load the detected-meteor metadata list beside ``master_path`` (``[]`` if none)."""
+    c = _beside(master_path, _META_NAMES, "_meteors.json")
+    try:
+        return json.loads(c.read_text(encoding="utf-8")).get("meteors", []) if c else []
+    except Exception:
+        return []
+
+
+def selection_layer(layer: np.ndarray, labels: Optional[np.ndarray],
+                    select: Optional[Sequence[int]]) -> np.ndarray:
+    """Mask the meteor layer to the selected trail ids (``None`` → all trails)."""
+    if select is None or labels is None:
+        return layer
+    keep = np.isin(np.asarray(labels), list(select))
+    a = np.asarray(layer)
+    return a * (keep[..., None] if a.ndim == 3 else keep)
 
 
 def develop_meteor(layer: np.ndarray, strength: float = 1.0, *, k: float = 12.0) -> np.ndarray:
@@ -70,15 +104,16 @@ def detect_meteors(transient: np.ndarray, frame_idx: np.ndarray, *,
                    thr_floor: float = 0.006, min_area: int = 20, max_area_frac: float = 0.02,
                    min_aspect: float = 4.0, min_length: float = 40.0, connect: int = 2,
                    min_seg: int = 6, min_single_frame: float = 0.6, feather: float = 2.0,
-                   log: Callable[[str], None] = _noop) -> Tuple[List[dict], np.ndarray]:
-    """Detect meteor trails in the transient map. Returns (meteor dicts, feathered soft mask).
+                   log: Callable[[str], None] = _noop) -> Tuple[List[dict], np.ndarray, np.ndarray]:
+    """Detect meteor trails in the transient map. Returns (meteor dicts, feathered soft mask,
+    per-meteor label map — each trail's pixels carry its 1-based ``id`` for later selection).
 
     Tuned on a real faint Milky Way meteor (transient excess ~0.005-0.08). Pipeline: threshold at
     ``thr_floor`` → drop tiny (< ``min_seg``) noise specks BEFORE bridging (else dilation merges
     scattered noise into one huge blob) → dilate by ``connect`` px so trail brightness dips don't
     fragment it → label → keep elongated, single-frame, right-sized components.
     """
-    from scipy.ndimage import binary_dilation, find_objects, gaussian_filter, label
+    from scipy.ndimage import binary_dilation, find_objects, gaussian_filter, grey_dilation, label
     a = np.asarray(transient, dtype=np.float64)
     lum = a[..., :3].mean(axis=2) if a.ndim == 3 else a
     H, W = lum.shape
@@ -87,7 +122,7 @@ def detect_meteors(transient: np.ndarray, frame_idx: np.ndarray, *,
     lbl0, n0 = label(lum > thr, structure=np.ones((3, 3)))
     if n0 == 0:
         log("Meteor detection: no meteor trails found.")
-        return [], np.zeros((H, W), dtype=np.float64)
+        return [], np.zeros((H, W), dtype=np.float64), np.zeros((H, W), dtype=np.int16)
     keep0 = np.bincount(lbl0.ravel()) >= min_seg     # noise specks are 1-3 px; drop them first
     keep0[0] = False
     binary = keep0[lbl0]
@@ -96,6 +131,7 @@ def detect_meteors(transient: np.ndarray, frame_idx: np.ndarray, *,
     lbl, nlab = label(binary, structure=np.ones((3, 3)))
     meteors: List[dict] = []
     soft = np.zeros((H, W), dtype=np.float64)
+    labels = np.zeros((H, W), dtype=np.int16)            # per-meteor id map (for selection)
     if nlab:
         # One O(N) pass for all component sizes, then only inspect the size-candidates via their
         # bounding boxes — never `np.where(lbl==i)` over the whole frame per label (that was
@@ -126,18 +162,22 @@ def detect_meteors(transient: np.ndarray, frame_idx: np.ndarray, *,
             dom_frac = float(counts.max()) / fr.size
             if dom_frac < min_single_frame:
                 continue
-            meteors.append({"frame": int(vals[np.argmax(counts)]), "area": int(xs.size),
+            mid = len(meteors) + 1                       # 1-based meteor id
+            meteors.append({"id": mid, "frame": int(vals[np.argmax(counts)]), "area": int(xs.size),
                             "aspect": round(aspect, 2), "length": round(length, 1),
                             "single_frame_frac": round(dom_frac, 2), "peak": float(lum[ys, xs].max()),
                             "bbox": [int(ys.min()), int(xs.min()), int(ys.max()), int(xs.max())]})
             soft[ys, xs] = 1.0
+            labels[ys, xs] = mid
     if meteors:
+        # dilate the id map to cover the feathered glow, so selection masks match the composite
+        labels = grey_dilation(labels, size=7)
         soft = binary_dilation(soft > 0, iterations=3).astype(np.float64)   # include the glow
         soft = np.clip(gaussian_filter(soft, feather), 0.0, 1.0)            # soft edge, no hard line
         log(f"Meteor detection: {len(meteors)} trail(s) preserved.")
     else:
         log("Meteor detection: no meteor trails found.")
-    return meteors, soft
+    return meteors, soft, labels
 
 
 def meteor_layer(transient: np.ndarray, soft_mask: np.ndarray) -> np.ndarray:

@@ -166,19 +166,25 @@ def run_pipeline(
     eff_gc = bool(ledger.record("Background", "use GradientCorrection", eff_gc))
 
     ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None,
-           "noise_map": None, "coverage_map": None, "snr_raw": None, "meteor_layer": None}
+           "noise_map": None, "coverage_map": None, "snr_raw": None,
+           "meteor_layer": None, "meteor_labels": None}
     steps: List = []
 
     # Meteor preservation: a LazyStack master carries a feathered linear-RGB meteor layer; composite
     # it (gently developed) onto the finished image so Perseid trails + their colours survive.
     meteor_strength = float(getattr(params, "meteorStrength", 1.0) or 0.0)
+    meteor_select = getattr(params, "meteorSelect", None)      # trail ids to show (None = all)
     _ml = getattr(params, "meteor_layer", None)
     if meteor_strength > 0 and _ml is not None and _is_rgb(np.asarray(target)):
         _ml = np.asarray(_ml, dtype=np.float64)
-        if _ml.shape[:2] == np.asarray(target).shape[:2]:
+        _hw = np.asarray(target).shape[:2]
+        if _ml.shape[:2] == _hw:
             ctx["meteor_layer"] = _ml
+            _lab = getattr(params, "meteor_labels", None)
+            if _lab is not None and np.asarray(_lab).shape == _hw:
+                ctx["meteor_labels"] = np.asarray(_lab)
         else:
-            _log(f"   meteor layer {_ml.shape[:2]} != image {np.asarray(target).shape[:2]} — disabled")
+            _log(f"   meteor layer {_ml.shape[:2]} != image {_hw} — disabled")
 
     # SNR-protect: LazyStack's measured per-pixel noise + coverage maps (companions of the master)
     # drive a mask that protects high-SNR signal from NR and damps local contrast in pure-noise regions.
@@ -224,8 +230,10 @@ def run_pipeline(
                 ctx["noise_map"] = crop.crop_edges(ctx["noise_map"], eff_crop / 100.0)
             if ctx["coverage_map"] is not None:
                 ctx["coverage_map"] = crop.crop_edges(ctx["coverage_map"], eff_crop / 100.0)
-            if ctx["meteor_layer"] is not None:         # keep the meteor layer aligned to the master
+            if ctx["meteor_layer"] is not None:         # keep the meteor layer + labels aligned
                 ctx["meteor_layer"] = crop.crop_edges(ctx["meteor_layer"], eff_crop / 100.0)
+            if ctx["meteor_labels"] is not None:
+                ctx["meteor_labels"] = crop.crop_edges(ctx["meteor_labels"], eff_crop / 100.0)
         add(f"Crop {eff_crop:.1f}% off each edge", _crop)
 
     # --- SNR-protect mask (built on the linear master, after crop) ---
@@ -553,11 +561,13 @@ def run_pipeline(
     if ctx["meteor_layer"] is not None and meteor_strength > 0:
         def _meteor():
             from ..lazystack import meteors as _met
-            dev = _met.develop_meteor(ctx["meteor_layer"], meteor_strength)
+            layer = _met.selection_layer(ctx["meteor_layer"], ctx["meteor_labels"], meteor_select)
+            dev = _met.develop_meteor(layer, meteor_strength)
             a = np.asarray(ctx["img"], dtype=np.float64)
             if np.asarray(dev).shape == a.shape:
                 ctx["img"] = np.clip(a + dev, 0.0, 1.0)
-                _log(f"   meteor trail(s) composited (strength {meteor_strength:.2f})")
+                sel = "all" if meteor_select is None else f"{len(meteor_select)} selected"
+                _log(f"   meteor trail(s) composited (strength {meteor_strength:.2f}, {sel})")
         add("Composite meteor trail(s)", _meteor)
 
     # --- highlight roll-off (P1 calibration): always last. A soft top-end knee so no

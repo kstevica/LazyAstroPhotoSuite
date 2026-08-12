@@ -33,6 +33,7 @@ MASTER_NAME = "lazystack_master.fits"
 SNR_MAP_NAME = "lazystack_master_noise.npy"        # per-pixel σ companion (feeds the stretch SNR mask)
 COVERAGE_MAP_NAME = "lazystack_master_coverage.npy"  # per-pixel frame-support companion
 METEOR_MAP_NAME = "lazystack_master_meteors.npy"   # feathered linear-RGB meteor layer (composite in stretch)
+METEOR_LABELS_NAME = "lazystack_master_meteorlabels.npy"  # per-meteor id map (for selection)
 METEOR_META_NAME = "lazystack_master_meteors.json"  # detected-trail metadata
 _RAWPY_OK = None
 
@@ -343,6 +344,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     elif normalize:
         log("Normalizing each frame to the reference (background + scale).")
     aligned_handles: list = []
+    aligned_names: List[str] = []                        # parallel to aligned_handles == transient frame index
     weights: List[float] = []
     for j, idx in enumerate(keep):
         log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
@@ -352,6 +354,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         if reuse and reg_path is not None and reg_path.exists():
             log("    reusing cached registration")
             aligned_handles.append(reg_path)
+            aligned_names.append(names[idx])
             weights.append(w)
             continue
         if idx == ref_global:
@@ -372,6 +375,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             aligned = np.asarray(aligned, dtype=np.float64)
             aligned[nodata] = np.nan
         weights.append(w)
+        aligned_names.append(names[idx])
         if staged:
             np.save(str(reg_path), np.asarray(aligned, dtype=np.float32))
             aligned_handles.append(reg_path)
@@ -451,16 +455,25 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     meteor_list: List[dict] = []
     if emit_met and transient is not None:
         try:
-            meteor_list, soft = met.detect_meteors(np.nan_to_num(transient, nan=0.0), tframe, log=log)
+            meteor_list, soft, labels = met.detect_meteors(np.nan_to_num(transient, nan=0.0),
+                                                           tframe, log=log)
             if meteor_list:
+                for mm in meteor_list:                    # attach the source light filename per trail
+                    fi = int(mm.get("frame", -1))
+                    mm["source"] = aligned_names[fi] if 0 <= fi < len(aligned_names) else None
                 layer = met.meteor_layer(transient, soft)
-                layer = contract.crop_to_contract(layer, edges) if edge_crop else layer
+                lab = labels
+                if edge_crop:
+                    layer = contract.crop_to_contract(layer, edges)
+                    lab = contract.crop_to_contract(labels, edges)
                 layer = np.nan_to_num(layer, nan=0.0).astype(np.float32)
                 meteor_path = out_dir / METEOR_MAP_NAME
                 np.save(str(meteor_path), layer)
+                np.save(str(out_dir / METEOR_LABELS_NAME), np.asarray(lab, dtype=np.int16))
                 (out_dir / METEOR_META_NAME).write_text(
-                    json.dumps({"meteors": meteor_list}), encoding="utf-8")
-                log(f"Meteor layer: {meteor_path}  ({len(meteor_list)} trail(s); composite in the stretch)")
+                    json.dumps({"meteors": meteor_list}, indent=2), encoding="utf-8")
+                srcs = ", ".join(str(m.get("source")) for m in meteor_list)
+                log(f"Meteor layer: {meteor_path}  ({len(meteor_list)} trail(s): {srcs})")
         except Exception as e:                           # optional, never fatal
             log(f"  (meteor layer skipped: {e})")
             meteor_path = None

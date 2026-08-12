@@ -1,4 +1,6 @@
 """Transient (meteor) preservation: integration transient emit + meteor detection."""
+from pathlib import Path
+
 import numpy as np
 import pytest
 
@@ -36,11 +38,12 @@ def test_transient_emit_and_meteor_detection():
     assert float(transient[ys[25], xs[25]].max()) > 0.2          # the meteor light is preserved
     assert transient[..., 1].max() > 0                           # colour kept (green channel)
 
-    met, soft = meteors.detect_meteors(transient, tframe)
+    met, soft, labels = meteors.detect_meteors(transient, tframe)
     assert len(met) == 1                                         # the streak, not the CR blob
-    assert met[0]["frame"] == 3 and met[0]["aspect"] > 3 and met[0]["length"] > 50
+    assert met[0]["frame"] == 3 and met[0]["id"] == 1 and met[0]["aspect"] > 3 and met[0]["length"] > 50
     assert soft[ys[25], xs[25]] > 0.3                            # soft mask covers the trail
     assert soft[102, 202] < 0.1                                  # CR blob not preserved
+    assert labels[ys[25], xs[25]] == 1 and labels[102, 202] == 0  # id map marks the trail only
 
 
 def test_combine_files_returns_transient(tmp_path):
@@ -54,7 +57,7 @@ def test_combine_files_returns_transient(tmp_path):
     master, transient, tframe = integ.combine_files(paths, return_transient=True)
     assert master.shape == frames[0].shape
     assert transient.shape == frames[0].shape and tframe.shape == (300, 420)
-    met, _ = meteors.detect_meteors(transient, tframe)
+    met, _, _ = meteors.detect_meteors(transient, tframe)
     assert len(met) == 1 and met[0]["frame"] == 2
 
 
@@ -88,6 +91,21 @@ def test_stack_writes_meteor_layer(tmp_path):
     layer = np.load(res["meteor_layer_path"])
     assert layer.ndim == 3 and layer.shape[:2] == res["master"].shape[:2]
     assert layer[..., 1].max() > 0.05                        # green meteor colour preserved
+    m0 = res["meteors"][0]
+    assert m0.get("source") and m0["source"].endswith(".tif") and m0["id"] == 1   # source filename recorded
+    assert Path(res["master_path"]).with_name("lazystack_master_meteorlabels.npy").exists()
+
+
+def test_selection_layer_masks_by_id():
+    labels = np.zeros((50, 60), dtype=np.int16)
+    labels[10:12, 5:40] = 1
+    labels[30:32, 5:40] = 2
+    layer = np.zeros((50, 60, 3), np.float32)
+    layer[labels > 0] = 0.4
+    both = meteors.selection_layer(layer, labels, None)
+    only1 = meteors.selection_layer(layer, labels, [1])
+    assert both[10, 20, 0] > 0 and both[30, 20, 0] > 0       # None -> all trails
+    assert only1[10, 20, 0] > 0 and only1[30, 20, 0] == 0    # [1] -> only trail 1
 
 
 def test_protect_extended_keeps_small_reverts_large():
