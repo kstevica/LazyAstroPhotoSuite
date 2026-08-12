@@ -16,7 +16,7 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 
 from ..io.cache import _cache_key, cached_load
-from ..io.image_io import RAW_EXT, load_image, save_image
+from ..io.image_io import RAW_EXT, capture_time, load_image, save_image
 from . import (
     calibrate as cal,
     contract,
@@ -250,6 +250,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log(f"Calibrating + measuring {len(lights)} lights…")
     frames: list = []                    # Path (staged) or ndarray (in-memory)
     names: List[str] = []
+    paths: List[str] = []                # full source path parallel to names (for meteor timestamps)
     keys: List[Optional[str]] = []
     measures: List[Optional[dict]] = []
     meas_cache = _load_measures_cache(work) if reuse else {}
@@ -285,6 +286,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
                 meas_cache[key] = m
         measures.append(m)
         names.append(name)
+        paths.append(p)
         keys.append(key)
         if staged:
             frames.append(cal_path)
@@ -345,6 +347,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         log("Normalizing each frame to the reference (background + scale).")
     aligned_handles: list = []
     aligned_names: List[str] = []                        # parallel to aligned_handles == transient frame index
+    aligned_paths: List[str] = []                        # full source path per aligned frame (meteor timestamp)
     weights: List[float] = []
     for j, idx in enumerate(keep):
         log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
@@ -355,6 +358,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             log("    reusing cached registration")
             aligned_handles.append(reg_path)
             aligned_names.append(names[idx])
+            aligned_paths.append(paths[idx])
             weights.append(w)
             continue
         if idx == ref_global:
@@ -376,6 +380,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             aligned[nodata] = np.nan
         weights.append(w)
         aligned_names.append(names[idx])
+        aligned_paths.append(paths[idx])
         if staged:
             np.save(str(reg_path), np.asarray(aligned, dtype=np.float32))
             aligned_handles.append(reg_path)
@@ -458,9 +463,13 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             meteor_list, soft, labels = met.detect_meteors(np.nan_to_num(transient, nan=0.0),
                                                            tframe, log=log)
             if meteor_list:
-                for mm in meteor_list:                    # attach the source light filename per trail
+                for mm in meteor_list:                    # attach the source light filename + capture time
                     fi = int(mm.get("frame", -1))
-                    mm["source"] = aligned_names[fi] if 0 <= fi < len(aligned_names) else None
+                    if 0 <= fi < len(aligned_names):
+                        mm["source"] = aligned_names[fi]
+                        mm["timestamp"] = capture_time(aligned_paths[fi])
+                    else:
+                        mm["source"] = mm["timestamp"] = None
                 layer = met.meteor_layer(transient, soft)
                 lab = labels
                 if edge_crop:

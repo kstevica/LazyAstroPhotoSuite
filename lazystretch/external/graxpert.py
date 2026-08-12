@@ -58,12 +58,30 @@ class GraXpert(ExternalTool):
 
         return builder
 
-    def background_extraction(self, img: np.ndarray, smoothing: float = 0.1) -> np.ndarray:
-        """Model + subtract the background/gradient (GradientCorrection substitute)."""
-        return run_image_roundtrip(
+    def background_extraction(self, img: np.ndarray, smoothing: float = 0.1,
+                              max_dim: int = 1600) -> np.ndarray:
+        """Model + subtract the background/gradient (GradientCorrection substitute).
+
+        The background is low-frequency, so on a big master (20-40 MP the GraXpert AI takes
+        minutes and looks hung) we run GraXpert on a downsampled copy, recover its background
+        *model* (input − corrected), upsample it, and subtract at full resolution — the same
+        bounded-cost trick as the ABE path, seconds instead of minutes.
+        """
+        a = np.asarray(img, dtype=np.float64)
+        H, W = a.shape[0], a.shape[1]
+        run = lambda x: run_image_roundtrip(
             self._cmd("background-extraction",
                       ["-correction", "Subtraction", "-smoothing", f"{smoothing:.3f}"]),
-            img, in_ext=".fits")
+            x, in_ext=".fits")
+        if max(H, W) <= max_dim:
+            return run(a)
+        from scipy.ndimage import zoom
+        f = max_dim / float(max(H, W))
+        zin = (f, f, 1) if a.ndim == 3 else (f, f)
+        small = zoom(a, zin, order=1)
+        model_small = small - np.asarray(run(small), dtype=np.float64)      # the background model
+        zf = (H / model_small.shape[0], W / model_small.shape[1]) + ((1,) if a.ndim == 3 else ())
+        return np.clip(a - zoom(model_small, zf, order=1), 0.0, 1.0)
 
     def denoise(self, img: np.ndarray, strength: float = 0.5) -> np.ndarray:
         """Denoise (NoiseXTerminator substitute)."""

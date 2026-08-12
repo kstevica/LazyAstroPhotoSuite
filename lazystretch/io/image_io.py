@@ -148,6 +148,41 @@ def _raw_demosaic(raw):
     return None, "libraw-default", is_xtrans
 
 
+def capture_time(path: "str | Path") -> Optional[str]:
+    """Best-effort capture timestamp of a light frame (FITS DATE-OBS → raw EXIF → file mtime)."""
+    p = Path(path)
+    ext = p.suffix.lower()
+    if ext in {".fits", ".fit", ".fts"}:
+        try:
+            v = load_image(str(p)).keyword("DATE-OBS")
+            if v:
+                return str(v).strip()
+        except Exception:
+            pass
+    if ext in RAW_EXT:                                    # DateTimeOriginal from the embedded JPEG thumb
+        try:
+            import io as _io
+            import rawpy
+            from PIL import Image
+            from PIL.ExifTags import TAGS
+            with rawpy.imread(str(p)) as raw:
+                thumb = raw.extract_thumb()
+            if getattr(thumb, "format", None) == rawpy.ThumbFormat.JPEG:
+                ex = Image.open(_io.BytesIO(thumb.data))._getexif() or {}
+                named = {TAGS.get(k, k): v for k, v in ex.items()}
+                dto = named.get("DateTimeOriginal") or named.get("DateTime")
+                if dto:
+                    return str(dto).strip()
+        except Exception:
+            pass
+    try:
+        import datetime
+        import os
+        return datetime.datetime.fromtimestamp(os.path.getmtime(str(p))).isoformat(timespec="seconds")
+    except Exception:
+        return None
+
+
 def _load_raw(path: Path) -> LoadedImage:
     """Decode a camera raw to linear RGB via rawpy — quality demosaic, no white balance.
 

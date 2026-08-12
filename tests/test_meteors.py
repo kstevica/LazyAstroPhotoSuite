@@ -96,6 +96,19 @@ def test_stack_writes_meteor_layer(tmp_path):
     assert Path(res["master_path"]).with_name("lazystack_master_meteorlabels.npy").exists()
 
 
+def test_capture_time_from_fits_and_mtime(tmp_path):
+    from lazystretch.io.image_io import capture_time, save_image
+    # FITS DATE-OBS header is used when present
+    fp = tmp_path / "light.fits"
+    save_image(str(fp), np.zeros((8, 8), np.float32), bit_depth=16,
+               header={"DATE-OBS": "2026-08-09T01:25:33"})
+    assert capture_time(str(fp)) == "2026-08-09T01:25:33"
+    # unknown format falls back to a (non-None) mtime string
+    tp = tmp_path / "x.tif"
+    save_image(str(tp), np.zeros((8, 8), np.float32), bit_depth=16)
+    assert capture_time(str(tp))
+
+
 def test_selection_layer_masks_by_id():
     labels = np.zeros((50, 60), dtype=np.int16)
     labels[10:12, 5:40] = 1

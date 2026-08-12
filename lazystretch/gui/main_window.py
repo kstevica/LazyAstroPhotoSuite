@@ -504,7 +504,9 @@ class LazyStretchPanel(QWidget):
         for m in meta:
             mid = int(m.get("id", 0))
             src = m.get("source") or "?"
-            it = QListWidgetItem(f"Meteor {mid} — {src}  (len {float(m.get('length', 0)):.0f}px)")
+            ts = m.get("timestamp")
+            when = f" @ {ts}" if ts else ""
+            it = QListWidgetItem(f"Meteor {mid} — {src}{when}  (len {float(m.get('length', 0)):.0f}px)")
             it.setFlags(it.flags() | Qt.ItemIsUserCheckable)
             it.setCheckState(Qt.Checked)
             it.setData(Qt.UserRole, mid)
