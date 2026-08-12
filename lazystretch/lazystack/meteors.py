@@ -71,21 +71,32 @@ def selection_layer(layer: np.ndarray, labels: Optional[np.ndarray],
     return a * (keep[..., None] if a.ndim == 3 else keep)
 
 
-def develop_meteor(layer: np.ndarray, strength: float = 1.0, *, k: float = 12.0) -> np.ndarray:
-    """Gently, HUE-PRESERVINGLY develop the linear meteor layer for compositing.
+def develop_meteor(layer: np.ndarray, strength: float = 1.0, *,
+                   k: float = 10.0, target: float = 0.75) -> np.ndarray:
+    """HUE-PRESERVINGLY develop the linear meteor layer for compositing, ADAPTIVELY.
 
-    A meteor is already bright; the master's deep-sky MTF would blow it to white and kill its
-    colour. Instead apply an asinh to the LUMINANCE and rescale each channel by the same factor —
-    brightness comes up, the R/G/B ratios (the real ablation colours) are preserved. Scaled by
-    ``strength``. Returns an additive layer to add onto the developed master (then clip).
+    A meteor's rejected excess is usually FAINT (a real MW trail is ~0.01-0.08 linear) — far below
+    the stretched deep-sky background, so a fixed asinh left it invisible. Instead normalise by the
+    trail's own bright-core reference (p99.5 of the trail luminance) so any meteor, faint or bright,
+    lifts to the same visible level: the core reaches ``target`` and fainter trail is asinh-lifted
+    above the background, while the asinh compresses the bright end so the R/G/B ratios (the real
+    ablation colours) survive. Feather/noise pixels (luminance ≪ core) stay near zero, so only the
+    actual trail glows. Each channel is rescaled by the same luminance factor (hue-preserving),
+    then scaled by ``strength``. Returns an additive layer to add onto the developed master.
     """
     a = np.asarray(layer, dtype=np.float64)
+    s = float(np.clip(strength, 0.0, 1.0))
     lum = a[..., :3].mean(axis=2) if a.ndim == 3 else a
-    f = np.arcsinh(lum * k) / np.arcsinh(k)                     # asinh luminance stretch
+    pos = lum[lum > 1e-6]
+    if s <= 0.0 or pos.size == 0:
+        return np.zeros_like(a)
+    ref = max(float(np.percentile(pos, 99.5)), 1e-4)           # trail bright-core reference
+    norm = lum / ref                                           # ~1 at the core, ≪1 on feather/noise
+    out = target * s * np.arcsinh(norm * k) / np.arcsinh(k)    # core -> target·s, faint asinh-lifted
     with np.errstate(invalid="ignore", divide="ignore"):
-        scale = np.where(lum > 1e-4, f / np.where(lum > 1e-4, lum, 1.0), 0.0)
+        scale = np.where(lum > 1e-6, out / np.where(lum > 1e-6, lum, 1.0), 0.0)
     dev = a * scale[..., None] if a.ndim == 3 else a * scale
-    return float(np.clip(strength, 0.0, 1.0)) * dev
+    return np.clip(dev, 0.0, 1.0)
 
 
 def _pca_shape(ys: np.ndarray, xs: np.ndarray) -> Tuple[float, float]:
