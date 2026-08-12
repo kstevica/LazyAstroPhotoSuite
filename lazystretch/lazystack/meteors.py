@@ -67,42 +67,70 @@ def _pca_shape(ys: np.ndarray, xs: np.ndarray) -> Tuple[float, float]:
 
 
 def detect_meteors(transient: np.ndarray, frame_idx: np.ndarray, *,
-                   thr_floor: float = 0.02, min_area: int = 20, max_area_frac: float = 0.02,
-                   min_aspect: float = 3.0, min_length: float = 30.0,
-                   min_single_frame: float = 0.6, feather: float = 2.0,
+                   thr_floor: float = 0.006, min_area: int = 20, max_area_frac: float = 0.02,
+                   min_aspect: float = 4.0, min_length: float = 40.0, connect: int = 2,
+                   min_seg: int = 6, min_single_frame: float = 0.6, feather: float = 2.0,
                    log: Callable[[str], None] = _noop) -> Tuple[List[dict], np.ndarray]:
-    """Detect meteor trails in the transient map. Returns (meteor dicts, feathered soft mask)."""
-    from scipy.ndimage import binary_dilation, gaussian_filter, label
+    """Detect meteor trails in the transient map. Returns (meteor dicts, feathered soft mask).
+
+    Tuned on a real faint Milky Way meteor (transient excess ~0.005-0.08). Pipeline: threshold at
+    ``thr_floor`` → drop tiny (< ``min_seg``) noise specks BEFORE bridging (else dilation merges
+    scattered noise into one huge blob) → dilate by ``connect`` px so trail brightness dips don't
+    fragment it → label → keep elongated, single-frame, right-sized components.
+    """
+    from scipy.ndimage import binary_dilation, find_objects, gaussian_filter, label
     a = np.asarray(transient, dtype=np.float64)
     lum = a[..., :3].mean(axis=2) if a.ndim == 3 else a
     H, W = lum.shape
     mad = 1.4826 * float(np.median(np.abs(lum - np.median(lum))))
     thr = max(thr_floor, 8.0 * mad)                  # transient is ~0 off-trail, so the floor rules
-    lbl, nlab = label(lum > thr, structure=np.ones((3, 3)))
-    max_area = int(max_area_frac * H * W)
+    lbl0, n0 = label(lum > thr, structure=np.ones((3, 3)))
+    if n0 == 0:
+        log("Meteor detection: no meteor trails found.")
+        return [], np.zeros((H, W), dtype=np.float64)
+    keep0 = np.bincount(lbl0.ravel()) >= min_seg     # noise specks are 1-3 px; drop them first
+    keep0[0] = False
+    binary = keep0[lbl0]
+    if connect:
+        binary = binary_dilation(binary, iterations=int(connect))   # then bridge trail dips
+    lbl, nlab = label(binary, structure=np.ones((3, 3)))
     meteors: List[dict] = []
     soft = np.zeros((H, W), dtype=np.float64)
-    for i in range(1, nlab + 1):
-        ys, xs = np.where(lbl == i)
-        area = xs.size
-        if area < min_area or area > max_area:
-            continue
-        aspect, length = _pca_shape(ys, xs)
-        if aspect < min_aspect or length < min_length:   # compact residual / too short
-            continue
-        fr = frame_idx[ys, xs]
-        fr = fr[fr >= 0]
-        if fr.size == 0:
-            continue
-        vals, counts = np.unique(fr, return_counts=True)
-        dom_frac = float(counts.max()) / area
-        if dom_frac < min_single_frame:                  # must be one frame (a real transient)
-            continue
-        meteors.append({"frame": int(vals[np.argmax(counts)]), "area": int(area),
-                        "aspect": round(aspect, 2), "length": round(length, 1),
-                        "single_frame_frac": round(dom_frac, 2), "peak": float(lum[ys, xs].max()),
-                        "bbox": [int(ys.min()), int(xs.min()), int(ys.max()), int(xs.max())]})
-        soft[ys, xs] = 1.0
+    if nlab:
+        # One O(N) pass for all component sizes, then only inspect the size-candidates via their
+        # bounding boxes — never `np.where(lbl==i)` over the whole frame per label (that was
+        # O(nlab·N): 40 MP × tens-of-thousands of noise specks = tens of minutes).
+        sizes = np.bincount(lbl.ravel())
+        max_area = int(max_area_frac * H * W)
+        cand = np.where((sizes >= min_area) & (sizes <= max_area))[0]
+        cand = cand[cand != 0]
+        boxes = find_objects(lbl)
+        for lab in cand:
+            sl = boxes[lab - 1]
+            if sl is None:
+                continue
+            sub = lbl[sl] == lab
+            yy, xx = np.where(sub)
+            ys, xs = yy + sl[0].start, xx + sl[1].start
+            aspect, length = _pca_shape(ys, xs)
+            if aspect < min_aspect or length < min_length:   # compact residual / too short
+                continue
+            fr = frame_idx[ys, xs]
+            fr = fr[fr >= 0]
+            if fr.size == 0:
+                continue
+            vals, counts = np.unique(fr, return_counts=True)
+            # Fraction of the *transient* pixels from one frame (a real meteor is single-frame; a
+            # chance-elongated noise cluster draws from many frames). Denominator excludes the
+            # no-transient border pixels the dilation added.
+            dom_frac = float(counts.max()) / fr.size
+            if dom_frac < min_single_frame:
+                continue
+            meteors.append({"frame": int(vals[np.argmax(counts)]), "area": int(xs.size),
+                            "aspect": round(aspect, 2), "length": round(length, 1),
+                            "single_frame_frac": round(dom_frac, 2), "peak": float(lum[ys, xs].max()),
+                            "bbox": [int(ys.min()), int(xs.min()), int(ys.max()), int(xs.max())]})
+            soft[ys, xs] = 1.0
     if meteors:
         soft = binary_dilation(soft > 0, iterations=3).astype(np.float64)   # include the glow
         soft = np.clip(gaussian_filter(soft, feather), 0.0, 1.0)            # soft edge, no hard line

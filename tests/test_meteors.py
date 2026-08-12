@@ -7,7 +7,7 @@ from lazystretch.lazystack import calibrate as cal, integrate as integ, meteors,
 from lazystretch.lazystack.model import LazyStackParams
 
 
-def _sky_stack(H=200, W=320, N=8, seed=0):
+def _sky_stack(H=300, W=420, N=8, seed=0):
     rng = np.random.default_rng(seed)
     return [np.clip(0.05 + rng.normal(0, 0.003, (H, W, 3)), 0, 1) for _ in range(N)]
 
@@ -32,7 +32,7 @@ def test_transient_emit_and_meteor_detection():
     cube = np.stack([f.astype(np.float64) for f in frames])
     out, transient, tframe = integ.sigma_clip_mean(cube, return_transient=True)
 
-    assert transient.shape == frames[0].shape and tframe.shape == (200, 320)
+    assert transient.shape == frames[0].shape and tframe.shape == (300, 420)
     assert float(transient[ys[25], xs[25]].max()) > 0.2          # the meteor light is preserved
     assert transient[..., 1].max() > 0                           # colour kept (green channel)
 
@@ -44,7 +44,7 @@ def test_transient_emit_and_meteor_detection():
 
 
 def test_combine_files_returns_transient(tmp_path):
-    frames = _sky_stack(H=120, W=160, N=6)
+    frames = _sky_stack(H=300, W=420, N=6)
     _add_streak(frames[2], 20, 20, 40, 1, 3, 0.5)
     paths = []
     for i, f in enumerate(frames):
@@ -53,7 +53,7 @@ def test_combine_files_returns_transient(tmp_path):
         paths.append(str(p))
     master, transient, tframe = integ.combine_files(paths, return_transient=True)
     assert master.shape == frames[0].shape
-    assert transient.shape == frames[0].shape and tframe.shape == (120, 160)
+    assert transient.shape == frames[0].shape and tframe.shape == (300, 420)
     met, _ = meteors.detect_meteors(transient, tframe)
     assert len(met) == 1 and met[0]["frame"] == 2
 
@@ -61,7 +61,7 @@ def test_combine_files_returns_transient(tmp_path):
 def test_stack_writes_meteor_layer(tmp_path):
     pytest.importorskip("photutils")
     rng = np.random.default_rng(3)
-    H, W = 160, 220
+    H, W = 320, 440
     yy, xx = np.mgrid[0:H, 0:W]
     stars = np.zeros((H, W))
     for _ in range(45):
