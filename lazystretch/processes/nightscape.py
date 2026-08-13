@@ -13,11 +13,15 @@ import numpy as np
 
 
 def develop_foreground(layer: np.ndarray, brightness: float = 0.5) -> np.ndarray:
-    """Gently develop the linear foreground layer (colour-preserving luminance gamma).
+    """Render the linear foreground layer as a NATURAL photo — NOT a deep-sky stretch.
 
-    A moonlit landscape wants a mild lift, not the deep-sky stretch. ``brightness`` (0..1) sets the
-    target median luminance (~0.12–0.62); the luminance is gamma-mapped to reach it and the channels
-    are ratio-scaled so hue survives. Input never mutated; output clipped to [0, 1].
+    The foreground is a moonlit landscape; it should look like an ordinary (dark) photograph, so it
+    gets only a display-gamma-style rendering, never the aggressive stretch the sky gets. ``brightness``
+    (0..1) sets a modest target median luminance (~0.05–0.18, a dark-but-visible landscape); the
+    luminance is gamma-mapped to reach it, but the gamma is CAPPED so it is never harsher than a
+    normal sRGB display curve (≈0.45) — that cap is what stops the wash-out/over-stretch. Channels are
+    ratio-scaled so hue survives; a gray-world white balance first neutralizes the raw colour cast.
+    Input never mutated; output clipped to [0, 1].
     """
     a = np.clip(np.asarray(layer, dtype=np.float64), 0.0, 1.0)
     if a.ndim == 2:
@@ -32,8 +36,8 @@ def develop_foreground(layer: np.ndarray, brightness: float = 0.5) -> np.ndarray
     if pos.size == 0:
         return a
     med = float(np.median(pos))
-    target = 0.12 + 0.5 * float(np.clip(brightness, 0.0, 1.0))
-    g = float(np.clip(np.log(max(target, 1e-3)) / np.log(max(med, 1e-3)), 0.15, 1.0))
+    target = 0.05 + 0.13 * float(np.clip(brightness, 0.0, 1.0))     # dark, photographic (was 0.12–0.62)
+    g = float(np.clip(np.log(max(target, 1e-3)) / np.log(max(med, 1e-3)), 0.35, 0.9))  # never harsher than ~sRGB
     new_lum = np.power(lum, g)
     with np.errstate(divide="ignore", invalid="ignore"):
         scale = np.where(lum > 1e-4, new_lum / np.where(lum > 1e-4, lum, 1.0), 1.0)
