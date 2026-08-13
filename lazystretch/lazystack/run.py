@@ -62,6 +62,16 @@ def _noop(_m: str) -> None:
     pass
 
 
+def _decode_workers(params, n: int) -> int:
+    """Parallel-decode thread count: ``decode_workers`` if set, else auto (bounded by cores AND
+    memory — each in-flight decode holds a full frame, so ~cpu/3 capped at 6). Never exceeds ``n``."""
+    import os
+    w = int(getattr(params, "decode_workers", 0) or 0)
+    if w <= 0:
+        w = min(6, max(1, (os.cpu_count() or 2) // 3))
+    return max(1, min(w, n))
+
+
 def _list(folder: Path) -> List[str]:
     if not folder.is_dir():
         return []
@@ -250,7 +260,8 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     def _get(handle):
         return np.load(str(handle)) if isinstance(handle, Path) else handle
 
-    # --- stage 1: calibrate + cosmetic + measure (stage to disk or keep in RAM) ---
+    # --- stage 1: calibrate + cosmetic + measure — decode is the cost (rawpy releases the GIL, so a
+    #     thread pool parallelizes it); results are collected back in source order. ---
     log(f"Calibrating + measuring {len(lights)} lights…")
     frames: list = []                    # Path (staged) or ndarray (in-memory)
     names: List[str] = []
@@ -258,23 +269,20 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     keys: List[Optional[str]] = []
     measures: List[Optional[dict]] = []
     meas_cache = _load_measures_cache(work) if reuse else {}
-    exposure = 0.0
-    for i, p in enumerate(lights):
-        name = Path(p).name
-        log(f"  [{i + 1}/{len(lights)}] {name}…")
+
+    def _do_frame(i: int, p: str):
         key = _frame_key(p, i) if staged else None
         cal_path = (work / f"cal_{key}.npy") if staged else None
         img = None
         if reuse and cal_path is not None and cal_path.exists():
             try:
                 img = np.load(str(cal_path))
-                log("    reusing cached calibration")
             except Exception:
                 img = None
         if img is None:
             raw = load(p)
             if raw is None:
-                continue
+                return None
             if params.do_calibrate:
                 raw = cal.calibrate_light(raw, bias=master_bias, dark=master_dark, flat=master_flat)
             if params.do_cosmetic:
@@ -282,26 +290,47 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             img = np.asarray(raw, dtype=np.float32)
             if staged:
                 np.save(str(cal_path), img)
-        if reuse and key in meas_cache:
-            m = meas_cache[key]                          # measurement cached by source identity
-        else:
-            m = meas.measure_frame(img)
-            if reuse and key is not None:
-                meas_cache[key] = m
-        measures.append(m)
-        names.append(name)
-        paths.append(p)
-        keys.append(key)
-        if staged:
-            frames.append(cal_path)
-            del img
-        else:
-            frames.append(img)
+        m = meas_cache[key] if (reuse and key in meas_cache) else meas.measure_frame(img)
+        exp = 0.0
         try:
-            exp = load_image(p).keyword("EXPTIME")
-            exposure += float(exp) if exp is not None else 0.0
+            e = load_image(p).keyword("EXPTIME")
+            exp = float(e) if e is not None else 0.0
         except Exception:
             pass
+        return {"i": i, "name": Path(p).name, "path": p, "key": key, "measure": m,
+                "exp": exp, "frame": (cal_path if staged else img)}
+
+    workers = _decode_workers(params, len(lights))
+    results: List[Optional[dict]] = [None] * len(lights)
+    if workers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        log(f"  decoding + measuring with {workers} parallel workers…")
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_do_frame, i, p): i for i, p in enumerate(lights)}
+            done = 0
+            for fut in as_completed(futs):
+                r = fut.result()
+                done += 1
+                if r is not None:
+                    results[r["i"]] = r
+                    log(f"  [{done}/{len(lights)}] {r['name']} ✓")
+    else:
+        for i, p in enumerate(lights):
+            log(f"  [{i + 1}/{len(lights)}] {Path(p).name}…")
+            results[i] = _do_frame(i, p)
+
+    exposure = 0.0
+    for r in results:                                    # collect in source order; skip failed frames
+        if r is None:
+            continue
+        frames.append(r["frame"])
+        names.append(r["name"])
+        paths.append(r["path"])
+        keys.append(r["key"])
+        measures.append(r["measure"])
+        exposure += r["exp"]
+        if reuse and r["key"] is not None and r["key"] not in meas_cache:
+            meas_cache[r["key"]] = r["measure"]
     if reuse:
         _save_measures_cache(work, meas_cache)
     if len(frames) < 2:
@@ -384,27 +413,21 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     aligned_names: List[str] = []                        # parallel to aligned_handles == transient frame index
     aligned_paths: List[str] = []                        # full source path per aligned frame (meteor timestamp)
     weights: List[float] = []
-    for j, idx in enumerate(keep):
-        log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
+
+    def _do_register(idx: int):                          # per-frame; the aligner + ref are read-only
         m = measures[idx]
         w = max(1e-3, m["snr"]) if m else 1.0
         reg_path = (work / f"reg_{keys[idx]}_{ref_key}{nsuf}.npy") if staged else None
         if reuse and reg_path is not None and reg_path.exists():
-            log("    reusing cached registration")
-            aligned_handles.append(reg_path)
-            aligned_names.append(names[idx])
-            aligned_paths.append(paths[idx])
-            weights.append(w)
-            continue
+            return {"idx": idx, "handle": reg_path, "name": names[idx], "path": paths[idx],
+                    "w": w, "cached": True}
         if idx == ref_global:
             aligned = ref
         else:
-            frame = _get(frames[idx])
             try:
-                aligned = aligner.align(frame)
+                aligned = aligner.align(_get(frames[idx]))
             except Exception as e:
-                log(f"    dropped ({e})")
-                continue
+                return {"idx": idx, "error": str(e)}
         nodata = ~np.isfinite(aligned)                   # registration no-overlap border
         if local_norm:
             aligned = nrm.local_normalize_to_ref(aligned, ref, ref_med, ref_sig)
@@ -413,14 +436,47 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         if nodata.any():                                 # keep no-data as no-data (NaN) for coverage
             aligned = np.asarray(aligned, dtype=np.float64)
             aligned[nodata] = np.nan
-        weights.append(w)
-        aligned_names.append(names[idx])
-        aligned_paths.append(paths[idx])
         if staged:
             np.save(str(reg_path), np.asarray(aligned, dtype=np.float32))
-            aligned_handles.append(reg_path)
-        else:
-            aligned_handles.append(np.asarray(aligned, dtype=np.float32))
+            return {"idx": idx, "handle": reg_path, "name": names[idx], "path": paths[idx], "w": w}
+        return {"idx": idx, "handle": np.asarray(aligned, dtype=np.float32),
+                "name": names[idx], "path": paths[idx], "w": w}
+
+    rworkers = _decode_workers(params, len(keep))
+    reg_results: Dict[int, dict] = {}
+    if rworkers > 1:
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        log(f"  registering with {rworkers} parallel workers…")
+        with ThreadPoolExecutor(max_workers=rworkers) as ex:
+            futs = {ex.submit(_do_register, idx): idx for idx in keep}
+            done = 0
+            for fut in as_completed(futs):
+                r = fut.result()
+                done += 1
+                if r.get("error"):
+                    log(f"  [{done}/{len(keep)}] {names[r['idx']]}: dropped ({r['error']})")
+                else:
+                    reg_results[r["idx"]] = r
+                    log(f"  [{done}/{len(keep)}] {r['name']}: "
+                        + ("reusing cached registration ✓" if r.get("cached") else "registered ✓"))
+    else:
+        for j, idx in enumerate(keep):
+            log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
+            r = _do_register(idx)
+            if r.get("error"):
+                log(f"    dropped ({r['error']})")
+            else:
+                if r.get("cached"):
+                    log("    reusing cached registration")
+                reg_results[idx] = r
+    for idx in keep:                                     # collect in keep order (weights ↔ handles)
+        r = reg_results.get(idx)
+        if r is None:
+            continue
+        aligned_handles.append(r["handle"])
+        aligned_names.append(r["name"])
+        aligned_paths.append(r["path"])
+        weights.append(r["w"])
     del ref
     if staged and not reuse:
         for h in frames:                                 # calibrated staging no longer needed

@@ -28,6 +28,7 @@ class LazyStackParams:
     preserve_meteors: bool = True  # detect meteor trails (rejected transients) + save a meteor layer
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory
+    decode_workers: int = 0        # parallel decode+measure threads (0 = auto by cores/memory; 1 = serial)
     # --- nightscape (foreground-locked MW): stack the sky, keep a sharp static foreground ---
     nightscape: bool = False       # nightscape mode: sky-only registration + foreground companion
     nightscape_foreground: str = ""  # Mode 2: path to a user foreground image (else auto-pick sharpest)

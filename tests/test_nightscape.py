@@ -233,6 +233,16 @@ def test_plan_override_uses_painted_mask():
     assert mask[40, 10] > 0.7 and mask[40, 90] < 0.3   # painted split preserved
 
 
+def test_decode_workers_bounds():
+    from lazystretch.lazystack.run import _decode_workers
+    from lazystretch.lazystack.model import LazyStackParams
+    assert _decode_workers(LazyStackParams(decode_workers=3), 10) == 3    # explicit wins
+    assert _decode_workers(LazyStackParams(decode_workers=1), 10) == 1    # serial
+    assert _decode_workers(LazyStackParams(decode_workers=99), 4) == 4    # never exceeds frame count
+    w = _decode_workers(LazyStackParams(decode_workers=0), 20)            # auto
+    assert 1 <= w <= 6
+
+
 def test_load_preview_downsamples(tmp_path):
     from lazystretch.io.image_io import load_preview, save_image
     p = tmp_path / "big.tif"
