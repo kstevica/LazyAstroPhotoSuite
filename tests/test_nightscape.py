@@ -200,6 +200,29 @@ def test_refine_mask_correction_stroke_carves_patch():
     assert corr[25, 115] < base[25, 115]               # that patch became more foreground
 
 
+def test_plan_tracks_moving_foreground_frame():
+    # guided/tracked nightscape: static sky, a horizon that DRIFTS (foreground moves). The mask must
+    # follow the CHOSEN foreground frame (so it aligns with the composited foreground layer), not the
+    # smeared average position.
+    H, W, N = 140, 200, 8
+    yy, xx = np.mgrid[0:H, 0:W]
+    rng = np.random.default_rng(0)
+    stars = [(rng.integers(5, H - 5), rng.integers(5, W - 5)) for _ in range(40)]
+    frames = []
+    for i in range(N):
+        img = np.full((H, W), 0.03)
+        for (y, x) in stars:
+            img[y, x] = 0.9                                  # same stars each frame (sky tracked)
+        bnd = 90 + i * 10                                    # horizon drifts right (foreground moves)
+        img[xx >= bnd] = (0.35 + 0.15 * np.sin(yy / 3.0))[xx >= bnd]
+        frames.append(np.clip(np.stack([img] * 3, axis=-1), 0, 1))
+    cube = np.stack(frames)
+    best, mask, info = ns.plan(cube, cube.shape[1:3])
+    bnd = 90 + best * 10
+    assert (mask[:, bnd - 20:bnd - 5] > 0.5).mean() > 0.8    # sky left of the chosen frame's horizon
+    assert (mask[:, bnd + 5:bnd + 20] < 0.5).mean() > 0.8    # foreground right of it
+
+
 def test_plan_override_uses_painted_mask():
     small = np.zeros((4, 40, 50, 3), np.float32) + 0.05
     override = np.zeros((40, 50))

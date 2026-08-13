@@ -292,12 +292,20 @@ def plan(small_cube: np.ndarray, full_shape, *, user_fg_small: Optional[np.ndarr
         sky_small = _resize_mask(np.asarray(override_small, dtype=np.float64), small_cube.shape[1:3])
         info = {"axis": "manual", "sky_side": "painted", "horizon_strength": 0.0,
                 "foreground_fraction": float(1.0 - sky_small.mean())}
+        best = pick_foreground([small_cube[j] for j in range(len(small_cube))], 1.0 - sky_small)[0]
     elif user_fg_small is not None:
         sky_small, info = segment_sky(user_fg_small, bias=bias)
+        best = None
     else:
-        sky_small, info = segment_sky(small_cube, bias=bias)
-    best = (None if user_fg_small is not None else
-            pick_foreground([small_cube[j] for j in range(len(small_cube))], 1.0 - sky_small)[0])
+        # Segment the frame that BECOMES the foreground layer (the sharpest foreground), not the
+        # median. On a fixed tripod that equals the median (static foreground); in a GUIDED / tracked
+        # stack the foreground MOVES, so the median would smear it AND the mask would sit at the
+        # average position — misaligned with the single-frame foreground layer. Segmenting the chosen
+        # frame keeps the mask aligned to the foreground it will composite, either way.
+        init, _ = segment_sky(small_cube, bias=bias)               # rough mask to locate the foreground
+        fg0 = init < 0.5
+        best = int(np.argmax([foreground_sharpness(small_cube[i], fg0) for i in range(len(small_cube))]))
+        sky_small, info = segment_sky(small_cube[best], bias=bias)  # final mask = the foreground frame's
     return best, _resize_mask(sky_small, full_shape), info
 
 
