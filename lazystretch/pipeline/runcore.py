@@ -168,8 +168,24 @@ def run_pipeline(
 
     ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None,
            "noise_map": None, "coverage_map": None, "snr_raw": None,
-           "meteor_layer": None, "meteor_labels": None}
+           "meteor_layer": None, "meteor_labels": None,
+           "nightscape_fg": None, "nightscape_mask": None}
     steps: List = []
+
+    # Nightscape (foreground-locked MW): a LazyStack master carries a sharp foreground layer + a
+    # feathered sky mask; the sky is developed as usual and the foreground is composited into the
+    # foreground region so the moonlit land stays natural (not blown by the deep-sky stretch).
+    _nfg = getattr(params, "nightscape_foreground_layer", None)
+    _nmask = getattr(params, "nightscape_sky_mask", None)
+    if _nfg is not None and _nmask is not None:
+        _nfg = np.asarray(_nfg, dtype=np.float64)
+        _nmask = np.asarray(_nmask, dtype=np.float64)
+        _hw = np.asarray(target).shape[:2]
+        if _nfg.shape[:2] == _hw and _nmask.shape[:2] == _hw:
+            ctx["nightscape_fg"] = _nfg
+            ctx["nightscape_mask"] = _nmask
+        else:
+            _log(f"   nightscape layers {_nfg.shape[:2]}/{_nmask.shape[:2]} != image {_hw} — disabled")
 
     # Meteor preservation: a LazyStack master carries a feathered linear-RGB meteor layer; composite
     # it (gently developed) onto the finished image so Perseid trails + their colours survive.
@@ -235,6 +251,9 @@ def run_pipeline(
                 ctx["meteor_layer"] = crop.crop_edges(ctx["meteor_layer"], eff_crop / 100.0)
             if ctx["meteor_labels"] is not None:
                 ctx["meteor_labels"] = crop.crop_edges(ctx["meteor_labels"], eff_crop / 100.0)
+            if ctx["nightscape_fg"] is not None:        # keep the nightscape foreground + mask aligned
+                ctx["nightscape_fg"] = crop.crop_edges(ctx["nightscape_fg"], eff_crop / 100.0)
+                ctx["nightscape_mask"] = crop.crop_edges(ctx["nightscape_mask"], eff_crop / 100.0)
         add(f"Crop {eff_crop:.1f}% off each edge", _crop)
 
     # --- SNR-protect mask (built on the linear master, after crop) ---
@@ -604,6 +623,18 @@ def run_pipeline(
         ctx["img"] = highlights.highlight_rolloff(ctx["img"], knee)
         _log(f"   dial {params.highlights:.2f} -> knee {knee:.3f}")
     add(f"Highlight roll-off (dial {params.highlights:.2f})", _rolloff)
+
+    # --- nightscape composite (LAST): paste the gently-developed foreground into the foreground
+    #     region of the finished sky, along the feathered mask. Runs after every sky tone op so the
+    #     moonlit land keeps its own development instead of the deep-sky stretch. ---
+    if ctx["nightscape_fg"] is not None and ctx["nightscape_mask"] is not None:
+        def _nightscape():
+            from ..processes import nightscape as _ns
+            b = float(ledger.record("Nightscape", "foreground brightness",
+                                    getattr(params, "nightscapeBrightness", 0.5)))
+            ctx["img"] = _ns.composite(ctx["img"], ctx["nightscape_fg"], ctx["nightscape_mask"], b)
+            _log(f"   nightscape: foreground composited (brightness {b:.2f})")
+        add("Composite nightscape foreground", _nightscape)
 
     # --- run the steps, isolated, continue-on-error (js:3465-3480) ---
     total = len(steps)

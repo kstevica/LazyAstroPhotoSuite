@@ -28,11 +28,14 @@ def astroalign_available() -> bool:
         return False
 
 
-def _align_astroalign(frame: np.ndarray, ref: np.ndarray):
+def _align_astroalign(frame: np.ndarray, ref: np.ndarray,
+                      src: Optional[np.ndarray] = None, tgt: Optional[np.ndarray] = None):
     import astroalign
     color = frame.ndim == 3
-    src = frame.mean(axis=2) if color else frame
-    tgt = ref.mean(axis=2) if color else ref
+    if src is None:
+        src = frame.mean(axis=2) if color else frame
+    if tgt is None:
+        tgt = ref.mean(axis=2) if color else ref
     transform, _ = astroalign.find_transform(src, tgt)
     if color:
         chans, footprint = [], None
@@ -68,12 +71,18 @@ class Aligner:
     the whole aligned stack in RAM.
     """
 
-    def __init__(self, ref: np.ndarray, *, log: Callable[[str], None] = _noop):
+    def __init__(self, ref: np.ndarray, *, log: Callable[[str], None] = _noop,
+                 sky_mask: Optional[np.ndarray] = None):
         self.ref = np.asarray(ref, dtype=np.float64)
+        # sky_mask (1=sky): blank the foreground before source detection so astroalign matches sky
+        # asterisms only — a nightscape's bright static land otherwise breaks the whole-frame match.
+        self.sky_mask = None if sky_mask is None else (np.asarray(sky_mask) < 0.5)   # True == foreground
+        self._ref_src = self._sky_source(self.ref) if self.sky_mask is not None else None
         self.use_aa = astroalign_available()
         self._ref_fft = None
         if self.use_aa:
-            log("Registration: astroalign (asterism-matched affine).")
+            log("Registration: astroalign (asterism-matched affine)."
+                + (" Sky-masked (nightscape)." if self.sky_mask is not None else ""))
         else:
             log("Registration: astroalign not installed — FFT translation-only fallback "
                 "(no rotation correction; install astroalign for tracked/rotated sets).")
@@ -81,10 +90,18 @@ class Aligner:
             self._ref_fft = fftreg.make_ref(fftreg.gradient(ref_wk),
                                             ref_wk.shape[1], ref_wk.shape[0])
 
+    def _sky_source(self, frame: np.ndarray) -> np.ndarray:
+        """Luminance with the foreground blanked to the sky-median (for sky-only source detection)."""
+        L = (frame.mean(axis=2) if frame.ndim == 3 else frame).astype(np.float64).copy()
+        fg = self.sky_mask
+        L[fg] = float(np.median(L[~fg])) if np.any(~fg) else 0.0
+        return L
+
     def align(self, frame: np.ndarray) -> Optional[np.ndarray]:
         f = np.asarray(frame, dtype=np.float64)
         if self.use_aa:
-            return _align_astroalign(f, self.ref)
+            src = self._sky_source(f) if self.sky_mask is not None else None
+            return _align_astroalign(f, self.ref, src=src, tgt=self._ref_src)
         wk, k = fftreg.working(f)
         dx, dy = fftreg.measure_against(self._ref_fft, fftreg.gradient(wk),
                                         wk.shape[1], wk.shape[0])

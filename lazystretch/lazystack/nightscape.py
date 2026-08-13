@@ -119,6 +119,27 @@ def _noop(_m: str) -> None:
     pass
 
 
+def load_foreground(master_path: "str | Path"):
+    """Load the nightscape foreground layer sitting beside ``master_path`` (or None)."""
+    from pathlib import Path
+    from ..io.image_io import load_image
+    p = Path(master_path).with_name("lazystack_master_foreground.fits")
+    try:
+        return load_image(str(p)).data if p.exists() else None
+    except Exception:
+        return None
+
+
+def load_sky_mask(master_path: "str | Path"):
+    """Load the nightscape feathered sky mask (.npy) beside ``master_path`` (or None)."""
+    from pathlib import Path
+    p = Path(master_path).with_name("lazystack_master_skymask.npy")
+    try:
+        return np.load(str(p)) if p.exists() else None
+    except Exception:
+        return None
+
+
 def _apply_transform_full(T, frame: np.ndarray, ref: np.ndarray) -> np.ndarray:
     """Apply an astroalign transform to a full (mono/RGB) frame; mark no-data border as NaN."""
     import astroalign
@@ -189,6 +210,45 @@ def build_sky_master(frames, sky_mask: np.ndarray, reference: int, *, log=_noop)
     log(f"  nightscape: sky-registered {len(kept)}/{len(frames)} frames; integrating deep sky…")
     master = _integ.integrate(aligned)
     return np.clip(np.nan_to_num(master, nan=0.0), 0.0, 1.0), kept
+
+
+def _resize_mask(mask: np.ndarray, shape) -> np.ndarray:
+    """Bilinear-resize a (feathered) mask to ``shape`` exactly."""
+    from scipy.ndimage import zoom
+    out = zoom(np.asarray(mask, dtype=np.float64),
+               (shape[0] / mask.shape[0], shape[1] / mask.shape[1]), order=1)
+    out = out[:shape[0], :shape[1]]
+    if out.shape != tuple(shape[:2]):
+        out = np.pad(out, [(0, shape[0] - out.shape[0]), (0, shape[1] - out.shape[1])], mode="edge")
+    return np.clip(out, 0.0, 1.0)
+
+
+def match_shape(arr: np.ndarray, shape) -> np.ndarray:
+    """Resize a mono/RGB array to ``shape`` (H, W) — used to align a Mode-2 foreground/mask."""
+    a = np.asarray(arr, dtype=np.float64)
+    if a.shape[:2] == tuple(shape[:2]):
+        return a
+    if a.ndim == 3:
+        return np.stack([_resize_mask(a[..., c], shape) for c in range(a.shape[2])], axis=-1)
+    return _resize_mask(a, shape)
+
+
+def plan(small_cube: np.ndarray, full_shape, *, user_fg_small: Optional[np.ndarray] = None,
+         bias: float = 0.0) -> Tuple[Optional[int], np.ndarray, dict]:
+    """Plan a nightscape stack from a downsampled cube (bounded memory; the caller has the full res).
+
+    Returns ``(best_local_index, sky_mask_full, info)``. In Mode 1 (auto) the mask comes from the
+    stack and ``best_local_index`` is the sharpest-foreground frame (index into the cube). In Mode 2
+    the mask comes from ``user_fg_small`` (the user's foreground, downsampled) and the index is None
+    (the caller supplies the foreground). The mask is upsampled to ``full_shape`` for registration.
+    """
+    if user_fg_small is not None:
+        sky_small, info = segment_sky(user_fg_small, bias=bias)
+        best = None
+    else:
+        sky_small, info = segment_sky(small_cube, bias=bias)
+        best, _ = pick_foreground([small_cube[j] for j in range(len(small_cube))], 1.0 - sky_small)
+    return best, _resize_mask(sky_small, full_shape), info
 
 
 def foreground_sharpness(frame: np.ndarray, fg_mask: np.ndarray) -> float:

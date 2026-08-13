@@ -23,6 +23,7 @@ from . import (
     integrate as integ,
     measure as meas,
     meteors as met,
+    nightscape as nsmod,
     normalize as nrm,
     register as reg,
 )
@@ -35,6 +36,9 @@ COVERAGE_MAP_NAME = "lazystack_master_coverage.npy"  # per-pixel frame-support c
 METEOR_MAP_NAME = "lazystack_master_meteors.npy"   # feathered linear-RGB meteor layer (composite in stretch)
 METEOR_LABELS_NAME = "lazystack_master_meteorlabels.npy"  # per-meteor id map (for selection)
 METEOR_META_NAME = "lazystack_master_meteors.json"  # detected-trail metadata
+NIGHTSCAPE_FG_NAME = "lazystack_master_foreground.fits"   # sharp foreground layer (composite in stretch)
+NIGHTSCAPE_MASK_NAME = "lazystack_master_skymask.npy"     # feathered sky mask (1=sky, 0=foreground)
+NIGHTSCAPE_META_NAME = "lazystack_master_nightscape.json"  # nightscape mode metadata
 _RAWPY_OK = None
 
 
@@ -310,6 +314,36 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     keep = culled["keep"]
     ref_global = culled["reference"] if culled["reference"] in keep else keep[0]
 
+    # --- nightscape: segment sky vs foreground, pick the sharp foreground, and register on SKY
+    #     STARS ONLY (mask the static land so astroalign isn't broken by it). The master becomes the
+    #     deep sky; the foreground + sky mask ride along as companions for the stretch to composite. ---
+    ns_state = None
+    if getattr(params, "nightscape", False):
+        try:
+            _ds = 4
+            small = np.stack([np.asarray(_get(frames[i]), dtype=np.float32)[::_ds, ::_ds] for i in keep])
+            full_shape = np.asarray(_get(frames[keep[0]])).shape[:2]
+            user_fg_path = getattr(params, "nightscape_foreground", "") or ""
+            user_fg = load_image(user_fg_path).data if user_fg_path else None
+            user_fg_small = (np.asarray(user_fg, dtype=np.float32)[::_ds, ::_ds]
+                             if user_fg is not None else None)
+            best, sky_mask, ns_info = nsmod.plan(
+                small, full_shape, user_fg_small=user_fg_small,
+                bias=float(getattr(params, "nightscape_bias", 0.0)))
+            if user_fg is not None:                          # Mode 2: user supplies the foreground
+                fg_layer, fg_source, mode = np.asarray(user_fg, dtype=np.float32), Path(user_fg_path).name, "user"
+            else:                                            # Mode 1: sharpest frame is the foreground + reference
+                ref_global = keep[int(best)]
+                fg_layer, fg_source, mode = np.asarray(_get(frames[ref_global]), dtype=np.float32), names[ref_global], "auto"
+            ns_state = {"sky_mask": sky_mask, "foreground": fg_layer,
+                        "foreground_source": fg_source, "info": ns_info, "mode": mode}
+            log(f"Nightscape ({mode}): foreground '{fg_source}', sky "
+                f"{100 * (1 - ns_info['foreground_fraction']):.0f}% ({ns_info['axis']} horizon, "
+                f"sky {ns_info['sky_side']}); registering on sky stars only.")
+        except Exception as e:
+            log(f"Nightscape planning failed ({e}) — falling back to normal stacking.")
+            ns_state = None
+
     # --- stage 1b: static hot/cold pixel repair in SENSOR space (walking-noise fix) ---
     # Must run before registration: undithered hot pixels sit at a fixed sensor coordinate and,
     # once dragged along the drift by registration, become sigma-clip-proof diagonal dashes.
@@ -332,7 +366,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     log(f"Registering {len(keep)} frames to reference {names[ref_global]}…")
     ref_key = keys[ref_global] if staged else None
     ref = _get(frames[ref_global])
-    aligner = reg.Aligner(ref, log=log)
+    aligner = reg.Aligner(ref, log=log, sky_mask=(ns_state["sky_mask"] if ns_state else None))
     local_norm = bool(params.local_normalize)
     normalize = bool(params.normalize) or local_norm     # LN includes the global step
     ref_med, ref_sig = nrm.frame_stats(ref) if normalize else (0.0, 1.0)
@@ -486,6 +520,30 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         except Exception as e:                           # optional, never fatal
             log(f"  (meteor layer skipped: {e})")
             meteor_path = None
+
+    # Nightscape: save the sharp foreground layer + feathered sky mask (cropped to the master's
+    # contract) for the stretch to composite over the deep sky. Best-effort — never fails the stack.
+    nightscape_fg_path = None
+    if ns_state is not None:
+        try:
+            fg = np.clip(np.asarray(ns_state["foreground"], dtype=np.float64), 0.0, 1.0)
+            skym = np.asarray(ns_state["sky_mask"], dtype=np.float32)
+            if edge_crop:
+                fg = contract.crop_to_contract(fg, edges)
+                skym = contract.crop_to_contract(skym, edges)
+            fg = nsmod.match_shape(fg, master.shape[:2])         # Mode 2 fg may differ in size
+            skym = nsmod.match_shape(skym, master.shape[:2])
+            nightscape_fg_path = out_dir / NIGHTSCAPE_FG_NAME
+            save_image(str(nightscape_fg_path), fg, bit_depth=16)
+            np.save(str(out_dir / NIGHTSCAPE_MASK_NAME), np.clip(skym, 0.0, 1.0).astype(np.float32))
+            meta = {"mode": ns_state["mode"], "foreground_source": ns_state["foreground_source"],
+                    **ns_state["info"]}
+            (out_dir / NIGHTSCAPE_META_NAME).write_text(json.dumps(meta, indent=2), encoding="utf-8")
+            log(f"Nightscape companions: foreground ({ns_state['foreground_source']}) + sky mask saved.")
+        except Exception as e:                               # optional, never fatal
+            log(f"  (nightscape companions skipped: {e})")
+            nightscape_fg_path = None
+
     if work is not None and not reuse:
         _cleanup(work)                                   # fresh run — drop all work files
     elif work is not None and reuse:                     # keep this run's files, prune orphans
@@ -499,4 +557,6 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             "noise_map_path": str(snr_path) if snr_path else None,
             "meteor_layer_path": str(meteor_path) if meteor_path else None,
             "meteors": meteor_list,
+            "nightscape_foreground_path": str(nightscape_fg_path) if nightscape_fg_path else None,
+            "nightscape": ns_state["info"] if ns_state else None,
             "registered_with": "astroalign" if reg.astroalign_available() else "fft-translation"}

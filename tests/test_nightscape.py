@@ -99,3 +99,50 @@ def test_build_sky_master_denoises_and_keeps_shape():
         L = im.mean(2)[reg]
         return float(np.median(np.abs(L - gaussian_filter(L, 3))))
     assert hf(sky) < 0.8 * hf(frames[0])                              # stacking reduced the noise
+
+
+def test_composite_blends_foreground_over_sky():
+    from lazystretch.processes import nightscape as nsc
+    H, W = 60, 80
+    sky = np.full((H, W, 3), 0.4)
+    fg = np.full((H, W, 3), 0.03)                                     # dark linear foreground
+    mask = np.zeros((H, W))
+    mask[:, :W // 2] = 1.0                                            # left = sky, right = foreground
+    out = nsc.composite(sky, fg, mask, brightness=0.5)
+    assert np.allclose(out[30, 5], 0.4, atol=0.02)                   # sky side unchanged
+    assert out[30, W - 5].mean() > fg[0, 0].mean()                   # foreground developed (lifted)
+    assert out.shape == sky.shape
+
+
+def test_composite_shape_mismatch_is_safe_noop():
+    from lazystretch.processes import nightscape as nsc
+    sky = np.full((40, 50, 3), 0.4)
+    fg = np.full((30, 30, 3), 0.1)
+    mask = np.ones((40, 50))
+    assert np.array_equal(nsc.composite(sky, fg, mask), sky)          # mismatched fg → leave sky
+
+
+def test_develop_foreground_brightness_monotonic():
+    from lazystretch.processes import nightscape as nsc
+    fg = np.full((40, 50, 3), 0.05)
+    dim = nsc.develop_foreground(fg, 0.2).mean()
+    bright = nsc.develop_foreground(fg, 0.9).mean()
+    assert bright > dim > fg[0, 0].mean()                            # brighter dial → brighter, both lifted
+
+
+def test_aligner_sky_mask_ignores_foreground():
+    pytest.importorskip("astroalign")
+    from lazystretch.lazystack import register as reg
+    frames = _star_sky(N=2)
+    mask, _ = ns.segment_sky(frames[0])
+    al = reg.Aligner(frames[0], sky_mask=mask)
+    out = al.align(frames[1])                                         # sky-masked registration runs
+    assert out is not None and out.shape == frames[1].shape
+
+
+def test_nightscape_brightness_recipe_roundtrip():
+    from lazystretch.objects.model import Parameters
+    from lazystretch.io import recipes as R
+    p = Parameters(); p.nightscapeBrightness = 0.35
+    p2 = Parameters(); R.apply_recipe(p2, R.recipe_from_params(p))
+    assert p2.nightscapeBrightness == 0.35

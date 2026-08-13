@@ -91,6 +91,8 @@ class Parameters:
                                    # default via profile; 0=off). à-trous starlet per-scale gain (P1)
     deepenBackground: float = 0.0  # de-veil 0..1 (0=off): colour-preserving deepen of a milky
                                    # background floor toward ~0.05 + deg-2 tilt flatten (keeps faint colour)
+    nightscapeBrightness: float = 0.5  # foreground-locked nightscape: developed-foreground brightness
+                                       # (0..1). Composites the LazyStack foreground layer over the sky.
     snrProtect: float = 0.0        # SNR-protect "ponder" 0..1 (0=off): use LazyStack's measured
                                    # per-pixel noise map to protect high-SNR signal from NR and
                                    # damp local-contrast in pure-noise regions. Needs snr_noise_map
@@ -107,6 +109,8 @@ class Parameters:
     meteor_layer: Optional[np.ndarray] = field(default=None, repr=False)   # LazyStack meteor layer
     meteor_labels: Optional[np.ndarray] = field(default=None, repr=False)  # per-meteor id map
     meteorSelect: Optional[list] = field(default=None, repr=False)         # trail ids to show (None = all)
+    nightscape_foreground_layer: Optional[np.ndarray] = field(default=None, repr=False)  # sharp foreground
+    nightscape_sky_mask: Optional[np.ndarray] = field(default=None, repr=False)          # feathered sky mask
 
     def slider_dict(self) -> Dict[str, float]:
         return {

@@ -110,6 +110,7 @@ _DIALS = [
     ("deepenBackground", "De-veil background (0 = off)", 0.0, 1.0, 2, 0.0),
     ("snrProtect", "SNR protect (needs stack)", 0.0, 1.0, 2, 0.0),
     ("meteorStrength", "Meteor trails (needs stack)", 0.0, 1.0, 2, 1.0),
+    ("nightscapeBrightness", "Nightscape foreground (needs stack)", 0.0, 1.0, 2, 0.5),
 ]
 
 
@@ -141,6 +142,8 @@ class LazyStretchPanel(QWidget):
         self._snr_coverage_map: Optional[np.ndarray] = None  # LazyStack frame-support map
         self._meteor_layer: Optional[np.ndarray] = None      # LazyStack meteor layer for the master
         self._meteor_labels: Optional[np.ndarray] = None     # per-meteor id map
+        self._nightscape_fg: Optional[np.ndarray] = None     # LazyStack nightscape foreground layer
+        self._nightscape_mask: Optional[np.ndarray] = None   # nightscape feathered sky mask
         self._pins: Dict[str, object] = {}                # PROC pins for the loaded master
 
         self.checks: Dict[str, QCheckBox] = {}
@@ -569,10 +572,15 @@ class LazyStretchPanel(QWidget):
         self._meteor_layer = load_meteor_layer(mpath) if mpath else None
         self._meteor_labels = load_meteor_labels(mpath) if mpath else None
         self._populate_meteor_list(load_meteor_meta(mpath) if mpath else [])
+        from ..lazystack.nightscape import load_foreground as _ld_fg, load_sky_mask as _ld_mask
+        self._nightscape_fg = _ld_fg(mpath) if mpath else None
+        self._nightscape_mask = _ld_mask(mpath) if mpath else None
         if self._snr_noise_map is not None:
             self.status_label.setText("Loaded. LazyStack noise map found — SNR-protect available.")
         if self._meteor_layer is not None:
             self.status_label.setText("Loaded. LazyStack meteor trail(s) found — will composite.")
+        if self._nightscape_fg is not None:
+            self.status_label.setText("Loaded. Nightscape foreground found — will composite over the sky.")
         self._refresh_history_list()
         self._show_quick_display()
 
@@ -736,6 +744,8 @@ class LazyStretchPanel(QWidget):
         p.snr_coverage_map = self._snr_coverage_map
         p.meteor_layer = self._meteor_layer            # LazyStack meteor layer for the master (or None)
         p.meteor_labels = self._meteor_labels
+        p.nightscape_foreground_layer = self._nightscape_fg   # nightscape foreground + mask (or None)
+        p.nightscape_sky_mask = self._nightscape_mask
         if self.meteor_list.count():                   # which trails the user chose to keep visible
             sel = [self.meteor_list.item(i).data(Qt.UserRole)
                    for i in range(self.meteor_list.count())

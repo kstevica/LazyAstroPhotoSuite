@@ -91,6 +91,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="mid-scale (arm/dust) structure enhancement 0..~1 (galaxy default 0.6; 0=off)")
     p.add_argument("--deepen-bg", type=float, dest="deepenBackground",
                    help="de-veil 0..1: colour-preserving deepen of a milky background floor (0=off)")
+    p.add_argument("--nightscape-brightness", type=float, dest="nightscapeBrightness",
+                   help="nightscape foreground brightness 0..1 (needs a LazyStack nightscape master)")
     p.add_argument("--analyze", action="store_true", help="print frame analysis + recommendations and exit")
 
     # toggles (store the opposite of the default where useful)
@@ -147,7 +149,7 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
     for name in ("satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj",
                  "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen", "highlights",
                  "transparency", "dimCore", "starShrink", "snrProtect", "meteorStrength", "structure",
-                 "deepenBackground"):
+                 "deepenBackground", "nightscapeBrightness"):
         v = getattr(args, name)
         if v is not None:
             setattr(p, name, v)
