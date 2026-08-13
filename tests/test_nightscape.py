@@ -140,6 +140,46 @@ def test_aligner_sky_mask_ignores_foreground():
     assert out is not None and out.shape == frames[1].shape
 
 
+def test_refine_mask_scribbles_snap_to_edge():
+    pytest.importorskip("skimage")
+    H, W = 120, 160
+    med = np.zeros((H, W))
+    med[:60] = 0.05                                    # top = sky (dark)
+    med[60:] = 0.40                                    # bottom = foreground (bright) → strong horizon edge
+    scr = np.zeros((H, W), np.int8)
+    scr[10:20, 20:40] = 1                              # rough SKY stroke (top)
+    scr[100:110, 20:40] = -1                           # rough EARTH stroke (bottom)
+    m = ns.refine_mask(med, scr, auto_mask=None)
+    assert m[5, 80] > 0.7 and m[115, 80] < 0.3         # deep sky vs deep foreground
+    assert m[55, 80] > m[65, 80]                       # boundary snapped to the edge (~row 60)
+
+
+def test_refine_mask_correction_stroke_carves_patch():
+    pytest.importorskip("skimage")
+    H, W = 120, 160
+    med = np.zeros((H, W))
+    med[:60] = 0.05
+    med[60:] = 0.40
+    scr = np.zeros((H, W), np.int8)
+    scr[10:20, 20:40] = 1
+    scr[100:110, 20:40] = -1
+    base = ns.refine_mask(med, scr)
+    scr2 = scr.copy()
+    scr2[15:35, 100:130] = -1                          # force a top (sky) patch to EARTH
+    corr = ns.refine_mask(med, scr2)
+    assert corr[25, 115] < base[25, 115]               # that patch became more foreground
+
+
+def test_plan_override_uses_painted_mask():
+    small = np.zeros((4, 40, 50, 3), np.float32) + 0.05
+    override = np.zeros((40, 50))
+    override[:, :25] = 1.0                              # left = sky, right = foreground
+    best, mask, info = ns.plan(small, (80, 100), override_small=override)
+    assert info["axis"] == "manual"
+    assert mask.shape == (80, 100)                      # upsampled to full res
+    assert mask[40, 10] > 0.7 and mask[40, 90] < 0.3   # painted split preserved
+
+
 def test_nightscape_brightness_recipe_roundtrip():
     from lazystretch.objects.model import Parameters
     from lazystretch.io import recipes as R

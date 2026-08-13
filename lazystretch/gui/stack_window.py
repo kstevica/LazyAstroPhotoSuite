@@ -12,6 +12,7 @@ from typing import Dict, Optional
 import numpy as np
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QCheckBox,
     QFileDialog,
     QGroupBox,
@@ -61,6 +62,9 @@ class LazyStackPanel(QWidget):
         self.setWindowTitle("LazyStack")
         self._folder: Optional[str] = None
         self._nightscape_fg_path: Optional[str] = None
+        self._nightscape_manual_mask: Optional[np.ndarray] = None  # painted mask (preview-res)
+        self._seg_median: Optional[np.ndarray] = None              # last segmentation-preview median
+        self._seg_auto: Optional[np.ndarray] = None                # last auto sky mask (for watershed seeds)
         self.result_image: Optional[np.ndarray] = None
         self.worker: Optional[CallableWorker] = None
         self.dials: Dict[str, FloatSlider] = {}
@@ -122,6 +126,30 @@ class LazyStackPanel(QWidget):
         self.ns_preview_btn = QPushButton("Preview segmentation")
         self.ns_preview_btn.clicked.connect(self._preview_segmentation)
         nv.addWidget(self.ns_preview_btn)
+        # paint tools (rough scribbles → watershed snaps to the horizon)
+        paintrow = QHBoxLayout()
+        self.paint_group = QButtonGroup(self)
+        self.paint_btns: Dict[object, QPushButton] = {}
+        for mode, label in ((None, "Pan"), ("sky", "Paint Sky"), ("earth", "Paint Earth"), ("erase", "Erase")):
+            b = QPushButton(label)
+            b.setCheckable(True)
+            b.clicked.connect(lambda _=False, m=mode: self.preview.set_paint_mode(m))
+            self.paint_group.addButton(b)
+            paintrow.addWidget(b)
+            self.paint_btns[mode] = b
+        self.paint_btns[None].setChecked(True)
+        nv.addLayout(paintrow)
+        self.brush_slider = FloatSlider("Brush size", 4, 60, 14, decimals=0)
+        self.brush_slider.valueChanged.connect(lambda v: self.preview.set_brush(int(v)))
+        nv.addWidget(self.brush_slider)
+        applyrow = QHBoxLayout()
+        self.paint_apply_btn = QPushButton("Apply paint")
+        self.paint_clear_btn = QPushButton("Clear paint")
+        self.paint_apply_btn.clicked.connect(self._apply_paint)
+        self.paint_clear_btn.clicked.connect(self._clear_paint)
+        applyrow.addWidget(self.paint_apply_btn)
+        applyrow.addWidget(self.paint_clear_btn)
+        nv.addLayout(applyrow)
         ns_note = QLabel("Fixed-tripod MW + landscape. Registers on sky stars only; the sharp "
                          "foreground (or your own image) is composited over the deep sky in LazyStretch. "
                          "Preview shows the sky/foreground split — adjust the bias to refine.")
@@ -184,7 +212,33 @@ class LazyStackPanel(QWidget):
         p.nightscape = self.ns_check.isChecked()
         p.nightscape_foreground = self._nightscape_fg_path or ""
         p.nightscape_bias = float(self.ns_bias.value())
+        p.nightscape_mask_override = self._nightscape_manual_mask   # painted mask wins over auto (or None)
         return p
+
+    def _apply_paint(self):
+        if self._seg_median is None:
+            self.status_label.setText("Run Preview segmentation first, then paint and Apply.")
+            return
+        scr = self.preview.scribbles()
+        if scr is None or not np.any(scr):
+            self.status_label.setText("Paint some Sky and Earth strokes on the preview first.")
+            return
+        from ..lazystack import nightscape as ns
+        mask = ns.refine_mask(self._seg_median, scr, auto_mask=self._seg_auto)
+        self._nightscape_manual_mask = np.asarray(mask, dtype=np.float32)
+        self.ns_check.setChecked(True)
+        med = self._seg_median
+        base = np.clip(np.arcsinh(np.clip(med, 0, 1) * 25.0) / np.arcsinh(25.0) * 1.3, 0, 1)
+        ov = np.stack([base] * 3, axis=-1)
+        ov[..., 0] = np.clip(ov[..., 0] + (1.0 - mask) * 0.4, 0, 1)
+        self.preview.set_image(ov, keep_view=True)               # show refined mask, keep strokes + view
+        self.status_label.setText(f"Painted mask applied (foreground {100 * (1 - mask.mean()):.0f}%). "
+                                  "Stack to use it.")
+
+    def _clear_paint(self):
+        self.preview.clear_scribbles()
+        self._nightscape_manual_mask = None
+        self.status_label.setText("Paint cleared — auto/bias segmentation will be used.")
 
     def _on_nightscape_toggled(self, on: bool):
         # A moonlit star can look like a static hot pixel, and there are rarely darks/flats — so
@@ -222,16 +276,19 @@ class LazyStackPanel(QWidget):
             sample = lights[::step][:8]
             log(f"Segmenting from {len(sample)} sampled frames (bias {bias:+.2f})…")
             cube = np.stack([np.asarray(load_image(p).data, dtype=np.float32)[::6, ::6] for p in sample])
-            ufg = (np.asarray(load_image(fg_path).data, dtype=np.float32)[::6, ::6]
-                   if fg_path else None)
-            _, mask, info = ns.plan(cube, cube.shape[1:3], user_fg_small=ufg, bias=bias)
-            med = np.median(cube.mean(3), axis=0)
+            if fg_path:                                          # Mode 2: segment (and paint on) the user foreground
+                ufg = np.asarray(load_image(fg_path).data, dtype=np.float32)[::6, ::6]
+                mask, info = ns.segment_sky(ufg, bias=bias)
+                med = ufg.mean(2) if ufg.ndim == 3 else ufg
+            else:
+                mask, info = ns.segment_sky(cube, bias=bias)
+                med = np.median(cube.mean(3), axis=0)
             base = np.clip(np.arcsinh(np.clip(med, 0, 1) * 25.0) / np.arcsinh(25.0) * 1.3, 0, 1)
             ov = np.stack([base] * 3, axis=-1)
             ov[..., 0] = np.clip(ov[..., 0] + (1.0 - mask) * 0.4, 0, 1)   # red-tint the foreground
             log(f"Sky/foreground split: {info['axis']} horizon, sky on the {info['sky_side']}, "
                 f"foreground {100 * info['foreground_fraction']:.0f}%.")
-            return {"image": ov, "segmentation_preview": True}
+            return {"image": ov, "segmentation_preview": True, "median": med, "auto_mask": mask}
 
         self._start(fn, "segment")
 
@@ -315,9 +372,12 @@ class LazyStackPanel(QWidget):
             self.status_label.setText("Advisor done — see the log.")
             return
         if result.get("segmentation_preview"):
+            self._seg_median = np.asarray(result["median"], dtype=np.float32)
+            self._seg_auto = np.asarray(result["auto_mask"], dtype=np.float32)
+            self._nightscape_manual_mask = None      # a fresh segmentation clears any prior paint
             self.preview.set_image(np.asarray(result["image"], dtype=np.float64), keep_view=False)
-            self.status_label.setText("Segmentation preview (red = foreground). Adjust the bias and "
-                                      "re-preview, or Stack.")
+            self.status_label.setText("Segmentation preview (red = foreground). Paint Sky/Earth to "
+                                      "refine, then Apply — or adjust the bias and re-preview.")
             return
         img = result.get("image")
         if img is None:

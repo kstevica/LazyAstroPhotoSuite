@@ -329,7 +329,8 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
                              if user_fg is not None else None)
             best, sky_mask, ns_info = nsmod.plan(
                 small, full_shape, user_fg_small=user_fg_small,
-                bias=float(getattr(params, "nightscape_bias", 0.0)))
+                bias=float(getattr(params, "nightscape_bias", 0.0)),
+                override_small=getattr(params, "nightscape_mask_override", None))
             if user_fg is not None:                          # Mode 2: user supplies the foreground
                 fg_layer, fg_source, mode = np.asarray(user_fg, dtype=np.float32), Path(user_fg_path).name, "user"
             else:                                            # Mode 1: sharpest frame is the foreground + reference

@@ -223,6 +223,50 @@ def _resize_mask(mask: np.ndarray, shape) -> np.ndarray:
     return np.clip(out, 0.0, 1.0)
 
 
+def refine_mask(median: np.ndarray, scribbles: np.ndarray, *,
+                auto_mask: Optional[np.ndarray] = None, feather: Optional[float] = None
+                ) -> np.ndarray:
+    """Scribble-guided sky mask via watershed — a few rough strokes snap to the horizon edge.
+
+    ``scribbles``: +1 where the user painted SKY, −1 where they painted EARTH/foreground, 0 elsewhere.
+    Confident regions of ``auto_mask`` seed the classes the user didn't paint, so a couple of casual
+    strokes suffice. A watershed on the image's edge-relief floods each label until they meet, so the
+    boundary lands on the horizon ridge rather than the stroke edges. Returns a feathered sky mask
+    (1 = sky). Falls back to ``auto_mask`` if only one class can be seeded.
+    """
+    from skimage.segmentation import watershed
+    L = np.clip(_median_luma(median), 0.0, 1.0)
+    H, W = L.shape
+    scr = np.asarray(scribbles)
+    relief = _structure(np.log1p(L * 50.0), 2.0)          # high on the horizon ridge (watershed dam)
+
+    # Scribbles are AUTHORITATIVE: seed from the auto mask ONLY for a class the user didn't paint
+    # (so a globally-wrong auto orientation is fully overridden when both classes are painted — the
+    # case where painting matters most). Dense auto seeds would otherwise confine the strokes locally.
+    has_sky, has_earth = bool((scr > 0).any()), bool((scr < 0).any())
+    markers = np.zeros((H, W), dtype=np.int32)
+    if auto_mask is not None:
+        am = (_resize_mask(np.asarray(auto_mask, dtype=np.float64), (H, W))
+              if auto_mask.shape[:2] != (H, W) else np.asarray(auto_mask, dtype=np.float64))
+        if not has_sky:
+            markers[am > 0.85] = 1                        # seed sky from auto only if unpainted
+        if not has_earth:
+            markers[am < 0.15] = 2                        # seed foreground from auto only if unpainted
+    markers[scr > 0] = 1                                  # user SKY strokes win
+    markers[scr < 0] = 2                                  # user EARTH strokes win
+
+    if not (markers == 1).any() or not (markers == 2).any():
+        if auto_mask is not None:                         # can't seed both classes → keep auto
+            return _resize_mask(np.asarray(auto_mask, dtype=np.float64), (H, W))
+        return (markers == 1).astype(np.float64)          # degenerate: whatever was seeded
+
+    labels = watershed(relief, markers)
+    sky = (labels == 1).astype(np.float64)
+    from scipy.ndimage import gaussian_filter
+    fp = feather if feather is not None else max(2.0, 0.006 * max(H, W))
+    return np.clip(gaussian_filter(sky, fp), 0.0, 1.0)
+
+
 def match_shape(arr: np.ndarray, shape) -> np.ndarray:
     """Resize a mono/RGB array to ``shape`` (H, W) — used to align a Mode-2 foreground/mask."""
     a = np.asarray(arr, dtype=np.float64)
@@ -234,20 +278,26 @@ def match_shape(arr: np.ndarray, shape) -> np.ndarray:
 
 
 def plan(small_cube: np.ndarray, full_shape, *, user_fg_small: Optional[np.ndarray] = None,
-         bias: float = 0.0) -> Tuple[Optional[int], np.ndarray, dict]:
+         bias: float = 0.0, override_small: Optional[np.ndarray] = None
+         ) -> Tuple[Optional[int], np.ndarray, dict]:
     """Plan a nightscape stack from a downsampled cube (bounded memory; the caller has the full res).
 
-    Returns ``(best_local_index, sky_mask_full, info)``. In Mode 1 (auto) the mask comes from the
-    stack and ``best_local_index`` is the sharpest-foreground frame (index into the cube). In Mode 2
-    the mask comes from ``user_fg_small`` (the user's foreground, downsampled) and the index is None
-    (the caller supplies the foreground). The mask is upsampled to ``full_shape`` for registration.
+    Returns ``(best_local_index, sky_mask_full, info)``. The mask comes from, in priority order: a
+    user-painted ``override_small`` (a refined mask from the paint tool), else the segmentation of a
+    Mode-2 ``user_fg_small`` foreground, else the auto segmentation of the stack. ``best_local_index``
+    is the sharpest-foreground frame (Mode 1) or None when the caller supplies the foreground
+    (Mode 2). The mask is upsampled to ``full_shape`` for registration.
     """
-    if user_fg_small is not None:
+    if override_small is not None:
+        sky_small = _resize_mask(np.asarray(override_small, dtype=np.float64), small_cube.shape[1:3])
+        info = {"axis": "manual", "sky_side": "painted", "horizon_strength": 0.0,
+                "foreground_fraction": float(1.0 - sky_small.mean())}
+    elif user_fg_small is not None:
         sky_small, info = segment_sky(user_fg_small, bias=bias)
-        best = None
     else:
         sky_small, info = segment_sky(small_cube, bias=bias)
-        best, _ = pick_foreground([small_cube[j] for j in range(len(small_cube))], 1.0 - sky_small)
+    best = (None if user_fg_small is not None else
+            pick_foreground([small_cube[j] for j in range(len(small_cube))], 1.0 - sky_small)[0])
     return best, _resize_mask(sky_small, full_shape), info
 
 

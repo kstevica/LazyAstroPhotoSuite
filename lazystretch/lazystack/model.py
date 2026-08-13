@@ -32,3 +32,4 @@ class LazyStackParams:
     nightscape: bool = False       # nightscape mode: sky-only registration + foreground companion
     nightscape_foreground: str = ""  # Mode 2: path to a user foreground image (else auto-pick sharpest)
     nightscape_bias: float = 0.0   # sky/foreground boundary refinement (−1..1; >0 = more sky)
+    nightscape_mask_override: Optional["np.ndarray"] = None  # painted sky mask (preview-res); wins over auto
