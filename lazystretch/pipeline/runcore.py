@@ -632,8 +632,11 @@ def run_pipeline(
             from ..processes import nightscape as _ns
             b = float(ledger.record("Nightscape", "foreground brightness",
                                     getattr(params, "nightscapeBrightness", 0.5)))
-            ctx["img"] = _ns.composite(ctx["img"], ctx["nightscape_fg"], ctx["nightscape_mask"], b)
-            _log(f"   nightscape: foreground composited (brightness {b:.2f})")
+            dev = bool(getattr(params, "developForeground", True))
+            ctx["img"] = _ns.composite(ctx["img"], ctx["nightscape_fg"], ctx["nightscape_mask"], b,
+                                       develop=dev)
+            _log(f"   nightscape: foreground composited (brightness {b:.2f}"
+                 f"{'' if dev else ', not developed — used as-is'})")
         add("Composite nightscape foreground", _nightscape)
 
     # --- run the steps, isolated, continue-on-error (js:3465-3480) ---

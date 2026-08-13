@@ -45,20 +45,35 @@ def develop_foreground(layer: np.ndarray, brightness: float = 0.5) -> np.ndarray
 
 
 def composite(sky_img: np.ndarray, fg_layer: np.ndarray, sky_mask: np.ndarray,
-              brightness: float = 0.5) -> np.ndarray:
-    """Composite the developed foreground into the foreground region of the (stretched) sky image.
+              brightness: float = 0.5, *, develop: bool = True, feather_frac: float = 0.004
+              ) -> np.ndarray:
+    """Composite the foreground into the foreground region of the (stretched) sky image.
 
-    ``sky_img`` is the finished sky (Milky Way); ``fg_layer`` the linear foreground; ``sky_mask`` the
-    feathered 1=sky/0=foreground weight. Returns ``mask·sky + (1−mask)·developed_foreground``.
+    ``sky_img`` is the finished sky (Milky Way); ``fg_layer`` the foreground; ``sky_mask`` the feathered
+    1=sky/0=foreground weight. Returns ``mask·sky + (1−mask)·foreground``.
+
+    ``develop`` (default True) renders the foreground with :func:`develop_foreground` (for a LINEAR
+    raw layer); set it False when the supplied foreground is ALREADY developed (e.g. a finished JPEG in
+    Mode 2) so it is used as-is. ``feather_frac`` softens the mask edge by a Gaussian of that fraction
+    of the frame's long edge, so the horizon seam has a smooth falloff instead of a hard/stair-stepped
+    boundary (0 disables).
     """
     sky = np.clip(np.asarray(sky_img, dtype=np.float64), 0.0, 1.0)
     if sky.ndim == 2:
         sky = np.stack([sky] * 3, axis=-1)
-    fg = develop_foreground(fg_layer, brightness)
+    if develop:
+        fg = develop_foreground(fg_layer, brightness)
+    else:                                            # already-developed foreground → use as-is
+        fg = np.clip(np.asarray(fg_layer, dtype=np.float64), 0.0, 1.0)
+        if fg.ndim == 2:
+            fg = np.stack([fg] * 3, axis=-1)
     if fg.shape[:2] != sky.shape[:2]:
         return sky                                   # shape mismatch → leave sky untouched (safe no-op)
     m = np.clip(np.asarray(sky_mask, dtype=np.float64), 0.0, 1.0)
     if m.shape[:2] != sky.shape[:2]:
         return sky
+    if feather_frac and feather_frac > 0:            # smooth the seam at the working resolution
+        from scipy.ndimage import gaussian_filter
+        m = np.clip(gaussian_filter(m, float(feather_frac) * max(m.shape[:2])), 0.0, 1.0)
     m = m[..., None]
     return np.clip(m * sky + (1.0 - m) * fg, 0.0, 1.0)

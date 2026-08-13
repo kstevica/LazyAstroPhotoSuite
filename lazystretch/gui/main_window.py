@@ -82,6 +82,7 @@ _OPTIONS = [
     ("protectCores", "Protect bright cores"),
     ("enhanceEmission", "Enhance emission (Ha)"),
     ("reduceCast", "Reduce background color cast"),
+    ("developForeground", "Develop nightscape foreground (off = already developed)"),
     ("inputStretched", "Input already stretched (polish only)"),
     ("debugBackground", "Show estimated background (debug: saves the model)"),
 ]

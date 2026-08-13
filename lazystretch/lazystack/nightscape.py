@@ -263,7 +263,7 @@ def refine_mask(median: np.ndarray, scribbles: np.ndarray, *,
     labels = watershed(relief, markers)
     sky = (labels == 1).astype(np.float64)
     from scipy.ndimage import gaussian_filter
-    fp = feather if feather is not None else max(2.0, 0.006 * max(H, W))
+    fp = feather if feather is not None else max(3.0, 0.012 * max(H, W))   # wider → smoother seam falloff
     return np.clip(gaussian_filter(sky, fp), 0.0, 1.0)
 
 

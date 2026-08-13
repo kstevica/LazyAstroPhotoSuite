@@ -114,6 +114,36 @@ def test_composite_blends_foreground_over_sky():
     assert out.shape == sky.shape
 
 
+def test_composite_no_develop_uses_foreground_asis():
+    from lazystretch.processes import nightscape as nsc
+    sky = np.full((40, 50, 3), 0.4)
+    fg = np.full((40, 50, 3), 0.25)
+    mask = np.zeros((40, 50))                          # all foreground
+    asis = nsc.composite(sky, fg, mask, develop=False, feather_frac=0.0)
+    assert np.allclose(asis, 0.25, atol=1e-6)          # already-developed foreground used verbatim
+    dev = nsc.composite(sky, fg, mask, develop=True, feather_frac=0.0)
+    assert not np.allclose(dev, 0.25)                  # develop=True changes it
+
+
+def test_composite_feather_widens_the_seam():
+    from lazystretch.processes import nightscape as nsc
+    sky = np.full((80, 80, 3), 0.9)
+    fg = np.zeros((80, 80, 3))
+    mask = np.zeros((80, 80))
+    mask[:, :40] = 1.0                                 # sharp sky/foreground split
+    hard = nsc.composite(sky, fg, mask, develop=False, feather_frac=0.0)
+    soft = nsc.composite(sky, fg, mask, develop=False, feather_frac=0.06)
+    def transition(o):
+        v = o[40, :, 0]
+        return int(((v > 0.1) & (v < 0.8)).sum())      # partial-blend pixels along the seam
+    assert transition(soft) > transition(hard)
+
+
+def test_develop_foreground_default_true_and_recipe():
+    from lazystretch.objects.model import Parameters
+    assert Parameters().developForeground is True
+
+
 def test_composite_shape_mismatch_is_safe_noop():
     from lazystretch.processes import nightscape as nsc
     sky = np.full((40, 50, 3), 0.4)

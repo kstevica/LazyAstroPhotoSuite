@@ -106,6 +106,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--no-hdr", dest="hdr", action="store_false")
     p.add_argument("--reduce-cast", action="store_true")
     p.add_argument("--enhance-emission", action="store_true")
+    p.add_argument("--no-develop-foreground", action="store_true",
+                   help="nightscape: composite the foreground as-is (it's already developed)")
     p.add_argument("--dark-lane", action="store_true", help="dark-lane gradient model (no-empty-sky fields)")
     p.add_argument("--remove-stars", action="store_true", help="full star removal (starless + <out>_stars)")
     p.add_argument("--no-preset", action="store_true", help="don't apply the curated recipe on --identify")
@@ -174,6 +176,8 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
         p.reduceCast = True
     if args.enhance_emission:
         p.enhanceEmission = True
+    if args.no_develop_foreground:
+        p.developForeground = False
     if args.dark_lane:
         p.darkLaneGC = True
     if args.remove_stars:
