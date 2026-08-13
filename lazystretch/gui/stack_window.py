@@ -150,6 +150,10 @@ class LazyStackPanel(QWidget):
         applyrow.addWidget(self.paint_apply_btn)
         applyrow.addWidget(self.paint_clear_btn)
         nv.addLayout(applyrow)
+        self.ns_mask_status = QLabel("Mask: auto — adjust with the bias slider, or paint to refine")
+        self.ns_mask_status.setStyleSheet("color: gray;")
+        self.ns_mask_status.setWordWrap(True)
+        nv.addWidget(self.ns_mask_status)
         ns_note = QLabel("Fixed-tripod MW + landscape. Registers on sky stars only; the sharp "
                          "foreground (or your own image) is composited over the deep sky in LazyStretch. "
                          "Preview shows the sky/foreground split — adjust the bias to refine.")
@@ -232,12 +236,16 @@ class LazyStackPanel(QWidget):
         ov = np.stack([base] * 3, axis=-1)
         ov[..., 0] = np.clip(ov[..., 0] + (1.0 - mask) * 0.4, 0, 1)
         self.preview.set_image(ov, keep_view=True)               # show refined mask, keep strokes + view
-        self.status_label.setText(f"Painted mask applied (foreground {100 * (1 - mask.mean()):.0f}%). "
-                                  "Stack to use it.")
+        fg = 100 * (1 - float(mask.mean()))
+        self.ns_mask_status.setText(f"✓ Mask: PAINTED — will be used for the stack (foreground {fg:.0f}%)")
+        self.ns_mask_status.setStyleSheet("color: #1b8a3a; font-weight: bold;")
+        self.status_label.setText(f"Painted mask applied (foreground {fg:.0f}%). Stack to use it.")
 
     def _clear_paint(self):
         self.preview.clear_scribbles()
         self._nightscape_manual_mask = None
+        self.ns_mask_status.setText("Mask: auto — adjust with the bias slider, or paint to refine")
+        self.ns_mask_status.setStyleSheet("color: gray;")
         self.status_label.setText("Paint cleared — auto/bias segmentation will be used.")
 
     def _on_nightscape_toggled(self, on: bool):
@@ -375,6 +383,8 @@ class LazyStackPanel(QWidget):
             self._seg_median = np.asarray(result["median"], dtype=np.float32)
             self._seg_auto = np.asarray(result["auto_mask"], dtype=np.float32)
             self._nightscape_manual_mask = None      # a fresh segmentation clears any prior paint
+            self.ns_mask_status.setText("Mask: auto — adjust with the bias slider, or paint to refine")
+            self.ns_mask_status.setStyleSheet("color: gray;")
             self.preview.set_image(np.asarray(result["image"], dtype=np.float64), keep_view=False)
             self.status_label.setText("Segmentation preview (red = foreground). Paint Sky/Earth to "
                                       "refine, then Apply — or adjust the bias and re-preview.")
