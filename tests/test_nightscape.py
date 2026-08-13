@@ -1,5 +1,6 @@
 """Nightscape sky/foreground segmentation (lazystack/nightscape.py)."""
 import numpy as np
+import pytest
 
 from lazystretch.lazystack import nightscape as ns
 
@@ -59,3 +60,42 @@ def test_foreground_sharpness_prefers_sharper():
     from scipy.ndimage import gaussian_filter
     blurred = gaussian_filter(img, 2.0)
     assert ns.foreground_sharpness(img, fg) > ns.foreground_sharpness(blurred, fg)
+
+
+def _star_sky(N=8, H=170, W=210, seed=0):
+    """A star-rich sky (left) + structured foreground (right), N frames, independent noise."""
+    yy, xx = np.mgrid[0:H, 0:W]
+    rng0 = np.random.default_rng(seed)
+    pos = [(rng0.integers(10, H - 10), rng0.integers(10, int(W * 0.6))) for _ in range(45)]
+    frames = []
+    for i in range(N):
+        img = np.full((H, W), 0.04)
+        for (y, x) in pos:
+            img += 0.9 * np.exp(-(((xx - x) / 1.4) ** 2 + ((yy - y) / 1.4) ** 2))
+        img[:, int(W * 0.72):] = 0.3 + 0.05 * np.sin(yy[:, int(W * 0.72):] / 3.0)   # foreground
+        img = img + np.random.default_rng(seed + 1 + i).normal(0, 0.03, (H, W))
+        frames.append(np.clip(np.stack([img] * 3, axis=-1), 0, 1))
+    return frames
+
+
+def test_pick_foreground_returns_sharpest_index():
+    frames = _star_sky(N=5)
+    from scipy.ndimage import gaussian_filter
+    frames[2] = np.clip(gaussian_filter(frames[2], (2, 2, 0)), 0, 1)   # blur frame 2's foreground
+    mask, _ = ns.segment_sky(frames[0])
+    best, scores = ns.pick_foreground(frames, 1 - mask)
+    assert best != 2 and len(scores) == 5                              # not the blurred one
+
+
+def test_build_sky_master_denoises_and_keeps_shape():
+    pytest.importorskip("astroalign")
+    frames = _star_sky(N=8)
+    mask, info = ns.segment_sky(frames[0])
+    sky, kept = ns.build_sky_master(frames, mask, reference=0)
+    assert sky.shape == frames[0].shape and len(kept) >= 6 and np.isfinite(sky).all()
+    from scipy.ndimage import gaussian_filter
+    reg = (slice(55, 115), slice(20, 75))
+    def hf(im):                                                        # robust high-freq noise (star-safe)
+        L = im.mean(2)[reg]
+        return float(np.median(np.abs(L - gaussian_filter(L, 3))))
+    assert hf(sky) < 0.8 * hf(frames[0])                              # stacking reduced the noise

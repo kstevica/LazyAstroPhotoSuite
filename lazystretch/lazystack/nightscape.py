@@ -115,6 +115,82 @@ def segment_sky(stack: np.ndarray, *, bias: float = 0.0, feather: Optional[float
     return np.clip(sky_mask, 0.0, 1.0), info
 
 
+def _noop(_m: str) -> None:
+    pass
+
+
+def _apply_transform_full(T, frame: np.ndarray, ref: np.ndarray) -> np.ndarray:
+    """Apply an astroalign transform to a full (mono/RGB) frame; mark no-data border as NaN."""
+    import astroalign
+    if frame.ndim == 3:
+        chans, footprint = [], None
+        for c in range(frame.shape[2]):
+            reg_c, footprint = astroalign.apply_transform(T, frame[..., c], ref[..., c])
+            chans.append(reg_c)
+        out = np.stack(chans, axis=-1)
+        out[np.broadcast_to(footprint[..., None], out.shape)] = np.nan
+    else:
+        out, footprint = astroalign.apply_transform(T, frame, ref)
+        out = np.asarray(out, dtype=np.float64)
+        out[footprint] = np.nan
+    return out
+
+
+def register_sky(frames, reference: int, sky_mask: np.ndarray, *, log=_noop):
+    """Register every frame to ``frames[reference]`` on SKY STARS ONLY.
+
+    The foreground is replaced by the sky-median before source detection, so astroalign matches
+    sky asterisms and is not confused by the bright static land (the cause of whole-frame
+    registration failing on nightscapes). The transform is then applied to the FULL frame — the
+    sky lines up (stars stack); the static foreground shifts by the small sky drift and is smeared
+    in the resulting stack, but that region is discarded (the sharp foreground comes from one
+    frame). Returns ``(aligned_frames, kept_indices)``.
+    """
+    import astroalign
+    ref = np.asarray(frames[reference], dtype=np.float64)
+    fg = np.asarray(sky_mask) < 0.5
+
+    def masked_luma(im):
+        L = _luminance(np.asarray(im, dtype=np.float64)).copy()
+        L[fg] = float(np.median(L[~fg])) if np.any(~fg) else 0.0   # blank the land
+        return L
+
+    ref_ml = masked_luma(ref)
+    aligned, kept = [], []
+    for i, f in enumerate(frames):
+        f = np.asarray(f, dtype=np.float64)
+        if i == reference:
+            aligned.append(f)
+            kept.append(i)
+            continue
+        try:
+            T, _ = astroalign.find_transform(masked_luma(f), ref_ml)
+            aligned.append(_apply_transform_full(T, f, ref))
+            kept.append(i)
+        except Exception as e:                       # a frame that won't match is dropped, not fatal
+            log(f"  nightscape: frame {i} sky-registration failed ({e}) — dropped")
+    return aligned, kept
+
+
+def pick_foreground(frames, fg_mask: np.ndarray):
+    """Return ``(best_index, scores)`` — the frame whose foreground is sharpest (single frame)."""
+    scores = [foreground_sharpness(f, fg_mask) for f in frames]
+    return int(np.argmax(scores)), scores
+
+
+def build_sky_master(frames, sky_mask: np.ndarray, reference: int, *, log=_noop):
+    """Sky-only-register the frames to ``reference`` and sigma-clip integrate → deep sky master.
+
+    Returns the linear deep-sky master in the reference's coordinates (sky sharp; the foreground
+    region is smeared and meant to be replaced by the picked foreground frame at composite time).
+    """
+    from . import integrate as _integ
+    aligned, kept = register_sky(frames, reference, sky_mask, log=log)
+    log(f"  nightscape: sky-registered {len(kept)}/{len(frames)} frames; integrating deep sky…")
+    master = _integ.integrate(aligned)
+    return np.clip(np.nan_to_num(master, nan=0.0), 0.0, 1.0), kept
+
+
 def foreground_sharpness(frame: np.ndarray, fg_mask: np.ndarray) -> float:
     """Focus score of a frame's foreground region (Laplacian energy) — higher = sharper.
 
