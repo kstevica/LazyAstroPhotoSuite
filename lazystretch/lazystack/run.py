@@ -442,33 +442,19 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         return {"idx": idx, "handle": np.asarray(aligned, dtype=np.float32),
                 "name": names[idx], "path": paths[idx], "w": w}
 
-    rworkers = _decode_workers(params, len(keep))
+    # Registration runs SERIALLY (not pooled): astroalign's RANSAC draws from numpy's GLOBAL RNG,
+    # which parallel threads would race on — giving slightly different (still valid) transforms and a
+    # non-reproducible master. It's cheap next to the decode, so serial keeps the result deterministic.
     reg_results: Dict[int, dict] = {}
-    if rworkers > 1:
-        from concurrent.futures import ThreadPoolExecutor, as_completed
-        log(f"  registering with {rworkers} parallel workers…")
-        with ThreadPoolExecutor(max_workers=rworkers) as ex:
-            futs = {ex.submit(_do_register, idx): idx for idx in keep}
-            done = 0
-            for fut in as_completed(futs):
-                r = fut.result()
-                done += 1
-                if r.get("error"):
-                    log(f"  [{done}/{len(keep)}] {names[r['idx']]}: dropped ({r['error']})")
-                else:
-                    reg_results[r["idx"]] = r
-                    log(f"  [{done}/{len(keep)}] {r['name']}: "
-                        + ("reusing cached registration ✓" if r.get("cached") else "registered ✓"))
-    else:
-        for j, idx in enumerate(keep):
-            log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
-            r = _do_register(idx)
-            if r.get("error"):
-                log(f"    dropped ({r['error']})")
-            else:
-                if r.get("cached"):
-                    log("    reusing cached registration")
-                reg_results[idx] = r
+    for j, idx in enumerate(keep):
+        log(f"  [{j + 1}/{len(keep)}] {names[idx]}: registering…")
+        r = _do_register(idx)
+        if r.get("error"):
+            log(f"    dropped ({r['error']})")
+        else:
+            if r.get("cached"):
+                log("    reusing cached registration")
+            reg_results[idx] = r
     for idx in keep:                                     # collect in keep order (weights ↔ handles)
         r = reg_results.get(idx)
         if r is None:
