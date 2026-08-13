@@ -60,6 +60,7 @@ class LazyStackPanel(QWidget):
         super().__init__()
         self.setWindowTitle("LazyStack")
         self._folder: Optional[str] = None
+        self._nightscape_fg_path: Optional[str] = None
         self.result_image: Optional[np.ndarray] = None
         self.worker: Optional[CallableWorker] = None
         self.dials: Dict[str, FloatSlider] = {}
@@ -101,6 +102,33 @@ class LazyStackPanel(QWidget):
             self.dials[attr] = fs
             ov.addWidget(fs)
         col.addWidget(g_opt)
+
+        # --- Nightscape (foreground-locked Milky Way) ---
+        g_ns = QGroupBox("Nightscape (foreground-locked MW)")
+        nv = QVBoxLayout(g_ns)
+        self.ns_check = QCheckBox("Nightscape mode — stack the sky, keep a sharp foreground")
+        self.ns_check.toggled.connect(self._on_nightscape_toggled)
+        nv.addWidget(self.ns_check)
+        fgrow = QHBoxLayout()
+        self.ns_fg_btn = QPushButton("Foreground image…")
+        self.ns_fg_btn.clicked.connect(self._choose_foreground)
+        self.ns_fg_label = QLabel("auto: sharpest frame")
+        self.ns_fg_label.setStyleSheet("color: gray;")
+        fgrow.addWidget(self.ns_fg_btn)
+        fgrow.addWidget(self.ns_fg_label, 1)
+        nv.addLayout(fgrow)
+        self.ns_bias = FloatSlider("Sky ↔ foreground bias", -0.30, 0.30, 0.0, decimals=2)
+        nv.addWidget(self.ns_bias)
+        self.ns_preview_btn = QPushButton("Preview segmentation")
+        self.ns_preview_btn.clicked.connect(self._preview_segmentation)
+        nv.addWidget(self.ns_preview_btn)
+        ns_note = QLabel("Fixed-tripod MW + landscape. Registers on sky stars only; the sharp "
+                         "foreground (or your own image) is composited over the deep sky in LazyStretch. "
+                         "Preview shows the sky/foreground split — adjust the bias to refine.")
+        ns_note.setWordWrap(True)
+        ns_note.setStyleSheet("color: gray; font-size: 11px;")
+        nv.addWidget(ns_note)
+        col.addWidget(g_ns)
 
         note = QLabel("Registration uses astroalign when installed (rotation-aware); "
                       "otherwise a translation-only fallback. For full fidelity: "
@@ -153,7 +181,59 @@ class LazyStackPanel(QWidget):
             setattr(p, attr, fs.value())
         for attr, cb in self.checks.items():
             setattr(p, attr, cb.isChecked())
+        p.nightscape = self.ns_check.isChecked()
+        p.nightscape_foreground = self._nightscape_fg_path or ""
+        p.nightscape_bias = float(self.ns_bias.value())
         return p
+
+    def _on_nightscape_toggled(self, on: bool):
+        # A moonlit star can look like a static hot pixel, and there are rarely darks/flats — so
+        # calibration/cosmetic/walking-noise are off by default for a nightscape (re-enable if wanted).
+        if on:
+            for attr in ("do_calibrate", "do_cosmetic", "fix_walking_noise"):
+                if attr in self.checks:
+                    self.checks[attr].setChecked(False)
+            self.status_label.setText("Nightscape mode on — Preview segmentation, then Stack.")
+
+    def _choose_foreground(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Choose foreground image (optional)", self._folder or "",
+            "Images (*.fits *.fit *.tif *.tiff *.png *.jpg *.jpeg *.raf *.cr2 *.cr3 *.nef *.arw *.dng)")
+        if path:
+            self._nightscape_fg_path = path
+            self.ns_fg_label.setText(f"user: {Path(path).name}")
+            self.ns_fg_label.setStyleSheet("")
+            self.ns_check.setChecked(True)
+
+    def _preview_segmentation(self):
+        if self._folder is None:
+            self.status_label.setText("Pick a dataset folder first.")
+            return
+        folder, bias, fg_path = self._folder, float(self.ns_bias.value()), self._nightscape_fg_path
+
+        def fn(log, _p):
+            from ..io.image_io import load_image
+            from ..lazystack import nightscape as ns
+            lights = lsrun.find_sets(folder)["lights"]
+            if len(lights) < 2:
+                log("Need at least 2 lights to segment.")
+                return None
+            step = max(1, len(lights) // 6)
+            sample = lights[::step][:8]
+            log(f"Segmenting from {len(sample)} sampled frames (bias {bias:+.2f})…")
+            cube = np.stack([np.asarray(load_image(p).data, dtype=np.float32)[::6, ::6] for p in sample])
+            ufg = (np.asarray(load_image(fg_path).data, dtype=np.float32)[::6, ::6]
+                   if fg_path else None)
+            _, mask, info = ns.plan(cube, cube.shape[1:3], user_fg_small=ufg, bias=bias)
+            med = np.median(cube.mean(3), axis=0)
+            base = np.clip(np.arcsinh(np.clip(med, 0, 1) * 25.0) / np.arcsinh(25.0) * 1.3, 0, 1)
+            ov = np.stack([base] * 3, axis=-1)
+            ov[..., 0] = np.clip(ov[..., 0] + (1.0 - mask) * 0.4, 0, 1)   # red-tint the foreground
+            log(f"Sky/foreground split: {info['axis']} horizon, sky on the {info['sky_side']}, "
+                f"foreground {100 * info['foreground_fraction']:.0f}%.")
+            return {"image": ov, "segmentation_preview": True}
+
+        self._start(fn, "segment")
 
     def _apply_params(self, p: LazyStackParams):
         for attr, fs in self.dials.items():
@@ -234,6 +314,11 @@ class LazyStackPanel(QWidget):
         if result.get("measure_only"):
             self.status_label.setText("Advisor done — see the log.")
             return
+        if result.get("segmentation_preview"):
+            self.preview.set_image(np.asarray(result["image"], dtype=np.float64), keep_view=False)
+            self.status_label.setText("Segmentation preview (red = foreground). Adjust the bias and "
+                                      "re-preview, or Stack.")
+            return
         img = result.get("image")
         if img is None:
             self.status_label.setText("Done — no master produced (see the log).")
@@ -255,7 +340,7 @@ class LazyStackPanel(QWidget):
         QMessageBox.critical(self, "LazyStack error", msg)
 
     def _set_busy(self, busy: bool):
-        for b in (self.measure_btn, self.stack_btn):
+        for b in (self.measure_btn, self.stack_btn, self.ns_preview_btn):
             b.setEnabled(not busy)
 
     def _save_result(self):
