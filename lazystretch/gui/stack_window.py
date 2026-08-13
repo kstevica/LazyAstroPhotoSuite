@@ -266,18 +266,18 @@ class LazyStackPanel(QWidget):
         folder, bias, fg_path = self._folder, float(self.ns_bias.value()), self._nightscape_fg_path
 
         def fn(log, _p):
-            from ..io.image_io import load_image
+            from ..io.image_io import load_preview
             from ..lazystack import nightscape as ns
             lights = lsrun.find_sets(folder)["lights"]
             if len(lights) < 2:
                 log("Need at least 2 lights to segment.")
                 return None
-            step = max(1, len(lights) // 6)
-            sample = lights[::step][:8]
-            log(f"Segmenting from {len(sample)} sampled frames (bias {bias:+.2f})…")
-            cube = np.stack([np.asarray(load_image(p).data, dtype=np.float32)[::6, ::6] for p in sample])
+            step = max(1, len(lights) // 4)
+            sample = lights[::step][:4]                           # a few frames suffice for the horizon
+            log(f"Segmenting from {len(sample)} half-size frames (bias {bias:+.2f})…")
+            cube = np.stack([np.asarray(load_preview(p, max_dim=1000), dtype=np.float32) for p in sample])
             if fg_path:                                          # Mode 2: segment (and paint on) the user foreground
-                ufg = np.asarray(load_image(fg_path).data, dtype=np.float32)[::6, ::6]
+                ufg = np.asarray(load_preview(fg_path, max_dim=1000), dtype=np.float32)
                 mask, info = ns.segment_sky(ufg, bias=bias)
                 med = ufg.mean(2) if ufg.ndim == 3 else ufg
             else:

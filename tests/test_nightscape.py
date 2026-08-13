@@ -180,6 +180,14 @@ def test_plan_override_uses_painted_mask():
     assert mask[40, 10] > 0.7 and mask[40, 90] < 0.3   # painted split preserved
 
 
+def test_load_preview_downsamples(tmp_path):
+    from lazystretch.io.image_io import load_preview, save_image
+    p = tmp_path / "big.tif"
+    save_image(str(p), np.linspace(0, 1, 2000 * 2600).reshape(2000, 2600).astype(np.float32), bit_depth=16)
+    out = load_preview(str(p), max_dim=800)
+    assert max(out.shape[:2]) <= 800 and out.min() >= 0 and out.max() <= 1   # downsampled, normalized
+
+
 def test_nightscape_brightness_recipe_roundtrip():
     from lazystretch.objects.model import Parameters
     from lazystretch.io import recipes as R
