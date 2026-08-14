@@ -678,6 +678,10 @@ class LazyDevelopPanel(QWidget):
         self.mask_list.itemClicked.connect(self._toggle_mask_view)
         self.mask_list.itemDoubleClicked.connect(self._rename_mask)
         v.addWidget(self.mask_list)
+        self.auto_masks_btn = QPushButton("✨  Auto masks (sky · stars · nebula · dust · cores)")
+        self.auto_masks_btn.setToolTip("Analyse the image and generate a set of semantic masks.")
+        self.auto_masks_btn.clicked.connect(self._auto_masks)
+        v.addWidget(self.auto_masks_btn)
         r1 = QHBoxLayout()
         b_lights = QPushButton("Lum lights"); b_darks = QPushButton("Lum darks")
         b_lights.clicked.connect(lambda: self._make_lum_mask(dev_masks.LUM_LIGHTS))
@@ -1262,6 +1266,33 @@ class LazyDevelopPanel(QWidget):
         self.doc.add_mask(self._unique_mask_name("Sky"), m)
         self._refresh_masks()
 
+    def _auto_masks(self):
+        """Generate semantic masks from the current image (in a worker)."""
+        if self.doc is None or self._busy():
+            return
+        self._set_busy(True)
+        self.status_label.setText("Generating semantic masks…")
+        img = self.doc.result()
+
+        def fn(log, progress):
+            log("Analysing the image for semantic masks…")
+            from ..develop.semantic import segment
+            return {"masks": segment(img)}
+
+        self.worker = CallableWorker(fn, mode="auto-masks")
+        self.worker.logline.connect(self.log_view.appendPlainText)
+        self.worker.finished_ok.connect(lambda r: self._add_auto_masks(r["masks"]))
+        self.worker.failed.connect(self._on_failed)
+        self.worker.start()
+
+    def _add_auto_masks(self, masks):
+        self._set_busy(False)
+        for name, m in masks.items():
+            self.doc.add_mask(name, m)                 # re-running regenerates same names
+        self._refresh_masks()
+        self.log_view.add("Auto masks", ", ".join(masks.keys()))
+        self.status_label.setText(f"Generated {len(masks)} semantic masks.")
+
     def _unique_mask_name(self, base):
         name = base; i = 2
         while name in self.doc.masks:
@@ -1402,7 +1433,8 @@ class LazyDevelopPanel(QWidget):
         # While the worker mutates the document off-thread, lock every control that could
         # also read/mutate it on the main thread (avoids a cross-thread cache race).
         for b in (self.open_btn, self.save_btn, self.save_recipe_btn, self.load_recipe_btn,
-                  self.auto_btn, self.toolbox, self.tool_holder, self.history_list):
+                  self.auto_btn, self.auto_masks_btn, self.toolbox, self.tool_holder,
+                  self.history_list):
             b.setEnabled(not busy)
         if busy:
             self.undo_btn.setEnabled(False)

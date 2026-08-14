@@ -353,6 +353,21 @@ def test_mask_combine_and_rename_flow(qapp, monkeypatch):
     assert "Renamed" in p.doc.mask_names() and first not in p.doc.mask_names()
 
 
+def test_auto_masks_populate_the_library(qapp):
+    from lazystretch.develop.semantic import segment
+    p = _loaded_panel(qapp)
+    masks = segment(p.doc.result())
+    p._add_auto_masks(masks)
+    assert p.mask_list.count() == len(masks)
+    assert {"Sky", "Stars", "Nebulosity"} <= set(p.doc.mask_names())
+    assert p.combine_a.count() == len(masks)              # combos see them too
+    p.doc.apply_op("saturation", {"amount": 0.3}, mask="Nebulosity")
+    assert p.doc.ops[-1].mask == "Nebulosity"
+    p._add_auto_masks(segment(p.doc.result()))            # re-run overwrites, no dupes
+    names = p.doc.mask_names()
+    assert len(names) == len(set(names))
+
+
 def test_show_auto_empty_is_noop(qapp):
     p = _loaded_panel(qapp)
     p._show_auto([])

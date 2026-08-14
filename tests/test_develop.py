@@ -322,6 +322,40 @@ def test_auto_analyze_handles_mono():
                for s in steps)
 
 
+# --------------------------------------------------------------------------- semantic masks
+def test_semantic_segment_produces_named_masks():
+    from lazystretch.develop.semantic import segment
+    img = _demo_rgb().copy()
+    img[5, 5] = 1.0; img[10, 60] = 0.95            # a couple of stars
+    m = segment(img)
+    expected = {"Sky", "Stars", "Bright stars", "Faint stars",
+                "Nebulosity", "Faint nebulosity", "Dust", "Cores"}
+    assert expected <= set(m) and "Hα (red)" in m   # RGB → Hα present
+    for name, v in m.items():
+        assert v.shape == img.shape[:2] and v.dtype == np.float32
+        assert v.min() >= 0.0 and v.max() <= 1.0
+    # star sub-masks are subsets of the full Stars mask (min-combined)
+    assert np.all(m["Bright stars"] <= m["Stars"] + 1e-6)
+    assert np.all(m["Faint stars"] <= m["Stars"] + 1e-6)
+
+
+def test_semantic_segment_mono_skips_ha():
+    from lazystretch.develop.semantic import segment
+    mono = np.clip(np.linspace(0, 0.5, 80 * 80).reshape(80, 80), 0, 1)
+    m = segment(mono)
+    assert "Hα (red)" not in m
+    assert "Stars" in m and "Sky" in m
+
+
+def test_semantic_segment_snr_path_runs():
+    from lazystretch.develop.semantic import segment
+    img = _demo_rgb()
+    snr = np.random.default_rng(0).random(img.shape[:2]).astype(np.float32)
+    m = segment(img, snr=snr)
+    fn = m["Faint nebulosity"]
+    assert fn.shape == img.shape[:2] and np.isfinite(fn).all()
+
+
 def test_jpeg_save_respects_quality(tmp_path):
     import os
     from lazystretch.io.image_io import save_image, load_image
