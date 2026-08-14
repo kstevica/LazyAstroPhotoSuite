@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Callable, Dict, Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QEasingCurve, QSize, Qt, QVariantAnimation
 from PySide6.QtGui import (
     QAction,
     QColor,
@@ -28,6 +28,7 @@ from PySide6.QtGui import (
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsDropShadowEffect,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -97,6 +98,18 @@ class ToolCard(QFrame):
         self._shadow.setColor(QColor(0, 0, 0, 170))
         self.setGraphicsEffect(self._shadow)
 
+        # Hover breathing zoom of the thumbnail. On leave the animation stops but the zoom
+        # is NOT reset — the tile stays wherever the pulse left it.
+        self._zoom = 1.0
+        self._zoom_anim = QVariantAnimation(self)
+        self._zoom_anim.setDuration(2600)
+        self._zoom_anim.setKeyValueAt(0.0, 1.0)
+        self._zoom_anim.setKeyValueAt(0.5, 1.06)
+        self._zoom_anim.setKeyValueAt(1.0, 1.0)
+        self._zoom_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._zoom_anim.setLoopCount(-1)
+        self._zoom_anim.valueChanged.connect(self._set_zoom)
+
         v = QVBoxLayout(self)
         v.setContentsMargins(18, 16, 18, 18)
         v.setSpacing(8)
@@ -139,11 +152,16 @@ class ToolCard(QFrame):
         v.addWidget(btn)
 
     # -- interaction --
+    def _set_zoom(self, v):
+        self._zoom = float(v)
+        self.update()
+
     def enterEvent(self, e):
         self._hover = True
         self._shadow.setBlurRadius(42)
         self._shadow.setColor(QColor(self._accent.red(), self._accent.green(),
                                      self._accent.blue(), 150))
+        self._zoom_anim.start()                  # begin the breathing zoom
         self.update()
         super().enterEvent(e)
 
@@ -151,6 +169,7 @@ class ToolCard(QFrame):
         self._hover = False
         self._shadow.setBlurRadius(26)
         self._shadow.setColor(QColor(0, 0, 0, 170))
+        self._zoom_anim.stop()                   # freeze where it is — do NOT reset the zoom
         self.update()
         super().leaveEvent(e)
 
@@ -167,7 +186,9 @@ class ToolCard(QFrame):
         path.addRoundedRect(0.5, 0.5, self.width() - 1, self.height() - 1, 16, 16)
         p.setClipPath(path)
         if not self._pix.isNull():
-            scaled = self._pix.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
+            zw = max(self.width(), int(self.width() * self._zoom))
+            zh = max(self.height(), int(self.height() * self._zoom))
+            scaled = self._pix.scaled(QSize(zw, zh), Qt.KeepAspectRatioByExpanding,
                                       Qt.SmoothTransformation)
             p.drawPixmap(-(scaled.width() - self.width()) // 2,
                          -(scaled.height() - self.height()) // 2, scaled)
@@ -192,6 +213,19 @@ class LauncherPage(QWidget):
     def __init__(self, on_open: Callable[[str], None]):
         super().__init__()
         self._bg = QPixmap(str(_ASSETS / "launcher_bg.jpg"))
+        self._bg_scaled: Optional[QPixmap] = None
+        self._bg_key = None
+        self._pan = 0.0                          # -1 … 1, drives a subtle horizontal drift
+
+        # Very slow left → right → left drift of the background (over-scaled for slack).
+        self._pan_anim = QVariantAnimation(self)
+        self._pan_anim.setDuration(48000)
+        self._pan_anim.setKeyValueAt(0.0, -1.0)
+        self._pan_anim.setKeyValueAt(0.5, 1.0)
+        self._pan_anim.setKeyValueAt(1.0, -1.0)
+        self._pan_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._pan_anim.setLoopCount(-1)
+        self._pan_anim.valueChanged.connect(self._set_pan)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(56, 40, 56, 40)
@@ -210,64 +244,81 @@ class LauncherPage(QWidget):
         root.addWidget(sub)
         root.addSpacing(34)
 
-        # --- pipeline: [Build the master]  →  [Process the image] ---
-        pipe = QHBoxLayout()
-        pipe.setSpacing(22)
-        pipe.addStretch(1)
+        # --- pipeline grid so columns align:
+        #   col:   0=Stack   1=→   2=Stretch   3=→   4=Develop
+        #   Sun & Moon sits in row 3, column 2 → directly under LazyStretch.
+        blue = _TOOLS_BY_KEY["stack"]["accent"]
+        violet = _TOOLS_BY_KEY["stretch"]["accent"]
+        amber = _TOOLS_BY_KEY["moonsun"]["accent"]
+        head = Qt.AlignLeft | Qt.AlignBottom
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(20)
+        grid.setVerticalSpacing(12)
+        grid.addWidget(_section_label("Build the master", blue), 0, 0, head)
+        grid.addWidget(_section_label("Process the image", violet), 0, 2, 1, 3, head)
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["stack"], on_open), 1, 0)
+        grid.addLayout(self._arrow(), 1, 1)
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["stretch"], on_open), 1, 2)
+        grid.addLayout(self._arrow(), 1, 3)           # arrow between Stretch and Finish
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["develop"], on_open), 1, 4)
+        grid.setRowMinimumHeight(2, 26)               # gap before Sun & Moon
+        grid.addWidget(_section_label("Sun & Moon", amber), 3, 2, head)
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["moonsun"], on_open), 4, 2)
 
-        pipe.addLayout(self._group("Build the master", _TOOLS_BY_KEY["stack"]["accent"],
-                                   [ToolCard(_TOOLS_BY_KEY["stack"], on_open)]))
-        pipe.addLayout(self._arrow())
-        pipe.addLayout(self._group(
-            "Process the image", _TOOLS_BY_KEY["stretch"]["accent"],
-            [ToolCard(_TOOLS_BY_KEY["stretch"], on_open),
-             ToolCard(_TOOLS_BY_KEY["develop"], on_open)]))
-        pipe.addStretch(1)
-        root.addLayout(pipe)
-
-        root.addSpacing(30)
-
-        # --- separate specialty: Sun & Moon ---
-        solar = QHBoxLayout()
-        solar.addStretch(1)
-        solar.addLayout(self._group("Sun & Moon", _TOOLS_BY_KEY["moonsun"]["accent"],
-                                    [ToolCard(_TOOLS_BY_KEY["moonsun"], on_open)]))
-        solar.addStretch(1)
-        root.addLayout(solar)
+        center = QHBoxLayout()
+        center.addStretch(1)
+        center.addLayout(grid)
+        center.addStretch(1)
+        root.addLayout(center)
         root.addStretch(3)
-
-    def _group(self, heading: str, accent, cards) -> QVBoxLayout:
-        col = QVBoxLayout()
-        col.setSpacing(12)
-        col.addWidget(_section_label(heading, accent), 0, Qt.AlignLeft)
-        row = QHBoxLayout()
-        row.setSpacing(20)
-        for c in cards:
-            row.addWidget(c)
-        col.addLayout(row)
-        col.addStretch(1)
-        return col
 
     def _arrow(self) -> QVBoxLayout:
         col = QVBoxLayout()
-        col.addSpacing(30)                       # drop below the section heading row
         col.addStretch(1)
         arrow = QLabel("→")
         af = QFont(); af.setPointSize(34)
         arrow.setFont(af)
         arrow.setStyleSheet("color: rgba(190,200,225,0.55); background: transparent;")
-        col.addWidget(arrow, 0, Qt.AlignVCenter)
+        col.addWidget(arrow, 0, Qt.AlignCenter)
         col.addStretch(1)
         return col
+
+    def _set_pan(self, v):
+        self._pan = float(v)
+        self.update()
+
+    def _ensure_bg(self):
+        """Cache the background over-scaled by ~7% (giving horizontal slack to drift within)."""
+        key = (self.width(), self.height())
+        if self._bg_key == key or self._bg.isNull() or self.width() < 2:
+            return
+        target = QSize(int(self.width() * 1.07), int(self.height() * 1.07))
+        self._bg_scaled = self._bg.scaled(target, Qt.KeepAspectRatioByExpanding,
+                                          Qt.SmoothTransformation)
+        self._bg_key = key
+
+    def resizeEvent(self, e):
+        self._bg_key = None                      # rebuild the scaled cache at the new size
+        super().resizeEvent(e)
+
+    def showEvent(self, e):
+        if self._pan_anim.state() != QVariantAnimation.Running:
+            self._pan_anim.start()
+        super().showEvent(e)
+
+    def hideEvent(self, e):
+        self._pan_anim.stop()                    # don't burn CPU while a tool is open
+        super().hideEvent(e)
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
-        if not self._bg.isNull():
-            scaled = self._bg.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
-                                     Qt.SmoothTransformation)
-            p.drawPixmap(-(scaled.width() - self.width()) // 2,
-                         -(scaled.height() - self.height()) // 2, scaled)
+        self._ensure_bg()
+        if self._bg_scaled is not None:
+            cx = (self._bg_scaled.width() - self.width()) // 2
+            cy = (self._bg_scaled.height() - self.height()) // 2
+            panx = int(self._pan * cx * 0.6)     # subtle drift, always within the slack
+            p.drawPixmap(-cx + panx, -cy, self._bg_scaled)
         else:
             p.fillRect(self.rect(), QColor(8, 10, 18))
         # darken so the tiles and text read clearly
