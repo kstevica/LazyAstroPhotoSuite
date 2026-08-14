@@ -34,6 +34,9 @@ _TOOLS = [
      "Calibrate, register and integrate a folder of subs into a master.", True),
     ("moonsun", "LazyMoonSun",
      "Lucky-imaging burst stacking & finishing for the Sun and Moon.", True),
+    ("develop", "LazyDevelop",
+     "Develop image — finish an already-stretched master by hand: curves, colour, "
+     "detail, gradient cleanup and masks (Lightroom-style).", True),
 ]
 
 _TITLES = {
@@ -41,6 +44,7 @@ _TITLES = {
     "stretch": "LazyStretch",
     "stack": "LazyStack",
     "moonsun": "LazyMoonSun",
+    "develop": "LazyDevelop",
 }
 
 
@@ -179,6 +183,9 @@ class AppShell(QMainWindow):
         if key == "stack":
             from .stack_window import LazyStackPanel
             return LazyStackPanel()
+        if key == "develop":
+            from .develop_window import LazyDevelopPanel
+            return LazyDevelopPanel()
         return None
 
     def open_tool(self, key: str):
