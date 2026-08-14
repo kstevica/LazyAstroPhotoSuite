@@ -113,6 +113,32 @@ def test_canvas_rect_mode(qapp):
     c.set_rect_mode(False)
 
 
+def test_recipe_file_roundtrip_through_panel(qapp, tmp_path, monkeypatch):
+    import json
+    from PySide6.QtWidgets import QFileDialog
+    p = _loaded_panel(qapp)
+    p.save_recipe_btn.setEnabled(True); p.load_recipe_btn.setEnabled(True)
+    p._open_tool(dev_ops.get("levels")); p._apply_tool()
+    p._open_tool(dev_ops.get("saturation")); p._apply_tool()
+    result = p.doc.result().copy()
+
+    recipe_path = tmp_path / "grade.ldrecipe"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        lambda *a, **k: (str(recipe_path), ""))
+    p._save_recipe()
+    assert recipe_path.exists()
+    assert len(json.loads(recipe_path.read_text())) == 2
+
+    # replay the recipe on a fresh document
+    from lazystretch.develop import DevelopDocument
+    p.doc = DevelopDocument(_demo())
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        lambda *a, **k: (str(recipe_path), ""))
+    p._load_recipe()
+    assert len(p.doc.ops) == 2
+    assert np.allclose(p.doc.result(), result, atol=1e-6)
+
+
 def test_needs_color_tool_blocked_on_mono(qapp):
     from lazystretch.gui.develop_window import LazyDevelopPanel
     p = LazyDevelopPanel()

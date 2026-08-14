@@ -9,12 +9,13 @@ live on the full-resolution image.
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen
+from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -402,6 +403,10 @@ class LazyDevelopPanel(QWidget):
         root.addWidget(splitter)
         self._set_enabled_tools(False)
 
+        QShortcut(QKeySequence.Undo, self, activated=self._undo)
+        QShortcut(QKeySequence.Redo, self, activated=self._redo)
+        QShortcut(QKeySequence("Ctrl+Shift+Z"), self, activated=self._redo)
+
     # ------------------------------------------------------------------ layout
     def _build_controls(self) -> QWidget:
         col = QVBoxLayout()
@@ -417,6 +422,15 @@ class LazyDevelopPanel(QWidget):
         self.save_btn.setEnabled(False)
         row.addWidget(self.open_btn); row.addWidget(self.save_btn)
         sv.addLayout(row)
+        row2 = QHBoxLayout()
+        self.save_recipe_btn = QPushButton("Save recipe…")
+        self.load_recipe_btn = QPushButton("Load recipe…")
+        self.save_recipe_btn.clicked.connect(self._save_recipe)
+        self.load_recipe_btn.clicked.connect(self._load_recipe)
+        self.save_recipe_btn.setEnabled(False)
+        self.load_recipe_btn.setEnabled(False)
+        row2.addWidget(self.save_recipe_btn); row2.addWidget(self.load_recipe_btn)
+        sv.addLayout(row2)
         self.info_label = QLabel("No image loaded.")
         self.info_label.setStyleSheet("color: gray;")
         sv.addWidget(self.info_label)
@@ -557,6 +571,8 @@ class LazyDevelopPanel(QWidget):
         kind = "colour" if self.doc.is_color else "mono"
         self.info_label.setText(f"{Path(path).name}\n{w} × {h}  ({kind})")
         self.save_btn.setEnabled(True)
+        self.save_recipe_btn.setEnabled(True)
+        self.load_recipe_btn.setEnabled(True)
         self._set_enabled_tools(True)
         self._refresh_canvas(fit=True)
         self._refresh_history()
@@ -577,6 +593,36 @@ class LazyDevelopPanel(QWidget):
             return
         self.log_view.append(f"Saved {Path(path).name}")
         self.status_label.setText(f"Saved {Path(path).name}")
+
+    def _save_recipe(self):
+        if self.doc is None:
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save recipe", "", "Recipe (*.ldrecipe *.json)")
+        if not path:
+            return
+        try:
+            Path(path).write_text(json.dumps(self.doc.to_recipe(), indent=2))
+        except Exception as exc:
+            QMessageBox.critical(self, "Save recipe failed", str(exc))
+            return
+        self.log_view.append(f"Saved recipe {Path(path).name} ({len(self.doc.ops)} steps)")
+
+    def _load_recipe(self):
+        if self.doc is None:
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Load recipe", "", "Recipe (*.ldrecipe *.json);;All files (*)")
+        if not path:
+            return
+        try:
+            recipe = json.loads(Path(path).read_text())
+            self.doc.apply_recipe(recipe)
+        except Exception as exc:
+            QMessageBox.critical(self, "Load recipe failed", str(exc))
+            return
+        self._cancel_tool(refresh=False)
+        self._refresh_canvas()
+        self._refresh_history()
+        self.log_view.append(f"Applied recipe {Path(path).name} ({len(recipe)} steps)")
 
     # ------------------------------------------------------------------- tools
     def _open_tool(self, op: "dev_ops.Op"):
