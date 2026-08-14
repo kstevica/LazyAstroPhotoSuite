@@ -176,6 +176,21 @@ def test_canvas_rect_mode(qapp):
     c.set_rect_mode(False)
 
 
+def test_crop_rect_shows_live_pixel_size(qapp):
+    from lazystretch.gui.develop_window import DevelopCanvas
+    c = DevelopCanvas()
+    img = np.zeros((100, 200, 3), np.float32)          # h=100, w=200
+    c.set_image(img, keep_view=False)
+    c.set_rect_mode(True)
+    c.show_rect({"x0": 0.0, "y0": 0.0, "x1": 0.5, "y1": 1.0})
+    assert c._rect_label is not None
+    assert c._rect_label.text() == "100 × 100 px"       # 200*0.5 × 100*1.0
+    c.show_rect({"x0": 0.25, "y0": 0.1, "x1": 0.75, "y1": 0.6})
+    assert c._rect_label.text() == "100 × 50 px"        # 200*0.5 × 100*0.5
+    c.set_rect_mode(False)                               # label removed with the rect
+    assert c._rect_label is None
+
+
 def test_heavy_tool_previews_on_downscaled_proxy(qapp):
     from lazystretch.gui.develop_window import LazyDevelopPanel, PROXY_MAX_DIM
     big = np.clip(0.2 + 0.05 * np.random.default_rng(0).standard_normal((1500, 2400, 3)),

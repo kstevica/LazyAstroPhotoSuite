@@ -16,13 +16,15 @@ from typing import Dict, List, Optional
 
 import numpy as np
 from PySide6.QtCore import Qt, QRectF, QTimer, Signal
-from PySide6.QtGui import QColor, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
+    QGraphicsItem,
     QGraphicsRectItem,
+    QGraphicsSimpleTextItem,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -224,6 +226,7 @@ class DevelopCanvas(PreviewView):
         super().__init__(parent)
         self._rect_mode = False
         self._rect_item: Optional[QGraphicsRectItem] = None
+        self._rect_label: Optional[QGraphicsSimpleTextItem] = None
         self._rect_start = None
 
     def set_rect_mode(self, on: bool):
@@ -235,9 +238,11 @@ class DevelopCanvas(PreviewView):
             self._clear_rect_item()
 
     def _clear_rect_item(self):
-        if self._rect_item is not None and self._rect_item.scene() is not None:
-            self.scene().removeItem(self._rect_item)
-        self._rect_item = None
+        for attr in ("_rect_item", "_rect_label"):
+            item = getattr(self, attr)
+            if item is not None and item.scene() is not None:
+                self.scene().removeItem(item)
+            setattr(self, attr, None)
 
     def show_rect(self, rect: dict):
         arr = self.current_array()
@@ -251,6 +256,22 @@ class DevelopCanvas(PreviewView):
                                                    QPen(QColor(255, 210, 90), 0))
             self._rect_item.setZValue(5)
         self._rect_item.setRect(QRectF(x0, y0, x1 - x0, y1 - y0))
+
+        # Live pixel size of the selection, drawn at the rect's top-left at a constant
+        # on-screen size (ignores zoom), like Lightroom's crop overlay.
+        px_w = max(0, int(round((x1 - x0))))
+        px_h = max(0, int(round((y1 - y0))))
+        if self._rect_label is None:
+            self._rect_label = self.scene().addSimpleText("")
+            self._rect_label.setBrush(QBrush(QColor(255, 210, 90)))
+            self._rect_label.setPen(QPen(QColor(0, 0, 0, 200), 0))   # thin dark outline
+            font = QFont(); font.setPointSize(11); font.setBold(True)
+            self._rect_label.setFont(font)
+            self._rect_label.setFlag(QGraphicsItem.ItemIgnoresTransformations, True)
+            self._rect_label.setZValue(6)
+        self._rect_label.setText(f"{px_w} × {px_h} px")
+        self._rect_label.setPos(min(x0, x1) + 6 / max(self.transform().m11(), 1e-6),
+                                min(y0, y1) + 6 / max(self.transform().m22(), 1e-6))
 
     def mousePressEvent(self, e):
         if self._rect_mode and e.button() == Qt.LeftButton and self.current_array() is not None:
