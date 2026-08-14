@@ -422,3 +422,29 @@ def test_measure_only_advises_without_stacking(tmp_path):
     assert res is not None and len(res["measures"]) == 4
     assert "keep" in res["cull"]
     assert not (tmp_path / "lazystack").exists()               # nothing stacked
+
+
+def test_demaze_removes_grid_keeps_stars_and_noise():
+    from scipy.ndimage import uniform_filter
+    from lazystretch.lazystack.calibrate import demaze
+    H, W = 120, 120
+    yy, xx = np.mgrid[0:H, 0:W]
+    grid = 0.02 * (((yy % 6) < 3).astype(float) - 0.5) * (((xx % 6) < 3).astype(float) - 0.5)
+    img = np.clip(0.2 + grid + 0.005 * np.random.default_rng(0).standard_normal((H, W)), 0, 1)
+    img[60, 60] = 0.9                                      # a star
+
+    def grid_amp(x):
+        y = x - uniform_filter(x, 7)
+        return float(np.median(np.abs(np.median(y[:120, :120].reshape(20, 6, 20, 6), axis=(0, 2)))))
+
+    out = demaze(img)
+    assert grid_amp(out) < 0.3 * grid_amp(img)            # 6x6 grid largely removed
+    assert out[60, 60] > 0.85                              # star preserved
+    # what demaze removed must be ONLY the periodic 6x6 grid (its own tile-median reconstructs it) —
+    # i.e. random noise is untouched.
+    delta = np.clip(img, 0, 1) - out
+    core = delta[6:114, 6:114]
+    grid_of_delta = np.tile(np.median(core.reshape(18, 6, 18, 6), axis=(0, 2)), (18, 18))
+    assert np.std(core - grid_of_delta) < 0.2 * (np.std(core) + 1e-12)
+    assert np.allclose(demaze(img, strength=0.0), np.clip(img, 0, 1))     # strength 0 = no-op
+    assert np.allclose(demaze(np.full((10, 10), 0.3)), np.full((10, 10), 0.3))   # too small = no-op

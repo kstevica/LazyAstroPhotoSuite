@@ -183,6 +183,37 @@ def suppress_banding(img: np.ndarray, *, strength: float = 1.0, smooth: int = 25
     return np.clip(_correct(a), 0.0, 1.0)
 
 
+def demaze(img: np.ndarray, *, period: int = 6, strength: float = 1.0) -> np.ndarray:
+    """Remove a fixed-pattern demosaic GRID (Fuji X-Trans 6×6 mesh) from the integrated master.
+
+    X-Trans's 6×6 colour-filter array leaves a faint ``period``×``period`` residual "maze" that even
+    3-pass Markesteijn can't fully erase; with little dither (drift < the pattern scale) it survives
+    integration and the stretch lifts it out of a smooth sky. This is a 2-D fixed pattern — the
+    column/row deband can't touch it. Estimate it star-robustly (high-pass the master, then take the
+    MEDIAN of every ``period``×``period`` tile — a few bright stars can't move a median over ~10⁵
+    tiles), tile it back, and subtract ``strength``×it. Random noise medians to ~0 and stars are
+    untouched, so nothing but the periodic grid is removed. Per channel on colour; opt-in (X-Trans).
+    """
+    from scipy.ndimage import uniform_filter
+    a = np.asarray(img, dtype=np.float64)
+    p = int(period)
+    s = float(np.clip(strength, 0.0, 1.0))
+    if p < 2 or s <= 0.0 or min(a.shape[:2]) < 4 * p:
+        return np.clip(a, 0.0, 1.0)
+
+    def _correct(x: np.ndarray) -> np.ndarray:
+        y = x - uniform_filter(x, p + 1)                      # high-pass: isolate the fine pattern
+        h, w = x.shape
+        hh, ww = (h // p) * p, (w // p) * p
+        grid = np.median(y[:hh, :ww].reshape(hh // p, p, ww // p, p), axis=(0, 2))   # p×p fixed pattern
+        tiled = np.tile(grid, (h // p + 1, w // p + 1))[:h, :w]
+        return x - s * tiled
+
+    if a.ndim == 3:
+        return np.clip(np.stack([_correct(a[..., c]) for c in range(a.shape[2])], axis=-1), 0.0, 1.0)
+    return np.clip(_correct(a), 0.0, 1.0)
+
+
 def repair_bad_pixels(frame: np.ndarray, mask: np.ndarray) -> np.ndarray:
     """Replace masked sensor pixels with the local (3×3) median of the same frame, per channel."""
     a = np.asarray(frame, dtype=np.float64)

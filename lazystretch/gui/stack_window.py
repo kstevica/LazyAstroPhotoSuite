@@ -45,6 +45,7 @@ _CHECKS = [
     ("do_cosmetic", "Cosmetic correction (hot/cold)"),
     ("fix_walking_noise", "Fix walking noise (static hot-pixel repair; no darks/dither needed)"),
     ("fix_banding", "Suppress column/row banding (fixed-pattern noise; no darks needed)"),
+    ("demaze", "Remove X-Trans demosaic mesh (6×6 grid; Fuji, optional)"),
     ("do_register", "Register frames"),
     ("normalize", "Normalize to reference (background + scale)"),
     ("local_normalize", "Local normalization (spatially-varying gradient match)"),

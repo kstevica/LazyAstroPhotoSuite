@@ -505,6 +505,9 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     if getattr(params, "fix_banding", True):             # remove column/row fixed-pattern banding
         master = cal.suppress_banding(master)
         log("Suppressed column/row banding (fixed-pattern residual).")
+    if getattr(params, "demaze", False):                 # remove the X-Trans 6×6 demosaic mesh (opt-in)
+        master = cal.demaze(master)
+        log("Removed X-Trans demosaic mesh (6×6 fixed-pattern grid).")
     header = contract.contract_header(n_stacked, edges, exposure)
     master_path = out_dir / MASTER_NAME
     save_image(str(master_path), master, bit_depth=16, header=header)

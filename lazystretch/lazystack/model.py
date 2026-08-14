@@ -19,6 +19,7 @@ class LazyStackParams:
     do_cosmetic: bool = True
     fix_walking_noise: bool = True     # cross-frame static hot-pixel repair (darkless walking-noise fix)
     fix_banding: bool = True           # suppress column/row fixed-pattern banding on the master
+    demaze: bool = False               # remove the Fuji X-Trans 6×6 demosaic mesh (opt-in; 2-D grid)
     do_debayer: bool = True
     do_register: bool = True
     normalize: bool = True         # match each frame's background+scale to the reference (global)
