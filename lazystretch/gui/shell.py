@@ -70,7 +70,7 @@ _TOOLS = [
 _TOOLS_BY_KEY = {t["key"]: t for t in _TOOLS}
 
 _TITLES = {
-    "home": "LazyStretch Suite",
+    "home": "LazyAstroPhotoSuite",
     "stretch": "LazyStretch",
     "stack": "LazyStack",
     "moonsun": "LazyMoonSun",
@@ -243,7 +243,7 @@ class LauncherPage(QWidget):
         root.setContentsMargins(56, 40, 56, 40)
         root.addStretch(2)
 
-        title = QLabel("LazyStretch Suite")
+        title = QLabel("LazyAstroPhotoSuite")
         hf = QFont(); hf.setPointSize(title.font().pointSize() + 20); hf.setBold(True)
         title.setFont(hf)
         title.setStyleSheet("color: white; background: transparent;")
