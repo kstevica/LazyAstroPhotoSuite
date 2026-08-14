@@ -169,9 +169,10 @@ _SEMANTIC_GATES = {
     # structure — only inside the subject
     "local_contrast":    ("Nebulosity", False),
     "structure":         ("Nebulosity", False),
-    # background / veil — deepen the veil but protect the bright nebula
-    "deveil":            ("Nebulosity", True),
-    "dehaze":            ("Nebulosity", True),
+    # background / veil — deepen the milky/faint veil but protect only the CONFIDENT
+    # bright nebula (protecting all nebulosity leaves the veil it should clean).
+    "deveil":            ("Bright nebulosity", True),
+    "dehaze":            ("Bright nebulosity", True),
     "reduce_cast":       ("Sky", False),
     # highlights — only the blown cores
     "highlight_rolloff": ("Cores", False),

@@ -5,8 +5,8 @@ masks that carry the *meaning* of the frame, so every Develop tool's gate become
 smarter for free (Selective Color on Hα without touching star colour; De-veil that
 avoids faint dust; saturation that protects stellar cores; …):
 
-    Sky · Stars · Bright stars · Faint stars · Nebulosity · Faint nebulosity ·
-    Dust · Cores · Hα (red)
+    Sky · Stars · Bright stars · Faint stars · Nebulosity · Bright nebulosity ·
+    Faint nebulosity · Dust · Cores · Hα (red)
 
 This is the "carry knowledge forward" idea (cf. stack SNR-protect, meteor metadata)
 applied inside Develop. Stars are isolated with a morphological top-hat (small bright
@@ -71,6 +71,7 @@ def segment(img: np.ndarray, snr: Optional[np.ndarray] = None) -> Dict[str, np.n
         confident = _smoothstep(0.2, 0.6, s)
     else:
         confident = _smoothstep(0.10, 0.30, neb_s)
+    out["Bright nebulosity"] = np.clip(neb * confident, 0.0, 1.0).astype(np.float32)
     out["Faint nebulosity"] = np.clip(neb * (1.0 - confident), 0.0, 1.0).astype(np.float32)
 
     # --- sky / background ------------------------------------------------------

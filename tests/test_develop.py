@@ -399,8 +399,8 @@ def test_auto_develop_gates_deveil_to_protect_the_nebula():
     plan = auto_develop_plan(img)
     dv = [s for s in plan["steps"] if s["name"] == "deveil"]
     if dv:                                              # de-veil triggered for this image
-        assert dv[0]["mask"] == "Nebulosity" and dv[0]["mask_invert"] is True
-        assert "Nebulosity" in plan["masks"]
+        assert dv[0]["mask"] == "Bright nebulosity" and dv[0]["mask_invert"] is True
+        assert "Bright nebulosity" in plan["masks"]
 
 
 def test_auto_develop_plan_gates_steps_with_semantic_masks():
