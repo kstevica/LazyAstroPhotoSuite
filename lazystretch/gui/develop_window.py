@@ -33,6 +33,8 @@ from PySide6.QtWidgets import (
     QScrollArea,
     QSizePolicy,
     QSplitter,
+    QTreeWidget,
+    QTreeWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -394,11 +396,13 @@ class LazyDevelopPanel(QWidget):
         self._preview_timer.timeout.connect(self._do_live_preview)
 
         splitter = QSplitter(Qt.Horizontal)
-        splitter.addWidget(self._build_controls())
-        splitter.addWidget(self._build_view())
+        splitter.addWidget(self._build_tree_pane())      # panel 1: tool tree
+        splitter.addWidget(self._build_detail_pane())    # panel 2: selected tool's options
+        splitter.addWidget(self._build_view())           # panel 3: canvas + log
         splitter.setStretchFactor(0, 0)
-        splitter.setStretchFactor(1, 1)
-        splitter.setSizes([560, 1100])
+        splitter.setStretchFactor(1, 0)
+        splitter.setStretchFactor(2, 1)
+        splitter.setSizes([280, 360, 1060])
         root = QHBoxLayout(self)
         root.addWidget(splitter)
         self._set_enabled_tools(False)
@@ -408,10 +412,7 @@ class LazyDevelopPanel(QWidget):
         QShortcut(QKeySequence("Ctrl+Shift+Z"), self, activated=self._redo)
 
     # ------------------------------------------------------------------ layout
-    def _build_controls(self) -> QWidget:
-        col = QVBoxLayout()
-
-        # source
+    def _build_image_group(self) -> QWidget:
         src = QGroupBox("Image")
         sv = QVBoxLayout(src)
         row = QHBoxLayout()
@@ -434,36 +435,50 @@ class LazyDevelopPanel(QWidget):
         self.info_label = QLabel("No image loaded.")
         self.info_label.setStyleSheet("color: gray;")
         sv.addWidget(self.info_label)
-        col.addWidget(src)
+        return src
 
-        # toolbox (built from the registry)
-        self.toolbox = QGroupBox("Tools")
-        tb = QVBoxLayout(self.toolbox)
-        self._tool_buttons: List[QPushButton] = []
+    def _build_tree_pane(self) -> QWidget:
+        """Panel 1: the Image group + a collapsible tree of every tool."""
+        col = QVBoxLayout()
+        col.setContentsMargins(6, 6, 3, 6)
+        col.addWidget(self._build_image_group())
+
+        heading = QLabel("Tools")
+        hf = heading.font(); hf.setBold(True); heading.setFont(hf)
+        col.addWidget(heading)
+
+        self.toolbox = QTreeWidget()
+        self.toolbox.setHeaderHidden(True)
+        self.toolbox.setIndentation(12)
+        self.toolbox.setAnimated(True)
+        self._tool_items: List[QTreeWidgetItem] = []
         for cat, oplist in dev_ops.by_category().items():
-            lbl = QLabel(cat)
-            lf = lbl.font(); lf.setBold(True); lbl.setFont(lf)
-            lbl.setStyleSheet("margin-top: 4px;")
-            tb.addWidget(lbl)
-            grid = QHBoxLayout(); grid.setSpacing(4)
-            per_row = 0
+            parent = QTreeWidgetItem([cat])
+            pf = parent.font(0); pf.setBold(True); parent.setFont(0, pf)
+            parent.setFlags(Qt.ItemIsEnabled)           # category row: not selectable
+            self.toolbox.addTopLevelItem(parent)
             for op in oplist:
-                btn = QPushButton(op.label)
-                btn.setToolTip(op.tooltip)
-                btn.clicked.connect(lambda _=False, o=op: self._open_tool(o))
-                self._tool_buttons.append(btn)
-                grid.addWidget(btn)
-                per_row += 1
-                if per_row == 2:
-                    tb.addLayout(grid); grid = QHBoxLayout(); grid.setSpacing(4); per_row = 0
-            if per_row:
-                grid.addStretch(1); tb.addLayout(grid)
-        col.addWidget(self.toolbox)
+                child = QTreeWidgetItem([op.label])
+                child.setToolTip(0, op.tooltip)
+                child.setData(0, Qt.UserRole, op.name)
+                parent.addChild(child)
+                self._tool_items.append(child)
+            parent.setExpanded(True)
+        self.toolbox.itemClicked.connect(self._tree_item_clicked)
+        col.addWidget(self.toolbox, 1)
 
-        # active-tool holder
+        holder = QWidget(); holder.setLayout(col)
+        holder.setMinimumWidth(240)
+        return holder
+
+    def _build_detail_pane(self) -> QWidget:
+        """Panel 2: the selected tool's options, plus masks and history."""
+        col = QVBoxLayout()
+        col.setContentsMargins(3, 6, 6, 6)
+
         self.tool_holder = QGroupBox("Adjustment")
         self.tool_holder_layout = QVBoxLayout(self.tool_holder)
-        self._placeholder = QLabel("Pick a tool above to start an adjustment.")
+        self._placeholder = QLabel("Select a tool on the left to adjust it.")
         self._placeholder.setStyleSheet("color: gray;")
         self.tool_holder_layout.addWidget(self._placeholder)
         col.addWidget(self.tool_holder)
@@ -474,8 +489,13 @@ class LazyDevelopPanel(QWidget):
 
         holder = QWidget(); holder.setLayout(col)
         scroll = QScrollArea(); scroll.setWidgetResizable(True)
-        scroll.setWidget(holder); scroll.setMinimumWidth(540)
+        scroll.setWidget(holder); scroll.setMinimumWidth(320)
         return scroll
+
+    def _tree_item_clicked(self, item, _col=0):
+        name = item.data(0, Qt.UserRole)
+        if name:
+            self._open_tool(dev_ops.get(name))
 
     def _build_mask_group(self) -> QWidget:
         box = QGroupBox("Masks")
@@ -711,6 +731,7 @@ class LazyDevelopPanel(QWidget):
         self._set_busy(False)
         self.log_view.append(f"Applied {label}")
         self._cancel_tool(refresh=False)
+        self.toolbox.clearSelection()
         self._refresh_canvas()
         self._refresh_history()
 

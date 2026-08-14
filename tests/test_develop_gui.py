@@ -34,10 +34,25 @@ def _loaded_panel(qapp):
     return p
 
 
-def test_panel_builds_a_button_for_every_op(qapp):
+def test_panel_builds_a_tree_leaf_for_every_op(qapp):
     p = _loaded_panel(qapp)
-    assert len(p._tool_buttons) == len(dev_ops.REGISTRY)
+    assert len(p._tool_items) == len(dev_ops.REGISTRY)
+    # every category with ops is a top-level node
+    assert p.toolbox.topLevelItemCount() == len(dev_ops.by_category())
     assert p.canvas.current_array() is not None
+
+
+def test_tree_click_opens_tool(qapp):
+    from PySide6.QtCore import Qt
+    p = _loaded_panel(qapp)
+    # find the leaf for "curves" and click it
+    leaf = next(i for i in p._tool_items if i.data(0, Qt.UserRole) == "curves")
+    p._tree_item_clicked(leaf)
+    assert p.tool_panel is not None and p.tool_panel.op.name == "curves"
+    # a category (non-leaf) click is a no-op
+    cat = p.toolbox.topLevelItem(0)
+    p._tree_item_clicked(cat)
+    assert p.tool_panel.op.name == "curves"
 
 
 def test_shell_registers_develop_tool(qapp):
