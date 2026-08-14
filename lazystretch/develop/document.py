@@ -78,9 +78,12 @@ class DevelopDocument:
         self.base = _as_f32(base)
         self.path = path
         self.header: dict = dict(header or {})
+        # Non-destructive linear history. ``ops`` holds EVERY step (the full recipe);
+        # ``cursor`` is the "you are here" position (how many ops are currently applied).
+        # Navigating back moves the cursor without discarding the steps after it.
         self.ops: List[OpInstance] = []
-        self._cache: List[np.ndarray] = [self.base]     # cache[i] = after ops[:i]
-        self._redo: List[OpInstance] = []
+        self.cursor: int = 0
+        self._cache: List[np.ndarray] = [self.base]     # cache[i] = result after ops[:i]
         self.masks: Dict[str, np.ndarray] = {}
 
     # -------------------------------------------------------------- properties
@@ -93,14 +96,20 @@ class DevelopDocument:
         return self.result().shape
 
     def result(self) -> np.ndarray:
-        """The current fully-processed image (float32 [0,1])."""
-        return self._cache[-1]
+        """The image at the current history position (float32 [0,1])."""
+        return self._cache[self.cursor]
 
     def can_undo(self) -> bool:
-        return len(self.ops) > 0
+        return self.cursor > 0
 
     def can_redo(self) -> bool:
-        return len(self._redo) > 0
+        return self.cursor < len(self.ops)
+
+    def op_params(self, index: int) -> dict:
+        """The stored params + gate for step ``index`` (for populating its tool panel)."""
+        op = self.ops[index]
+        return {"params": dict(op.params), "mask": op.mask,
+                "mask_invert": op.mask_invert, "opacity": op.opacity}
 
     # ------------------------------------------------------------------- masks
     def add_mask(self, name: str, mask2d: np.ndarray) -> None:
@@ -147,49 +156,101 @@ class DevelopDocument:
             weight = weight[..., None]
         return _clip01(orig + weight * (proc - orig))
 
+    def _recompute_from(self, start: int) -> None:
+        """Rebuild the cache for ops[start:] (``_cache[start]`` must already be valid)."""
+        start = max(0, min(start, len(self.ops)))
+        self._cache = self._cache[:start + 1]
+        img = self._cache[start]
+        for i in range(start, len(self.ops)):
+            img = self._run_one(img, self.ops[i])
+            self._cache.append(img)
+
     def apply_op(self, name: str, params: Optional[dict] = None, *,
                  mask: Optional[str] = None, mask_invert: bool = False,
                  opacity: float = 1.0) -> np.ndarray:
-        """Run a tool on the current result and push it onto the history."""
+        """Insert a tool at the current position and advance the cursor onto it.
+
+        Inserting at the cursor (not always the end) means a new adjustment made while
+        you are back in the history is added *there* and the later steps are kept and
+        recomputed on top — nothing is discarded.
+        """
         op = OpInstance(name, dict(params or {}), mask, mask_invert, float(opacity))
-        newimg = self._run_one(self.result(), op)
-        self.ops.append(op)
-        self._cache.append(newimg)
-        self._redo.clear()
-        return newimg
+        idx = self.cursor
+        self.ops.insert(idx, op)
+        self._recompute_from(idx)
+        self.cursor = idx + 1
+        return self.result()
 
     def preview_op(self, name: str, params: Optional[dict] = None, *,
                    mask: Optional[str] = None, mask_invert: bool = False,
                    opacity: float = 1.0) -> np.ndarray:
-        """Compute the result of applying a tool WITHOUT committing it (live preview)."""
+        """Result of applying a tool on top of the current view, WITHOUT committing."""
         op = OpInstance(name, dict(params or {}), mask, mask_invert, float(opacity))
         return self._run_one(self.result(), op)
 
+    def preview_replace(self, index: int, name: str, params: Optional[dict] = None, *,
+                        mask: Optional[str] = None, mask_invert: bool = False,
+                        opacity: float = 1.0, base: Optional[np.ndarray] = None) -> np.ndarray:
+        """Preview an EDIT of step ``index`` — the op re-applied to its own input.
+
+        ``base`` overrides the input (used for a downscaled-proxy preview); otherwise the
+        cached state before the step is used.
+        """
+        op = OpInstance(name, dict(params or {}), mask, mask_invert, float(opacity))
+        src = self._cache[index] if base is None else base
+        return self._run_one(src, op)
+
+    def input_before(self, index: int) -> np.ndarray:
+        """The cached image feeding step ``index`` (i.e. the result after ops[:index])."""
+        return self._cache[max(0, min(index, len(self._cache) - 1))]
+
+    def replace_op(self, index: int, params: Optional[dict] = None, *,
+                   mask: Optional[str] = None, mask_invert: bool = False,
+                   opacity: float = 1.0) -> np.ndarray:
+        """Edit step ``index`` in place and recompute everything after it (kept)."""
+        if not (0 <= index < len(self.ops)):
+            return self.result()
+        old = self.ops[index]
+        self.ops[index] = OpInstance(old.name, dict(params or {}), mask, mask_invert, float(opacity))
+        self._recompute_from(index)
+        self.cursor = min(self.cursor, len(self.ops))
+        return self.result()
+
+    def delete_op(self, index: int) -> np.ndarray:
+        """Remove step ``index``; keep and recompute the rest."""
+        if not (0 <= index < len(self.ops)):
+            return self.result()
+        del self.ops[index]
+        if self.cursor > index:
+            self.cursor -= 1
+        self._recompute_from(index)
+        self.cursor = min(self.cursor, len(self.ops))
+        return self.result()
+
     def undo(self) -> bool:
-        if not self.ops:
+        if self.cursor <= 0:
             return False
-        self._redo.append(self.ops.pop())
-        self._cache.pop()
+        self.cursor -= 1
         return True
 
     def redo(self) -> bool:
-        if not self._redo:
+        if self.cursor >= len(self.ops):
             return False
-        op = self._redo.pop()
-        self._cache.append(self._run_one(self.result(), op))
-        self.ops.append(op)
+        self.cursor += 1
         return True
 
-    def revert_to(self, n_ops: int) -> None:
-        """Undo down to exactly ``n_ops`` applied ops (keeps them redoable)."""
-        n_ops = max(0, min(int(n_ops), len(self.ops)))
-        while len(self.ops) > n_ops:
-            self.undo()
+    def goto(self, position: int) -> np.ndarray:
+        """Move the cursor to ``position`` (0 = base) without discarding any step."""
+        self.cursor = max(0, min(int(position), len(self.ops)))
+        return self.result()
+
+    # Back-compat alias: revert_to now navigates (non-destructive) rather than truncates.
+    revert_to = goto
 
     def reset(self) -> None:
-        """Drop all ops and redo history; keep the base image and masks."""
+        """Drop all steps; keep the base image and masks."""
         self.ops.clear()
-        self._redo.clear()
+        self.cursor = 0
         self._cache = [self.base]
 
     # ------------------------------------------------------------------- recipe

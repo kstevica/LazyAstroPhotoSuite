@@ -46,32 +46,65 @@ def test_ops_do_not_mutate_input():
 
 
 # --------------------------------------------------------------------------- document/history
-def test_apply_undo_redo_revert():
+def test_apply_undo_redo_navigation_is_nondestructive():
     img = _demo_rgb()
     doc = DevelopDocument(img)
     doc.apply_op("saturation", {"amount": 0.5})
     r1 = doc.result().copy()
     doc.apply_op("levels", {"black": 0.05, "white": 0.9, "gamma": 1.2})
-    assert len(doc.ops) == 2 and len(doc._cache) == 3
+    assert len(doc.ops) == 2 and doc.cursor == 2
 
+    # undo/redo move the cursor but KEEP every step
     assert doc.undo()
-    assert len(doc.ops) == 1 and np.allclose(doc.result(), r1)
+    assert len(doc.ops) == 2 and doc.cursor == 1
+    assert np.allclose(doc.result(), r1)
     assert doc.can_redo()
-    assert doc.redo()
-    assert len(doc.ops) == 2
+    assert doc.redo() and doc.cursor == 2
 
-    doc.revert_to(0)
-    assert len(doc.ops) == 0 and np.allclose(doc.result(), img)
+    # goto navigates without discarding the later steps
+    doc.goto(0)
+    assert len(doc.ops) == 2 and doc.cursor == 0
+    assert np.allclose(doc.result(), img)
     assert not doc.undo()
 
 
-def test_apply_clears_redo_stack():
+def test_new_op_inserts_at_cursor_and_keeps_later_steps():
     doc = DevelopDocument(_demo_rgb())
     doc.apply_op("saturation", {"amount": 0.3})
-    doc.undo()
-    assert doc.can_redo()
-    doc.apply_op("levels", {})
-    assert not doc.can_redo()
+    doc.apply_op("levels", {"gamma": 1.2})
+    doc.goto(1)                                  # back to just after step 1
+    doc.apply_op("scnr", {"amount": 1.0})        # insert here — step 2 must survive
+    assert [o.name for o in doc.ops] == ["saturation", "scnr", "levels"]
+    assert doc.cursor == 2 and len(doc.ops) == 3
+
+
+def test_replace_op_edits_in_place_and_recomputes():
+    doc = DevelopDocument(_demo_rgb())
+    doc.apply_op("levels", {"black": 0.0, "white": 1.0, "gamma": 1.0})
+    doc.apply_op("saturation", {"amount": 0.2})
+    before = doc.result().copy()
+    doc.replace_op(0, {"black": 0.0, "white": 1.0, "gamma": 2.0})
+    assert len(doc.ops) == 2
+    assert doc.ops[0].params["gamma"] == 2.0
+    assert not np.allclose(doc.result(), before)     # downstream recomputed
+
+
+def test_delete_op_keeps_the_others():
+    doc = DevelopDocument(_demo_rgb())
+    doc.apply_op("saturation", {"amount": 0.4})
+    doc.apply_op("levels", {"gamma": 1.5})
+    doc.apply_op("scnr", {"amount": 1.0})
+    assert len(doc.ops) == 3 and doc.cursor == 3
+    doc.delete_op(1)
+    assert [o.name for o in doc.ops] == ["saturation", "scnr"]
+    assert doc.cursor == 2
+
+
+def test_op_params_returns_stored_values_and_gate():
+    doc = DevelopDocument(_demo_rgb())
+    doc.apply_op("levels", {"black": 0.1, "white": 0.8, "gamma": 1.3}, opacity=0.7)
+    p = doc.op_params(0)
+    assert p["params"]["gamma"] == 1.3 and p["opacity"] == 0.7 and p["mask"] is None
 
 
 def test_orient_actually_rotates_and_flips():

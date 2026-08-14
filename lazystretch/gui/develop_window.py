@@ -260,13 +260,16 @@ class ToolPanel(QWidget):
     """Builds controls for one Op from its ParamSpecs, plus a mask/opacity gate."""
 
     changed = Signal()                     # a param changed → re-preview
-    applied = Signal()
+    applied = Signal()                     # Apply (new step) / Update (edit) pressed
     cancelled = Signal()
+    deleted = Signal()                     # Delete step pressed (edit mode only)
     rectModeChanged = Signal(bool)
 
-    def __init__(self, op: "dev_ops.Op", mask_names: List[str], parent=None):
+    def __init__(self, op: "dev_ops.Op", mask_names: List[str], parent=None,
+                 *, edit_index: Optional[int] = None, init: Optional[dict] = None):
         super().__init__(parent)
         self.op = op
+        self.edit_index = edit_index       # None = new adjustment; int = editing that step
         self._values: Dict[str, object] = op.defaults()
         self._widgets: Dict[str, QWidget] = {}
         self._curve: Optional[CurveEditor] = None
@@ -292,13 +295,48 @@ class ToolPanel(QWidget):
         if self._gateable:
             v.addWidget(self._build_gate(mask_names))
 
+        if init is not None:
+            self._apply_init(init)
+
+        editing = edit_index is not None
         row = QHBoxLayout()
-        self.apply_btn = QPushButton("Apply")
+        self.apply_btn = QPushButton("Update step" if editing else "Apply")
         self.cancel_btn = QPushButton("Cancel")
         self.apply_btn.clicked.connect(self.applied.emit)
         self.cancel_btn.clicked.connect(self.cancelled.emit)
-        row.addWidget(self.apply_btn); row.addWidget(self.cancel_btn)
+        row.addWidget(self.apply_btn)
+        if editing:
+            self.delete_btn = QPushButton("Delete step")
+            self.delete_btn.clicked.connect(self.deleted.emit)
+            row.addWidget(self.delete_btn)
+        row.addWidget(self.cancel_btn)
         v.addLayout(row)
+
+    def _apply_init(self, init: dict):
+        """Populate every control from a stored step's params + gate (edit mode)."""
+        params = init.get("params", {}) or {}
+        for spec in self.op.params:
+            if spec.key not in params:
+                continue
+            val = params[spec.key]
+            self._values[spec.key] = spec.coerce(val) if spec.kind not in ("curve", "rect") else val
+            w = self._widgets.get(spec.key)
+            if w is None:
+                continue
+            if spec.kind in ("float", "int"):
+                w.set_value(float(val))
+            elif spec.kind == "bool":
+                w.setChecked(bool(val))
+            elif spec.kind == "choice":
+                w.setCurrentIndex(int(val))
+            elif spec.kind == "curve":
+                w.set_points(val)
+        if self._gateable:
+            mask = init.get("mask")
+            idx = self.mask_combo.findText(mask) if mask else 0
+            self.mask_combo.setCurrentIndex(idx if idx >= 0 else 0)
+            self.invert_cb.setChecked(bool(init.get("mask_invert", False)))
+            self.opacity.set_value(float(init.get("opacity", 1.0)))
 
     # ---- gate (mask + invert + opacity) ----
     def _build_gate(self, mask_names):
@@ -407,6 +445,7 @@ class LazyDevelopPanel(QWidget):
         self._showing_mask: Optional[str] = None
         self._paint_target = "sky"
         self._proxy: Optional[np.ndarray] = None      # cached downscaled current result
+        self._edit_proxy: Optional[np.ndarray] = None  # proxy of an edited step's input
         self._preview_kind: Optional[str] = None      # None | "full" | "proxy"
 
         self._preview_timer = QTimer(self)
@@ -561,10 +600,16 @@ class LazyDevelopPanel(QWidget):
         self.history_list.setMaximumHeight(150)
         self.history_list.itemClicked.connect(self._history_clicked)
         v.addWidget(self.history_list)
+        hint = QLabel("Click a step to view & edit it; later steps are kept.")
+        hint.setStyleSheet("color: gray;"); hint.setWordWrap(True)
+        v.addWidget(hint)
         row = QHBoxLayout()
         self.undo_btn = QPushButton("Undo"); self.redo_btn = QPushButton("Redo")
+        self.del_step_btn = QPushButton("Delete step")
         self.undo_btn.clicked.connect(self._undo); self.redo_btn.clicked.connect(self._redo)
-        row.addWidget(self.undo_btn); row.addWidget(self.redo_btn)
+        self.del_step_btn.clicked.connect(self._delete_selected_step)
+        self.del_step_btn.setEnabled(False)
+        row.addWidget(self.undo_btn); row.addWidget(self.redo_btn); row.addWidget(self.del_step_btn)
         v.addLayout(row)
         return box
 
@@ -664,27 +709,52 @@ class LazyDevelopPanel(QWidget):
         self.log_view.append(f"Applied recipe {Path(path).name} ({len(recipe)} steps)")
 
     # ------------------------------------------------------------------- tools
+    def _select_tree_tool(self, name: str):
+        """Highlight a tool's leaf in the tree (does not fire itemClicked)."""
+        for it in self._tool_items:
+            if it.data(0, Qt.UserRole) == name:
+                self.toolbox.setCurrentItem(it)
+                return
+
+    def _mount_tool_panel(self, panel: "ToolPanel", op: "dev_ops.Op", rect_default: dict):
+        self.tool_panel = panel
+        panel.changed.connect(self._schedule_preview)
+        panel.applied.connect(self._apply_tool)
+        panel.cancelled.connect(self._cancel_tool)
+        panel.deleted.connect(self._delete_current_step)
+        self.tool_holder_layout.addWidget(panel)
+        self._placeholder.setVisible(False)
+        self._select_tree_tool(op.name)
+        if panel.wants_rect():
+            self.canvas.set_rect_mode(True)
+            self.canvas.show_rect(rect_default)
+        self._schedule_preview()
+
     def _open_tool(self, op: "dev_ops.Op"):
+        """Start a NEW adjustment (inserted at the current history position on Apply)."""
         if self.doc is None:
             return
         if op.needs_color and not self.doc.is_color:
             self.status_label.setText(f"{op.label} needs a colour image.")
             return
         self._cancel_tool(refresh=False)
-        self.tool_panel = ToolPanel(op, self.doc.mask_names())
-        self.tool_panel.changed.connect(self._schedule_preview)
-        self.tool_panel.applied.connect(self._apply_tool)
-        self.tool_panel.cancelled.connect(self._cancel_tool)
-        self.tool_holder_layout.addWidget(self.tool_panel)
-        self._placeholder.setVisible(False)
-        if self.tool_panel.wants_rect():
-            self.canvas.set_rect_mode(True)
-            rect = op.defaults().get("rect", {"x0": 0, "y0": 0, "x1": 1, "y1": 1})
-            self.canvas.show_rect(rect)
-        self._schedule_preview()
+        rect = op.defaults().get("rect", {"x0": 0, "y0": 0, "x1": 1, "y1": 1})
+        self._mount_tool_panel(ToolPanel(op, self.doc.mask_names()), op, rect)
+
+    def _open_tool_for_edit(self, index: int):
+        """Open the tool for an EXISTING step, populated with its stored values."""
+        if self.doc is None or not (0 <= index < len(self.doc.ops)):
+            return
+        op = dev_ops.get(self.doc.ops[index].name)
+        self._cancel_tool(refresh=False)
+        init = self.doc.op_params(index)
+        rect = init["params"].get("rect", {"x0": 0, "y0": 0, "x1": 1, "y1": 1})
+        self._mount_tool_panel(
+            ToolPanel(op, self.doc.mask_names(), edit_index=index, init=init), op, rect)
 
     def _cancel_tool(self, refresh=True):
         self.canvas.set_rect_mode(False)
+        self._edit_proxy = None
         if self.tool_panel is not None:
             self.tool_panel.setParent(None)
             self.tool_panel.deleteLater()
@@ -714,10 +784,24 @@ class LazyDevelopPanel(QWidget):
         op = self.tool_panel.op
         params = self.tool_panel.params()
         gate = self.tool_panel.gate()
+        idx = self.tool_panel.edit_index
+        editing = idx is not None
         try:
-            if op.heavy:
-                # Preview heavy tools on a downscaled proxy so sliders stay responsive.
-                # Apply still recomputes at full resolution (see _apply_tool).
+            if editing:
+                # Editing an existing step: preview the op re-applied to its own input
+                # (heavy tools on a downscaled proxy of that input).
+                if op.heavy:
+                    if self._edit_proxy is None:
+                        self._edit_proxy = _downscale_rgb(self.doc.input_before(idx))
+                    out = self.doc.preview_replace(idx, op.name, params,
+                                                   base=self._edit_proxy, **gate)
+                    kind = "proxy"
+                else:
+                    out = self.doc.preview_replace(idx, op.name, params, **gate)
+                    kind = "full"
+            elif op.heavy:
+                # New heavy adjustment: preview on a downscaled proxy so sliders stay
+                # responsive; Apply still recomputes at full resolution (see _apply_tool).
                 proxy = self._get_proxy()
                 pdoc = DevelopDocument(proxy)
                 pdoc.masks = self.doc.masks            # _blend resizes masks to proxy size
@@ -734,8 +818,9 @@ class LazyDevelopPanel(QWidget):
         keep = (kind == self._preview_kind)
         self._preview_kind = kind
         self.canvas.set_image(np.asarray(out, dtype=np.float32), keep_view=keep)
+        verb = "Editing" if editing else "Previewing"
         suffix = "  (proxy — Apply computes full resolution)" if kind == "proxy" else ""
-        self.status_label.setText(f"Previewing {op.label}{suffix}")
+        self.status_label.setText(f"{verb} {op.label}{suffix}")
 
     def _apply_tool(self):
         if self.tool_panel is None or self.doc is None or self._busy():
@@ -743,28 +828,49 @@ class LazyDevelopPanel(QWidget):
         op = self.tool_panel.op
         params = self.tool_panel.params()
         gate = self.tool_panel.gate()
-        if not op.heavy:
-            self.doc.apply_op(op.name, params, **gate)
-            self._finish_apply(op.label)
+        idx = self.tool_panel.edit_index
+
+        def commit():
+            if idx is None:
+                self.doc.apply_op(op.name, params, **gate)      # insert at cursor
+            else:
+                self.doc.replace_op(idx, params, **gate)        # edit in place + recompute
+
+        verb = "Updated" if idx is not None else "Applied"
+        # Heavy (or an edit that recomputes downstream) runs in a worker.
+        heavy = op.heavy or (idx is not None and idx < len(self.doc.ops) - 1)
+        if not heavy:
+            commit()
+            self._finish_apply(verb, op.label)
             return
-        # heavy → worker
         self._set_busy(True)
-        self.status_label.setText(f"Applying {op.label}…")
+        self.status_label.setText(f"{'Updating' if idx is not None else 'Applying'} {op.label}…")
 
         def fn(log, progress):
             log(f"{op.label}…")
-            self.doc.apply_op(op.name, params, **gate)
-            return {"label": op.label}
+            commit()
+            return {"label": op.label, "verb": verb}
 
         self.worker = CallableWorker(fn, mode="apply")
         self.worker.logline.connect(self.log_view.appendPlainText)
-        self.worker.finished_ok.connect(lambda r: self._finish_apply(r["label"]))
+        self.worker.finished_ok.connect(lambda r: self._finish_apply(r["verb"], r["label"]))
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
-    def _finish_apply(self, label):
+    def _finish_apply(self, verb, label):
         self._set_busy(False)
-        self.log_view.append(f"Applied {label}")
+        self.log_view.append(f"{verb} {label}")
+        self._cancel_tool(refresh=False)
+        self.toolbox.clearSelection()
+        self._refresh_canvas()
+        self._refresh_history()
+
+    def _delete_current_step(self):
+        if self.tool_panel is None or self.tool_panel.edit_index is None or self.doc is None:
+            return
+        idx = self.tool_panel.edit_index
+        self.doc.delete_op(idx)
+        self.log_view.append(f"Deleted step {idx + 1}")
         self._cancel_tool(refresh=False)
         self.toolbox.clearSelection()
         self._refresh_canvas()
@@ -776,28 +882,54 @@ class LazyDevelopPanel(QWidget):
 
     # ----------------------------------------------------------------- history
     def _refresh_history(self):
+        self.history_list.blockSignals(True)
         self.history_list.clear()
-        base = QListWidgetItem("• Base image")
-        self.history_list.addItem(base)
+        self.history_list.addItem(QListWidgetItem("• Base image"))
         for i, op in enumerate(self.doc.ops):
-            self.history_list.addItem(QListWidgetItem(f"{i + 1}. {op.title()}"))
-        self.history_list.setCurrentRow(len(self.doc.ops))
+            it = QListWidgetItem(f"{i + 1}. {op.title()}")
+            if (i + 1) > self.doc.cursor:              # a "future" step: kept, not applied now
+                it.setForeground(QColor(150, 150, 150))
+            self.history_list.addItem(it)
+        self.history_list.setCurrentRow(self.doc.cursor)
+        self.history_list.blockSignals(False)
         self.undo_btn.setEnabled(self.doc.can_undo())
         self.redo_btn.setEnabled(self.doc.can_redo())
+        self.del_step_btn.setEnabled(len(self.doc.ops) > 0)
 
     def _history_clicked(self, item):
-        row = self.history_list.row(item)      # 0 = base, i = after op i
-        if self.doc is not None:
-            self.doc.revert_to(row)
+        """Navigate to a step (keeping the rest) and open it for editing."""
+        if self.doc is None:
+            return
+        row = self.history_list.row(item)              # 0 = base, k = after op k
+        self.doc.goto(row)
+        self._cancel_tool(refresh=False)
+        self._refresh_canvas()                          # show the state at this position
+        if row >= 1:
+            self._open_tool_for_edit(row - 1)
+        else:
+            self.toolbox.clearSelection()
+        self._refresh_history()
+
+    def _delete_selected_step(self):
+        if self.doc is None:
+            return
+        row = self.history_list.currentRow()
+        if row >= 1:
+            self.doc.delete_op(row - 1)
+            self.log_view.append(f"Deleted step {row}")
+            self._cancel_tool(refresh=False)
+            self.toolbox.clearSelection()
             self._refresh_canvas()
             self._refresh_history()
 
     def _undo(self):
         if self.doc and self.doc.undo():
+            self._cancel_tool(refresh=False)
             self._refresh_canvas(); self._refresh_history()
 
     def _redo(self):
         if self.doc and self.doc.redo():
+            self._cancel_tool(refresh=False)
             self._refresh_canvas(); self._refresh_history()
 
     # ------------------------------------------------------------------- masks

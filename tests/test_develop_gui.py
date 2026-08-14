@@ -90,17 +90,65 @@ def test_mask_creation_and_gated_apply(qapp):
     assert "Lum lights" in p.doc.ops[-1].title()
 
 
-def test_undo_redo_and_revert(qapp):
+def test_history_navigation_is_nondestructive(qapp):
     p = _loaded_panel(qapp)
     p._open_tool(dev_ops.get("levels")); p._apply_tool()
     p._open_tool(dev_ops.get("saturation")); p._apply_tool()
-    n = len(p.doc.ops)
-    assert n == 2
-    p._undo(); assert len(p.doc.ops) == n - 1
-    p._redo(); assert len(p.doc.ops) == n
-    # click the base row → revert to 0
+    assert len(p.doc.ops) == 2 and p.doc.cursor == 2
+    # undo/redo move the cursor but keep the steps
+    p._undo(); assert p.doc.cursor == 1 and len(p.doc.ops) == 2
+    p._redo(); assert p.doc.cursor == 2
+    # clicking the base row navigates to 0 without discarding the steps
     p._history_clicked(p.history_list.item(0))
-    assert len(p.doc.ops) == 0
+    assert p.doc.cursor == 0 and len(p.doc.ops) == 2
+    # the history list still shows all steps (base + 2)
+    assert p.history_list.count() == 3
+
+
+def test_click_history_step_opens_editor_with_stored_values(qapp):
+    from PySide6.QtCore import Qt
+    p = _loaded_panel(qapp)
+    p._open_tool(dev_ops.get("levels"))
+    p.tool_panel._set("gamma", 1.4)
+    p._apply_tool()
+    p._open_tool(dev_ops.get("saturation")); p._apply_tool()
+    # click the first op's row (row 1) → editor opens with its values + tree selection
+    p._history_clicked(p.history_list.item(1))
+    assert p.tool_panel is not None
+    assert p.tool_panel.edit_index == 0
+    assert p.tool_panel.op.name == "levels"
+    assert p.tool_panel.params()["gamma"] == pytest.approx(1.4)
+    cur = p.toolbox.currentItem()
+    assert cur is not None and cur.data(0, Qt.UserRole) == "levels"
+
+
+def test_edit_last_step_updates_in_place(qapp):
+    p = _loaded_panel(qapp)
+    p._open_tool(dev_ops.get("levels")); p._apply_tool()
+    p._open_tool(dev_ops.get("saturation")); p.tool_panel._set("amount", 0.3); p._apply_tool()
+    assert len(p.doc.ops) == 2
+    p._history_clicked(p.history_list.item(2))    # edit the last step (saturation)
+    assert p.tool_panel.edit_index == 1
+    p.tool_panel._set("amount", 0.6)
+    p._apply_tool()                                # "Update step" (light, inline)
+    assert len(p.doc.ops) == 2                     # edited in place, not appended
+    assert p.doc.ops[1].params["amount"] == pytest.approx(0.6)
+
+
+def test_delete_step_from_editor_and_button(qapp):
+    p = _loaded_panel(qapp)
+    p._open_tool(dev_ops.get("levels")); p._apply_tool()
+    p._open_tool(dev_ops.get("saturation")); p._apply_tool()
+    p._open_tool(dev_ops.get("scnr")); p._apply_tool()
+    assert len(p.doc.ops) == 3
+    # delete the middle step via the editor
+    p._history_clicked(p.history_list.item(2))     # saturation (index 1)
+    p._delete_current_step()
+    assert [o.name for o in p.doc.ops] == ["levels", "scnr"]
+    # delete via the History "Delete step" button (select row 1 = levels)
+    p.history_list.setCurrentRow(1)
+    p._delete_selected_step()
+    assert [o.name for o in p.doc.ops] == ["scnr"]
 
 
 def test_geometry_tool_has_no_gate(qapp):
