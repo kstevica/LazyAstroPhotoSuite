@@ -551,7 +551,7 @@ class LazyDevelopPanel(QWidget):
         self._paint_target = "sky"
         self._proxy: Optional[np.ndarray] = None      # cached downscaled current result
         self._edit_proxy: Optional[np.ndarray] = None  # proxy of an edited step's input
-        self._auto_mask_names: set = set()            # masks created by Auto masks / Auto-develop
+        self._auto_mask_map: dict = {}                # canonical semantic name → installed name
         self._preview_kind: Optional[str] = None      # None | "full" | "proxy"
 
         self._preview_timer = QTimer(self)
@@ -1050,11 +1050,12 @@ class LazyDevelopPanel(QWidget):
         self._set_busy(True)
         self.status_label.setText("Analysing the whole image…")
         img = self.doc.result()                       # read-only in the worker
+        existing = set(self.doc.mask_names())          # reuse masks already in the library
 
         def fn(log, progress):
             log("Analysing the whole image + generating semantic masks…")
             from ..develop.auto import auto_develop_plan
-            return auto_develop_plan(img)
+            return auto_develop_plan(img, existing=existing)
 
         self.worker = CallableWorker(fn, mode="auto")
         self.worker.logline.connect(self.log_view.appendPlainText)
@@ -1301,26 +1302,23 @@ class LazyDevelopPanel(QWidget):
         self.worker.start()
 
     def _install_auto_masks(self, masks, steps=None):
-        """Add auto-generated masks without clobbering user masks; remap step gates.
+        """Add auto-generated masks non-destructively; remap step gates to installed names.
 
-        Previously auto-generated masks are cleared first (so re-running is idempotent),
-        then each mask is added under a unique name — a collision with a *user* mask bumps
-        it to 'Name 2' rather than overwriting it. ``steps`` gate names are remapped to the
-        installed names.
+        Never removes anything (so running Auto masks and Auto-develop can't delete each
+        other's masks or a user's library). A mask we generated before is refreshed in
+        place (idempotent re-runs, via the canonical→installed map); a collision with a
+        *user* mask bumps to 'Name 2' rather than overwriting it. ``steps`` gate names are
+        remapped to the installed names.
         """
-        # Clear the previous auto set so re-running is idempotent — but KEEP any mask a
-        # committed step still gates on (e.g. Auto-develop's "Star cores"), so running
-        # Auto masks after Auto-develop can't strand those steps into a suppressed no-op.
-        in_use = {op.mask for op in self.doc.ops if op.mask}
-        for n in list(self._auto_mask_names):
-            if n not in in_use:
-                self.doc.remove_mask(n)
-        self._auto_mask_names = set()
         name_map = {}
         for name, m in masks.items():
-            n = self._unique_mask_name(name)
+            prev = self._auto_mask_map.get(name)
+            if prev and prev in self.doc.masks:
+                n = prev                              # refresh our own mask in place
+            else:
+                n = self._unique_mask_name(name)      # first time / deleted → don't clobber user
             self.doc.add_mask(n, m)
-            self._auto_mask_names.add(n)
+            self._auto_mask_map[name] = n
             name_map[name] = n
         if steps:
             for s in steps:

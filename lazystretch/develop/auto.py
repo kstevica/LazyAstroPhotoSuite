@@ -169,16 +169,18 @@ _SEMANTIC_GATES = {
 }
 
 
-def auto_develop_plan(img: np.ndarray, snr=None) -> dict:
+def auto_develop_plan(img: np.ndarray, snr=None, existing=None) -> dict:
     """Recipe (``analyze``) + the semantic masks each step should be gated by.
 
     Returns ``{"steps": [{name, params, reason, mask, mask_invert}], "masks": {name: array}}``.
-    Only the semantic masks actually referenced by the recipe are returned, so the caller
-    adds exactly those to the mask library.
+    Only the masks the caller must ADD are in ``masks``; if a gate's mask is already in the
+    library (``existing`` = a collection of current mask names) it is reused by name and NOT
+    recomputed — so masks you generated/refined with "Auto masks" are the ones used.
     """
     from .semantic import segment
     from .masks import combine_masks
 
+    existing = set(existing or ())
     steps = analyze(img)
     try:
         sem = segment(img, snr)
@@ -200,7 +202,10 @@ def auto_develop_plan(img: np.ndarray, snr=None) -> dict:
         if gate is None:
             continue
         mname, invert = gate
-        if mname in available:
+        if mname in existing:                 # already in the library → reuse it by name
+            s["mask"] = mname
+            s["mask_invert"] = invert
+        elif mname in available:              # not in the library → we'll add our own
             s["mask"] = mname
             s["mask_invert"] = invert
             used[mname] = available[mname]

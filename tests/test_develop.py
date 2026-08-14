@@ -379,6 +379,19 @@ def test_blend_suppresses_a_deleted_mask_gate():
     assert np.allclose(doc.result(), doc.base)                 # suppressed, NOT flooded
 
 
+def test_auto_develop_plan_reuses_existing_library_masks():
+    # if a gate's mask is already in the library, the plan reuses it (does not recompute)
+    from lazystretch.develop.auto import auto_develop_plan
+    img = _dirty_image()
+    base = auto_develop_plan(img)                      # nothing in library
+    gate_names = {s["mask"] for s in base["steps"] if s.get("mask")}
+    assert gate_names
+    # pretend the whole gate set already exists in the library
+    plan = auto_develop_plan(img, existing=gate_names)
+    assert not plan["masks"]                           # nothing to add — all reused
+    assert {s["mask"] for s in plan["steps"] if s.get("mask")} == gate_names
+
+
 def test_auto_develop_plan_gates_steps_with_semantic_masks():
     from lazystretch.develop.auto import auto_develop_plan, _SEMANTIC_GATES
     img = _dirty_image()
