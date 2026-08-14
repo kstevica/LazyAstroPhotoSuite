@@ -41,6 +41,17 @@ from PySide6.QtWidgets import (
 
 _ASSETS = Path(__file__).parent / "assets"
 
+try:
+    from .. import __version__ as _VERSION           # package source of truth
+except Exception:
+    _VERSION = "0.1.0"
+
+# Background animation: a subtle clockwise rotation + zoom-in at full phase. BASE_SCALE
+# over-scales enough that the rotated/zoomed image never reveals a frame edge.
+_BG_MAX_ANGLE = 3.2      # degrees
+_BG_BASE_SCALE = 1.22
+_BG_ZOOM = 0.10
+
 # The tools, in pipeline order. group: "master" → "process" → "solar".
 _TOOLS = [
     {"key": "stack", "brand": "LazyStack", "role": "Integrate", "group": "master",
@@ -102,7 +113,7 @@ class ToolCard(QFrame):
         # is NOT reset — the tile stays wherever the pulse left it.
         self._zoom = 1.0
         self._zoom_anim = QVariantAnimation(self)
-        self._zoom_anim.setDuration(2600)
+        self._zoom_anim.setDuration(6400)                 # slow breathing zoom
         self._zoom_anim.setKeyValueAt(0.0, 1.0)
         self._zoom_anim.setKeyValueAt(0.5, 1.06)
         self._zoom_anim.setKeyValueAt(1.0, 1.0)
@@ -215,17 +226,18 @@ class LauncherPage(QWidget):
         self._bg = QPixmap(str(_ASSETS / "launcher_bg.jpg"))
         self._bg_scaled: Optional[QPixmap] = None
         self._bg_key = None
-        self._pan = 0.0                          # -1 … 1, drives a subtle horizontal drift
+        self._phase = 0.0                        # 0 … 1 … 0, drives a slow rotate + zoom-in
 
-        # Very slow left → right → left drift of the background (over-scaled for slack).
-        self._pan_anim = QVariantAnimation(self)
-        self._pan_anim.setDuration(48000)
-        self._pan_anim.setKeyValueAt(0.0, -1.0)
-        self._pan_anim.setKeyValueAt(0.5, 1.0)
-        self._pan_anim.setKeyValueAt(1.0, -1.0)
-        self._pan_anim.setEasingCurve(QEasingCurve.InOutSine)
-        self._pan_anim.setLoopCount(-1)
-        self._pan_anim.valueChanged.connect(self._set_pan)
+        # Very slow rotate (a few degrees, clockwise) + gentle zoom-in and back, so the
+        # backdrop feels alive without drifting off the frame (over-scaled to stay covered).
+        self._bg_anim = QVariantAnimation(self)
+        self._bg_anim.setDuration(66000)
+        self._bg_anim.setKeyValueAt(0.0, 0.0)
+        self._bg_anim.setKeyValueAt(0.5, 1.0)
+        self._bg_anim.setKeyValueAt(1.0, 0.0)
+        self._bg_anim.setEasingCurve(QEasingCurve.InOutSine)
+        self._bg_anim.setLoopCount(-1)
+        self._bg_anim.valueChanged.connect(self._set_phase)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(56, 40, 56, 40)
@@ -272,6 +284,15 @@ class LauncherPage(QWidget):
         root.addLayout(center)
         root.addStretch(3)
 
+        # credit footer, bottom-right
+        foot = QHBoxLayout()
+        foot.addStretch(1)
+        footer = QLabel(f"LazySuite by Stevica Kuharski   ·   v{_VERSION}   ·   @kstevica")
+        footer.setStyleSheet(
+            "color: rgba(196,206,228,0.60); background: transparent; font-size: 12px;")
+        foot.addWidget(footer)
+        root.addLayout(foot)
+
     def _arrow(self) -> QVBoxLayout:
         col = QVBoxLayout()
         col.addStretch(1)
@@ -283,17 +304,17 @@ class LauncherPage(QWidget):
         col.addStretch(1)
         return col
 
-    def _set_pan(self, v):
-        self._pan = float(v)
+    def _set_phase(self, v):
+        self._phase = float(v)
         self.update()
 
     def _ensure_bg(self):
-        """Cache the background over-scaled by ~7% (giving horizontal slack to drift within)."""
+        """Cache the background cover-scaled to the frame (the paint transform adds the
+        rotate/zoom over-scale on top)."""
         key = (self.width(), self.height())
         if self._bg_key == key or self._bg.isNull() or self.width() < 2:
             return
-        target = QSize(int(self.width() * 1.07), int(self.height() * 1.07))
-        self._bg_scaled = self._bg.scaled(target, Qt.KeepAspectRatioByExpanding,
+        self._bg_scaled = self._bg.scaled(self.size(), Qt.KeepAspectRatioByExpanding,
                                           Qt.SmoothTransformation)
         self._bg_key = key
 
@@ -302,23 +323,30 @@ class LauncherPage(QWidget):
         super().resizeEvent(e)
 
     def showEvent(self, e):
-        if self._pan_anim.state() != QVariantAnimation.Running:
-            self._pan_anim.start()
+        if self._bg_anim.state() != QVariantAnimation.Running:
+            self._bg_anim.start()
         super().showEvent(e)
 
     def hideEvent(self, e):
-        self._pan_anim.stop()                    # don't burn CPU while a tool is open
+        self._bg_anim.stop()                     # don't burn CPU while a tool is open
         super().hideEvent(e)
 
     def paintEvent(self, _e):
         p = QPainter(self)
         p.setRenderHint(QPainter.SmoothPixmapTransform)
+        p.setRenderHint(QPainter.Antialiasing)
         self._ensure_bg()
         if self._bg_scaled is not None:
-            cx = (self._bg_scaled.width() - self.width()) // 2
-            cy = (self._bg_scaled.height() - self.height()) // 2
-            panx = int(self._pan * cx * 0.6)     # subtle drift, always within the slack
-            p.drawPixmap(-cx + panx, -cy, self._bg_scaled)
+            # rotate a few degrees clockwise + zoom in, about the frame centre; BASE_SCALE
+            # keeps the rotated image covering the frame at every phase.
+            p.save()
+            p.translate(self.width() / 2, self.height() / 2)
+            p.rotate(_BG_MAX_ANGLE * self._phase)
+            s = _BG_BASE_SCALE * (1.0 + _BG_ZOOM * self._phase)
+            p.scale(s, s)
+            p.drawPixmap(-self._bg_scaled.width() // 2, -self._bg_scaled.height() // 2,
+                         self._bg_scaled)
+            p.restore()
         else:
             p.fillRect(self.rect(), QColor(8, 10, 18))
         # darken so the tiles and text read clearly

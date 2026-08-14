@@ -85,10 +85,10 @@ def test_launcher_builds_grouped_cards(qapp):
 def test_launcher_animations(qapp):
     from lazystretch.gui.shell import LauncherPage, ToolCard
     page = LauncherPage(on_open=lambda k: None)
-    # background pan loops and drives a bounded offset
-    assert page._pan_anim.loopCount() == -1
-    page._set_pan(0.7)
-    assert abs(page._pan - 0.7) < 1e-9
+    # background rotate/zoom loops and drives a bounded 0..1 phase
+    assert page._bg_anim.loopCount() == -1
+    page._set_phase(0.7)
+    assert abs(page._phase - 0.7) < 1e-9
     # card hover zoom: stopping (mouse-out) FREEZES the zoom, it is not reset to 1.0
     c = page.findChildren(ToolCard)[0]
     c._zoom_anim.start()
