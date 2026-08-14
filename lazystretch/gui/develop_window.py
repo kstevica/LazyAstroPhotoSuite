@@ -669,6 +669,7 @@ class LazyDevelopPanel(QWidget):
 
     def _build_mask_group(self) -> QWidget:
         box = QGroupBox("Masks")
+        self.mask_group = box
         v = QVBoxLayout(box)
         hint = QLabel("A library any tool can gate on. Double-click to rename.")
         hint.setStyleSheet("color: gray;"); hint.setWordWrap(True)
@@ -1245,7 +1246,7 @@ class LazyDevelopPanel(QWidget):
 
     # ------------------------------------------------------------------- masks
     def _make_lum_mask(self, kind):
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         m = dev_masks.luminosity_mask(self.doc.result(), kind, depth=2)
         name = self._unique_mask_name(f"Lum {kind}")
@@ -1253,14 +1254,14 @@ class LazyDevelopPanel(QWidget):
         self._refresh_masks()
 
     def _make_highlights_mask(self):
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         m = dev_masks.highlights_mask(self.doc.result(), 0.6)
         self.doc.add_mask(self._unique_mask_name("Highlights"), m)
         self._refresh_masks()
 
     def _make_range_mask(self):
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         m = dev_masks.range_mask(self.doc.result(), 0.0, 0.4)
         self.doc.add_mask(self._unique_mask_name("Sky"), m)
@@ -1322,7 +1323,7 @@ class LazyDevelopPanel(QWidget):
         self.combine_btn.setEnabled(n >= (1 if invert else 2))
 
     def _rename_mask(self, item):
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         old = item.text()
         new, ok = QInputDialog.getText(self, "Rename mask", "New name:", text=old)
@@ -1336,7 +1337,7 @@ class LazyDevelopPanel(QWidget):
             QMessageBox.information(self, "Rename mask", "That name is already in use.")
 
     def _combine_masks(self):
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         names = self.doc.mask_names()
         op = ("intersect", "union", "subtract", "invert")[self.combine_op.currentIndex()]
@@ -1369,7 +1370,7 @@ class LazyDevelopPanel(QWidget):
 
     def _delete_mask(self):
         item = self.mask_list.currentItem()
-        if item is None or self.doc is None:
+        if item is None or self.doc is None or self._busy():
             return
         self.doc.remove_mask(item.text())
         if self._showing_mask == item.text():
@@ -1434,7 +1435,7 @@ class LazyDevelopPanel(QWidget):
         # also read/mutate it on the main thread (avoids a cross-thread cache race).
         for b in (self.open_btn, self.save_btn, self.save_recipe_btn, self.load_recipe_btn,
                   self.auto_btn, self.auto_masks_btn, self.toolbox, self.tool_holder,
-                  self.history_list):
+                  self.history_list, self.mask_group):
             b.setEnabled(not busy)
         if busy:
             self.undo_btn.setEnabled(False)
