@@ -1308,8 +1308,13 @@ class LazyDevelopPanel(QWidget):
         it to 'Name 2' rather than overwriting it. ``steps`` gate names are remapped to the
         installed names.
         """
+        # Clear the previous auto set so re-running is idempotent — but KEEP any mask a
+        # committed step still gates on (e.g. Auto-develop's "Star cores"), so running
+        # Auto masks after Auto-develop can't strand those steps into a suppressed no-op.
+        in_use = {op.mask for op in self.doc.ops if op.mask}
         for n in list(self._auto_mask_names):
-            self.doc.remove_mask(n)
+            if n not in in_use:
+                self.doc.remove_mask(n)
         self._auto_mask_names = set()
         name_map = {}
         for name, m in masks.items():

@@ -391,6 +391,31 @@ def test_auto_masks_do_not_clobber_user_masks(qapp):
     assert len(p.doc.mask_names()) == n
 
 
+def test_auto_masks_keep_masks_used_by_committed_steps(qapp):
+    # running Auto masks after Auto-develop must not strand a committed step's gate
+    from lazystretch.develop.auto import auto_develop_plan
+    from lazystretch.develop.semantic import segment
+    rng = np.random.default_rng(0); h, w = 120, 150
+    grad = np.broadcast_to(np.linspace(0, 0.14, w), (h, w))
+    img = np.clip(np.stack([0.11 + grad, 0.16 + grad, 0.09 + grad], -1).astype(np.float32)
+                  + 0.02 * rng.standard_normal((h, w, 3)).astype(np.float32), 0, 1)
+    from lazystretch.gui.develop_window import LazyDevelopPanel
+    from lazystretch.develop import DevelopDocument
+    p = LazyDevelopPanel(); p.doc = DevelopDocument(img)
+    p._set_enabled_tools(True); p._refresh_canvas(fit=True)
+
+    plan = auto_develop_plan(p.doc.result())
+    p._install_auto_masks(plan["masks"], plan["steps"])
+    for s in plan["steps"]:
+        p.doc.apply_op(s["name"], s["params"], mask=s.get("mask"),
+                       mask_invert=s.get("mask_invert", False))
+    used = {s["mask"] for s in plan["steps"] if s.get("mask")}
+    assert used                                         # composites like "Star cores"
+    p._add_auto_masks(segment(p.doc.result()))          # now click Auto masks
+    assert used <= set(p.doc.mask_names())              # in-use masks survived
+    assert all(op.mask in p.doc.masks for op in p.doc.ops if op.mask)   # every gate resolves
+
+
 def test_busy_disables_view_and_mask_controls(qapp):
     p = _loaded_panel(qapp)
     p._set_busy(True)
