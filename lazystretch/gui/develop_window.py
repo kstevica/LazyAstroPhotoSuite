@@ -726,13 +726,20 @@ class LazyDevelopPanel(QWidget):
         self._placeholder.setVisible(False)
         self._select_tree_tool(op.name)
         if panel.wants_rect():
+            # A crop's rectangle is fractions of its INPUT. Show that input (not a cropped
+            # preview) so the rubber-band maps to the right pixels, both for a new crop
+            # (current view) and when editing an existing crop step (its cached input).
+            base = (self.doc.input_before(panel.edit_index)
+                    if panel.edit_index is not None else self.doc.result())
+            self.canvas.set_image(np.asarray(base, dtype=np.float32), keep_view=True)
+            self._preview_kind = None
             self.canvas.set_rect_mode(True)
             self.canvas.show_rect(rect_default)
         self._schedule_preview()
 
     def _open_tool(self, op: "dev_ops.Op"):
         """Start a NEW adjustment (inserted at the current history position on Apply)."""
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         if op.needs_color and not self.doc.is_color:
             self.status_label.setText(f"{op.label} needs a colour image.")
@@ -743,7 +750,7 @@ class LazyDevelopPanel(QWidget):
 
     def _open_tool_for_edit(self, index: int):
         """Open the tool for an EXISTING step, populated with its stored values."""
-        if self.doc is None or not (0 <= index < len(self.doc.ops)):
+        if self.doc is None or self._busy() or not (0 <= index < len(self.doc.ops)):
             return
         op = dev_ops.get(self.doc.ops[index].name)
         self._cancel_tool(refresh=False)
@@ -786,6 +793,12 @@ class LazyDevelopPanel(QWidget):
         gate = self.tool_panel.gate()
         idx = self.tool_panel.edit_index
         editing = idx is not None
+        if self.tool_panel.wants_rect():
+            # Crop: the canvas keeps showing the input + rubber-band overlay; the crop is
+            # only applied on Apply/Update (previewing it would break the rect mapping).
+            self.status_label.setText(f"{op.label}: drag a rectangle, then "
+                                      f"{'Update' if editing else 'Apply'}.")
+            return
         try:
             if editing:
                 # Editing an existing step: preview the op re-applied to its own input
@@ -813,7 +826,11 @@ class LazyDevelopPanel(QWidget):
         except Exception as exc:
             self.status_label.setText(f"{op.label}: {exc}")
             return
+        # Clear "Show original" without re-entering _refresh_canvas (which would reset the
+        # preview resolution tracking and re-fit the view).
+        self.before_btn.blockSignals(True)
         self.before_btn.setChecked(False)
+        self.before_btn.blockSignals(False)
         # Fit the first time we switch preview resolution (proxy↔full); keep zoom after.
         keep = (kind == self._preview_kind)
         self._preview_kind = kind
@@ -821,6 +838,16 @@ class LazyDevelopPanel(QWidget):
         verb = "Editing" if editing else "Previewing"
         suffix = "  (proxy — Apply computes full resolution)" if kind == "proxy" else ""
         self.status_label.setText(f"{verb} {op.label}{suffix}")
+
+    def _apply_is_heavy(self, op: "dev_ops.Op", idx: Optional[int]) -> bool:
+        """Whether committing this op should run in the worker (off the UI thread).
+
+        True if the op itself is heavy OR the recompute it triggers re-runs any heavy
+        KEPT downstream op: a replace re-runs ops[idx+1:]; an insert re-runs ops[cursor:].
+        """
+        start = idx + 1 if idx is not None else self.doc.cursor
+        downstream_heavy = any(dev_ops.get(o.name).heavy for o in self.doc.ops[start:])
+        return op.heavy or downstream_heavy
 
     def _apply_tool(self):
         if self.tool_panel is None or self.doc is None or self._busy():
@@ -837,8 +864,7 @@ class LazyDevelopPanel(QWidget):
                 self.doc.replace_op(idx, params, **gate)        # edit in place + recompute
 
         verb = "Updated" if idx is not None else "Applied"
-        # Heavy (or an edit that recomputes downstream) runs in a worker.
-        heavy = op.heavy or (idx is not None and idx < len(self.doc.ops) - 1)
+        heavy = self._apply_is_heavy(op, idx)
         if not heavy:
             commit()
             self._finish_apply(verb, op.label)
@@ -866,7 +892,8 @@ class LazyDevelopPanel(QWidget):
         self._refresh_history()
 
     def _delete_current_step(self):
-        if self.tool_panel is None or self.tool_panel.edit_index is None or self.doc is None:
+        if self.tool_panel is None or self.tool_panel.edit_index is None or self.doc is None \
+                or self._busy():
             return
         idx = self.tool_panel.edit_index
         self.doc.delete_op(idx)
@@ -878,6 +905,8 @@ class LazyDevelopPanel(QWidget):
 
     def _on_failed(self, msg):
         self._set_busy(False)
+        if self.doc is not None:
+            self._refresh_history()
         QMessageBox.critical(self, "Tool failed", msg)
 
     # ----------------------------------------------------------------- history
@@ -898,7 +927,7 @@ class LazyDevelopPanel(QWidget):
 
     def _history_clicked(self, item):
         """Navigate to a step (keeping the rest) and open it for editing."""
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         row = self.history_list.row(item)              # 0 = base, k = after op k
         self.doc.goto(row)
@@ -911,7 +940,7 @@ class LazyDevelopPanel(QWidget):
         self._refresh_history()
 
     def _delete_selected_step(self):
-        if self.doc is None:
+        if self.doc is None or self._busy():
             return
         row = self.history_list.currentRow()
         if row >= 1:
@@ -923,12 +952,12 @@ class LazyDevelopPanel(QWidget):
             self._refresh_history()
 
     def _undo(self):
-        if self.doc and self.doc.undo():
+        if self.doc and not self._busy() and self.doc.undo():
             self._cancel_tool(refresh=False)
             self._refresh_canvas(); self._refresh_history()
 
     def _redo(self):
-        if self.doc and self.doc.redo():
+        if self.doc and not self._busy() and self.doc.redo():
             self._cancel_tool(refresh=False)
             self._refresh_canvas(); self._refresh_history()
 
@@ -1044,5 +1073,16 @@ class LazyDevelopPanel(QWidget):
         self.progress.setRange(0, 0) if busy else self.progress.setRange(0, 100)
         if not busy:
             self.progress.setValue(0)
-        for b in (self.open_btn, self.save_btn, self.toolbox):
+        # While the worker mutates the document off-thread, lock every control that could
+        # also read/mutate it on the main thread (avoids a cross-thread cache race).
+        for b in (self.open_btn, self.save_btn, self.save_recipe_btn, self.load_recipe_btn,
+                  self.toolbox, self.tool_holder, self.history_list):
             b.setEnabled(not busy)
+        if busy:
+            self.undo_btn.setEnabled(False)
+            self.redo_btn.setEnabled(False)
+            self.del_step_btn.setEnabled(False)
+        elif self.doc is not None:
+            self.undo_btn.setEnabled(self.doc.can_undo())
+            self.redo_btn.setEnabled(self.doc.can_redo())
+            self.del_step_btn.setEnabled(len(self.doc.ops) > 0)

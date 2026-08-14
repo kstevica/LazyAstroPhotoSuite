@@ -199,6 +199,60 @@ def test_heavy_tool_previews_on_downscaled_proxy(qapp):
     assert p.canvas.current_array().shape[:2] == (1500, 2400)
 
 
+def test_apply_worker_decision_accounts_for_downstream_heavy(qapp):
+    # regression: inserting a LIGHT op ahead of a kept HEAVY op must use the worker,
+    # not recompute the heavy downstream op synchronously on the UI thread.
+    p = _loaded_panel(qapp)
+    p.doc.apply_op("levels", {})          # light
+    p.doc.apply_op("hdr", {})             # heavy (applied directly on the doc)
+    light = dev_ops.get("levels")
+    assert not light.heavy
+    p.doc.goto(1)                          # cursor between levels and hdr
+    assert p._apply_is_heavy(light, None) is True     # insert here → hdr recomputed → worker
+    assert p._apply_is_heavy(light, 0) is True        # edit levels → hdr downstream → worker
+    assert p._apply_is_heavy(dev_ops.get("hdr"), 1) is True   # hdr itself heavy
+    p.doc.goto(2)                          # tip, nothing downstream
+    assert p._apply_is_heavy(light, None) is False
+
+
+def test_history_controls_guarded_while_busy(qapp, monkeypatch):
+    # regression: while the worker mutates the doc, undo/redo/history/delete must no-op
+    # (otherwise a cross-thread cache race crashes or corrupts the history).
+    p = _loaded_panel(qapp)
+    p._open_tool(dev_ops.get("levels")); p._apply_tool()
+    p._open_tool(dev_ops.get("saturation")); p._apply_tool()
+    n, cur = len(p.doc.ops), p.doc.cursor
+    monkeypatch.setattr(p, "_busy", lambda: True)
+    p._undo(); assert p.doc.cursor == cur
+    p._redo(); assert p.doc.cursor == cur
+    p._history_clicked(p.history_list.item(0)); assert p.doc.cursor == cur
+    p.history_list.setCurrentRow(1); p._delete_selected_step()
+    assert len(p.doc.ops) == n
+
+
+def test_edit_crop_shows_input_not_cropped_output(qapp):
+    # regression: editing a Crop step must display the crop's INPUT so the rubber-band
+    # rectangle maps to the right pixels (not the already-cropped, smaller preview).
+    p = _loaded_panel(qapp)                 # 50 x 60 image
+    p._open_tool(dev_ops.get("crop"))
+    p.tool_panel.set_rect({"x0": 0.0, "y0": 0.0, "x1": 0.5, "y1": 1.0})
+    p._apply_tool()
+    assert p.doc.result().shape[1] == 30    # cropped to the left half
+    p._history_clicked(p.history_list.item(1))   # edit the crop step
+    assert p.tool_panel.edit_index == 0
+    assert p.canvas.current_array().shape[1] == 60   # canvas shows the full input
+
+
+def test_preview_clears_show_original_without_reentry(qapp):
+    p = _loaded_panel(qapp)
+    p._open_tool(dev_ops.get("levels"))
+    p.before_btn.setChecked(True)
+    p.tool_panel._set("gamma", 1.3)
+    p._do_live_preview()
+    assert not p.before_btn.isChecked()
+    assert p._preview_kind == "full"
+
+
 def test_recipe_file_roundtrip_through_panel(qapp, tmp_path, monkeypatch):
     import json
     from PySide6.QtWidgets import QFileDialog
