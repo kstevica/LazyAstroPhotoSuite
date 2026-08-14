@@ -36,7 +36,7 @@ lazystretch-gui = "lazystretch.gui.app:main"
 include = ["lazystretch*"]
 
 [tool.setuptools.package-data]
-lazystretch = ["data/*.json", "data/catalogs/*.csv"]
+lazystretch = ["data/*.json", "data/catalogs/*.csv", "gui/assets/*.jpg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

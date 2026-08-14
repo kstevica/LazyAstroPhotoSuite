@@ -57,9 +57,29 @@ def test_tree_click_opens_tool(qapp):
 
 def test_shell_registers_develop_tool(qapp):
     from lazystretch.gui import shell
-    keys = [t[0] for t in shell._TOOLS]
+    keys = [t["key"] for t in shell._TOOLS]
     assert "develop" in keys
     assert shell._TITLES["develop"] == "LazyDevelop"
+
+
+def test_launcher_builds_grouped_cards(qapp):
+    from lazystretch.gui.shell import LauncherPage, ToolCard, _ASSETS, _TOOLS
+    opened = []
+    page = LauncherPage(on_open=lambda k: opened.append(k))
+    cards = page.findChildren(ToolCard)
+    assert {c._spec["key"] for c in cards} == {"stack", "stretch", "develop", "moonsun"}
+    # the pipeline groups: stack is "master", stretch+develop "process", moonsun "solar"
+    groups = {t["key"]: t["group"] for t in _TOOLS}
+    assert groups["stack"] == "master"
+    assert groups["stretch"] == groups["develop"] == "process"
+    assert groups["moonsun"] == "solar"
+    # bundled background + thumbnails exist
+    assert (_ASSETS / "launcher_bg.jpg").exists()
+    for c in cards:
+        assert (_ASSETS / c._spec["thumb"]).exists()
+    # clicking a card opens its tool
+    next(c for c in cards if c._spec["key"] == "develop")._on_open("develop")
+    assert opened == ["develop"]
 
 
 def test_open_apply_light_tool_grows_history(qapp):
