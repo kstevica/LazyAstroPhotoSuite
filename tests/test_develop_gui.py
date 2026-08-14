@@ -128,6 +128,29 @@ def test_canvas_rect_mode(qapp):
     c.set_rect_mode(False)
 
 
+def test_heavy_tool_previews_on_downscaled_proxy(qapp):
+    from lazystretch.gui.develop_window import LazyDevelopPanel, PROXY_MAX_DIM
+    big = np.clip(0.2 + 0.05 * np.random.default_rng(0).standard_normal((1500, 2400, 3)),
+                  0, 1).astype(np.float32)
+    p = LazyDevelopPanel()
+    p.doc = DevelopDocument(big)
+    p._set_enabled_tools(True)
+    p._refresh_canvas(fit=True)
+    p._open_tool(dev_ops.get("wavelet_sharpen"))     # heavy tool
+    p.tool_panel._set("sharpen3", 60)
+    p._do_live_preview()                              # bypass the debounce timer
+    shown = p.canvas.current_array()
+    assert shown is not None
+    assert max(shown.shape[:2]) <= PROXY_MAX_DIM      # displayed a downscaled proxy
+    assert p._preview_kind == "proxy"
+    # a light tool previews at full resolution
+    p._open_tool(dev_ops.get("levels"))
+    p.tool_panel._set("gamma", 1.2)
+    p._do_live_preview()
+    assert p._preview_kind == "full"
+    assert p.canvas.current_array().shape[:2] == (1500, 2400)
+
+
 def test_recipe_file_roundtrip_through_panel(qapp, tmp_path, monkeypatch):
     import json
     from PySide6.QtWidgets import QFileDialog

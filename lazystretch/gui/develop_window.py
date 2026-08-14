@@ -46,6 +46,23 @@ from .preview import PreviewView
 from .widgets import FloatSlider, RunLogView
 from .worker import CallableWorker
 
+# Heavy tools (wavelets, HDR, ABE, NR, deconv, …) preview on a downscaled proxy of the
+# current result so sliders stay responsive; Apply always recomputes at full resolution.
+PROXY_MAX_DIM = 1400
+
+
+def _downscale_rgb(a: np.ndarray, max_dim: int = PROXY_MAX_DIM) -> np.ndarray:
+    """Anti-aliased area downscale so the long edge ≤ max_dim (no-op if already small)."""
+    a = np.asarray(a, dtype=np.float32)
+    h, w = a.shape[:2]
+    m = max(h, w)
+    if m <= max_dim:
+        return np.ascontiguousarray(a)
+    f = int(np.ceil(m / max_dim))
+    from scipy.ndimage import uniform_filter
+    size = (f, f, 1) if a.ndim == 3 else f
+    return np.ascontiguousarray(uniform_filter(a, size=size, mode="nearest")[::f, ::f])
+
 
 # =============================================================================
 # Curve editor widget
@@ -389,6 +406,8 @@ class LazyDevelopPanel(QWidget):
         self.tool_panel: Optional[ToolPanel] = None
         self._showing_mask: Optional[str] = None
         self._paint_target = "sky"
+        self._proxy: Optional[np.ndarray] = None      # cached downscaled current result
+        self._preview_kind: Optional[str] = None      # None | "full" | "proxy"
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -683,24 +702,40 @@ class LazyDevelopPanel(QWidget):
             return
         self._preview_timer.start()
 
+    def _get_proxy(self) -> np.ndarray:
+        """A cached, downscaled copy of the current committed result (for heavy previews)."""
+        if self._proxy is None and self.doc is not None:
+            self._proxy = _downscale_rgb(self.doc.result())
+        return self._proxy
+
     def _do_live_preview(self):
         if self.tool_panel is None or self.doc is None or self._busy():
             return
         op = self.tool_panel.op
         params = self.tool_panel.params()
         gate = self.tool_panel.gate()
-        if op.heavy:
-            # heavy: don't auto-run on every tick; show current result, wait for Apply.
-            self.status_label.setText(f"{op.label}: press Apply to compute (heavy).")
-            return
         try:
-            out = self.doc.preview_op(op.name, params, **gate)
+            if op.heavy:
+                # Preview heavy tools on a downscaled proxy so sliders stay responsive.
+                # Apply still recomputes at full resolution (see _apply_tool).
+                proxy = self._get_proxy()
+                pdoc = DevelopDocument(proxy)
+                pdoc.masks = self.doc.masks            # _blend resizes masks to proxy size
+                out = pdoc.preview_op(op.name, params, **gate)
+                kind = "proxy"
+            else:
+                out = self.doc.preview_op(op.name, params, **gate)
+                kind = "full"
         except Exception as exc:
             self.status_label.setText(f"{op.label}: {exc}")
             return
         self.before_btn.setChecked(False)
-        self.canvas.set_image(np.asarray(out, dtype=np.float32), keep_view=True)
-        self.status_label.setText(f"Previewing {op.label}")
+        # Fit the first time we switch preview resolution (proxy↔full); keep zoom after.
+        keep = (kind == self._preview_kind)
+        self._preview_kind = kind
+        self.canvas.set_image(np.asarray(out, dtype=np.float32), keep_view=keep)
+        suffix = "  (proxy — Apply computes full resolution)" if kind == "proxy" else ""
+        self.status_label.setText(f"Previewing {op.label}{suffix}")
 
     def _apply_tool(self):
         if self.tool_panel is None or self.doc is None or self._busy():
@@ -852,6 +887,8 @@ class LazyDevelopPanel(QWidget):
         if self.doc is None:
             return
         self._showing_mask = None
+        self._proxy = None                 # committed result changed → rebuild proxy lazily
+        self._preview_kind = None
         self.canvas.set_image(np.asarray(self.doc.result(), dtype=np.float32),
                               keep_view=not fit)
 

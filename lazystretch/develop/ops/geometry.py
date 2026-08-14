@@ -35,9 +35,10 @@ def _edge_crop(img: np.ndarray, p: dict) -> np.ndarray:
 
 def _orient(img: np.ndarray, p: dict) -> np.ndarray:
     out = img
-    rot = int(p.get("rotate", 0))
-    if rot:
-        out = np.rot90(out, k=(rot // 90) % 4)
+    # "rotate" is a choice index: 0=0°, 1=90° CCW, 2=180°, 3=270° CCW → np.rot90 k.
+    k = int(p.get("rotate", 0)) % 4
+    if k:
+        out = np.rot90(out, k=k)
     if p.get("flip_h"):
         out = out[:, ::-1]
     if p.get("flip_v"):

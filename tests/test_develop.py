@@ -74,6 +74,24 @@ def test_apply_clears_redo_stack():
     assert not doc.can_redo()
 
 
+def test_orient_actually_rotates_and_flips():
+    # regression: rotate is a choice index (0..3), not degrees — must not compute k=0.
+    img = np.zeros((10, 20, 3), np.float32)
+    img[0, 0] = [1, 1, 1]                       # marker at top-left
+    o = ops.get("orient")
+    r90 = np.asarray(o.fn(img, o.merged({"rotate": 1})))     # 90° CCW
+    assert r90.shape[:2] == (20, 10)
+    assert r90[-1, 0, 0] == 1                   # top-left → bottom-left
+    r180 = np.asarray(o.fn(img, o.merged({"rotate": 2})))
+    assert r180.shape[:2] == (10, 20) and r180[-1, -1, 0] == 1
+    r270 = np.asarray(o.fn(img, o.merged({"rotate": 3})))
+    assert r270.shape[:2] == (20, 10)
+    fh = np.asarray(o.fn(img, o.merged({"flip_h": True})))
+    assert fh[0, -1, 0] == 1                    # top-left → top-right
+    fv = np.asarray(o.fn(img, o.merged({"flip_v": True})))
+    assert fv[-1, 0, 0] == 1
+
+
 def test_crop_changes_shape_and_survives_history():
     doc = DevelopDocument(_demo_rgb())
     doc.apply_op("crop", {"rect": {"x0": 0.25, "y0": 0.25, "x1": 0.75, "y1": 0.75}})
