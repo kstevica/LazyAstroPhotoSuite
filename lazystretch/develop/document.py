@@ -18,17 +18,20 @@ import numpy as np
 
 
 def _as_f32(a: np.ndarray) -> np.ndarray:
-    """Coerce to a contiguous float32 array in [0, 1], stripping any alpha channel."""
+    """Coerce to a contiguous float32 array in [0, 1], stripping alpha; NaN→0, ±inf→0/1."""
     a = np.asarray(a, dtype=np.float32)
     if a.ndim == 3 and a.shape[2] == 4:
         a = a[..., :3]
     if a.ndim == 3 and a.shape[2] == 1:
         a = a[..., 0]
+    a = np.nan_to_num(a, nan=0.0, posinf=1.0, neginf=0.0)
     return np.clip(np.ascontiguousarray(a), 0.0, 1.0)
 
 
 def _clip01(a: np.ndarray) -> np.ndarray:
-    return np.clip(np.asarray(a, dtype=np.float32), 0.0, 1.0)
+    """Clip to [0,1] and guarantee finiteness (a stray NaN must never reach the canvas)."""
+    a = np.nan_to_num(np.asarray(a, dtype=np.float32), nan=0.0, posinf=1.0, neginf=0.0)
+    return np.clip(a, 0.0, 1.0)
 
 
 def _resize2d(m: np.ndarray, shape_hw) -> np.ndarray:
@@ -113,10 +116,10 @@ class DevelopDocument:
 
     # ------------------------------------------------------------------- masks
     def add_mask(self, name: str, mask2d: np.ndarray) -> None:
-        m = np.clip(np.asarray(mask2d, dtype=np.float32), 0.0, 1.0)
+        m = np.nan_to_num(np.asarray(mask2d, dtype=np.float32), nan=0.0, posinf=1.0, neginf=0.0)
         if m.ndim == 3:
             m = m.mean(axis=2)
-        self.masks[name] = m
+        self.masks[name] = np.clip(m, 0.0, 1.0)
 
     def remove_mask(self, name: str) -> None:
         self.masks.pop(name, None)
@@ -159,10 +162,13 @@ class DevelopDocument:
         weight: object = w
         if op.mask:
             m = self._mask_for(op.mask, orig.shape[:2])
-            if m is not None:
-                if op.mask_invert:
-                    m = 1.0 - m
-                weight = w * m
+            if m is None:
+                # The gate names a mask that no longer exists (e.g. it was deleted).
+                # Suppress the op rather than flood the whole frame with it.
+                return _clip01(orig)
+            if op.mask_invert:
+                m = 1.0 - m
+            weight = w * m
         if orig.ndim == 3 and isinstance(weight, np.ndarray) and weight.ndim == 2:
             weight = weight[..., None]
         return _clip01(orig + weight * (proc - orig))

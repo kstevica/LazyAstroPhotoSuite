@@ -154,3 +154,54 @@ def analyze(img: np.ndarray) -> List[Dict]:
 
     steps.sort(key=lambda s: _ORDER.index(s["name"]))
     return steps
+
+
+# --------------------------------------------------------------------------- semantic plan
+# How each auto step is gated by a semantic mask (name, invert): protect stellar cores from
+# over-saturation, keep noise reduction / chroma off the bright nebula + stars, enhance local
+# contrast only inside the nebula, roll off only the blown cores.
+_SEMANTIC_GATES = {
+    "saturation":       ("Star cores", True),      # boost colour everywhere EXCEPT star cores
+    "chroma_nr":        ("Detail (protect)", True),  # smooth chroma off the bright signal
+    "noise_reduction":  ("Detail (protect)", True),  # protect the detailed nebula + stars
+    "local_contrast":   ("Nebulosity", False),     # add structure only in the nebula
+    "highlight_rolloff": ("Cores", False),         # only the blown cores
+}
+
+
+def auto_develop_plan(img: np.ndarray, snr=None) -> dict:
+    """Recipe (``analyze``) + the semantic masks each step should be gated by.
+
+    Returns ``{"steps": [{name, params, reason, mask, mask_invert}], "masks": {name: array}}``.
+    Only the semantic masks actually referenced by the recipe are returned, so the caller
+    adds exactly those to the mask library.
+    """
+    from .semantic import segment
+    from .masks import combine_masks
+
+    steps = analyze(img)
+    try:
+        sem = segment(img, snr)
+    except Exception:
+        sem = {}
+
+    # Composite protection masks derived from the semantic set.
+    available = dict(sem)
+    if "Nebulosity" in sem and "Stars" in sem:
+        available["Detail (protect)"] = combine_masks(sem["Nebulosity"], sem["Stars"], "union")
+    if "Bright stars" in sem and "Cores" in sem:
+        available["Star cores"] = combine_masks(sem["Bright stars"], sem["Cores"], "union")
+
+    used: dict = {}
+    for s in steps:
+        s.setdefault("mask", None)
+        s.setdefault("mask_invert", False)
+        gate = _SEMANTIC_GATES.get(s["name"])
+        if gate is None:
+            continue
+        mname, invert = gate
+        if mname in available:
+            s["mask"] = mname
+            s["mask_invert"] = invert
+            used[mname] = available[mname]
+    return {"steps": steps, "masks": used}

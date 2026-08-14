@@ -514,7 +514,10 @@ class AutoPanel(QWidget):
 
         for s in steps:
             op = dev_ops.get(s["name"])
-            cb = QCheckBox(f"{op.label} — {s['reason']}")
+            gate = ""
+            if s.get("mask"):
+                gate = f"  ·  {'except ' if s.get('mask_invert') else 'in '}{s['mask']}"
+            cb = QCheckBox(f"{op.label} — {s['reason']}{gate}")
             cb.setChecked(True)
             cb.toggled.connect(lambda _=False: self.changed.emit())
             self._checks.append((cb, s))
@@ -548,6 +551,7 @@ class LazyDevelopPanel(QWidget):
         self._paint_target = "sky"
         self._proxy: Optional[np.ndarray] = None      # cached downscaled current result
         self._edit_proxy: Optional[np.ndarray] = None  # proxy of an edited step's input
+        self._auto_mask_names: set = set()            # masks created by Auto masks / Auto-develop
         self._preview_kind: Optional[str] = None      # None | "full" | "proxy"
 
         self._preview_timer = QTimer(self)
@@ -1048,22 +1052,27 @@ class LazyDevelopPanel(QWidget):
         img = self.doc.result()                       # read-only in the worker
 
         def fn(log, progress):
-            log("Analysing the whole image…")
-            from ..develop.auto import analyze
-            return {"steps": analyze(img)}
+            log("Analysing the whole image + generating semantic masks…")
+            from ..develop.auto import auto_develop_plan
+            return auto_develop_plan(img)
 
         self.worker = CallableWorker(fn, mode="auto")
         self.worker.logline.connect(self.log_view.appendPlainText)
-        self.worker.finished_ok.connect(lambda r: self._show_auto(r["steps"]))
+        self.worker.finished_ok.connect(self._show_auto)
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
-    def _show_auto(self, steps):
+    def _show_auto(self, plan):
         self._set_busy(False)
+        steps = plan.get("steps", [])
         if not steps:
             self.status_label.setText("Auto-develop: nothing to fix — the image already looks clean.")
             self.log_view.add("Auto-develop", "no changes suggested")
             return
+        # Add the semantic masks the recipe gates on (remapping step names if a mask had
+        # to be renamed to avoid clobbering a user mask), so its steps resolve by name.
+        self._install_auto_masks(plan.get("masks", {}), steps)
+        self._refresh_masks()
         self.auto_panel = AutoPanel(steps)
         self.auto_panel.changed.connect(self._schedule_auto_preview)
         self.auto_panel.applied.connect(self._apply_auto)
@@ -1081,9 +1090,11 @@ class LazyDevelopPanel(QWidget):
             return
         steps = self.auto_panel.selected_steps()
         pdoc = DevelopDocument(self._get_proxy())     # preview the recipe on a proxy
+        pdoc.masks = self.doc.masks                    # so semantic-mask gates resolve
         try:
             for s in steps:
-                pdoc.apply_op(s["name"], s["params"])
+                pdoc.apply_op(s["name"], s["params"],
+                              mask=s.get("mask"), mask_invert=s.get("mask_invert", False))
         except Exception as exc:
             self.status_label.setText(f"Auto preview: {exc}")
             return
@@ -1110,7 +1121,8 @@ class LazyDevelopPanel(QWidget):
             for i, s in enumerate(steps):
                 log(f"{dev_ops.get(s['name']).label}…")
                 progress(i + 1, len(steps), s["name"])
-                self.doc.apply_op(s["name"], s["params"])
+                self.doc.apply_op(s["name"], s["params"],
+                                  mask=s.get("mask"), mask_invert=s.get("mask_invert", False))
             return {"steps": steps}
 
         self.worker = CallableWorker(fn, mode="auto-apply")
@@ -1123,8 +1135,10 @@ class LazyDevelopPanel(QWidget):
         self._set_busy(False)
         for s in steps:
             op = dev_ops.get(s["name"])
+            gate = {"mask": s.get("mask"), "mask_invert": s.get("mask_invert", False),
+                    "opacity": 1.0}
             self.log_view.add(f"Auto: {op.label}",
-                              self._op_value_str(op, op.merged(s["params"]), {"opacity": 1.0}))
+                              self._op_value_str(op, op.merged(s["params"]), gate))
         self._cancel_tool(refresh=False)
         self.toolbox.clearSelection()
         self._refresh_canvas()
@@ -1286,12 +1300,34 @@ class LazyDevelopPanel(QWidget):
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
+    def _install_auto_masks(self, masks, steps=None):
+        """Add auto-generated masks without clobbering user masks; remap step gates.
+
+        Previously auto-generated masks are cleared first (so re-running is idempotent),
+        then each mask is added under a unique name — a collision with a *user* mask bumps
+        it to 'Name 2' rather than overwriting it. ``steps`` gate names are remapped to the
+        installed names.
+        """
+        for n in list(self._auto_mask_names):
+            self.doc.remove_mask(n)
+        self._auto_mask_names = set()
+        name_map = {}
+        for name, m in masks.items():
+            n = self._unique_mask_name(name)
+            self.doc.add_mask(n, m)
+            self._auto_mask_names.add(n)
+            name_map[name] = n
+        if steps:
+            for s in steps:
+                if s.get("mask") in name_map:
+                    s["mask"] = name_map[s["mask"]]
+        return name_map
+
     def _add_auto_masks(self, masks):
         self._set_busy(False)
-        for name, m in masks.items():
-            self.doc.add_mask(name, m)                 # re-running regenerates same names
+        name_map = self._install_auto_masks(masks)
         self._refresh_masks()
-        self.log_view.add("Auto masks", ", ".join(masks.keys()))
+        self.log_view.add("Auto masks", ", ".join(name_map.values()))
         self.status_label.setText(f"Generated {len(masks)} semantic masks.")
 
     def _unique_mask_name(self, base):
@@ -1435,7 +1471,7 @@ class LazyDevelopPanel(QWidget):
         # also read/mutate it on the main thread (avoids a cross-thread cache race).
         for b in (self.open_btn, self.save_btn, self.save_recipe_btn, self.load_recipe_btn,
                   self.auto_btn, self.auto_masks_btn, self.toolbox, self.tool_holder,
-                  self.history_list, self.mask_group):
+                  self.history_list, self.mask_group, self.before_btn, self.fit_btn):
             b.setEnabled(not busy)
         if busy:
             self.undo_btn.setEnabled(False)

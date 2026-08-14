@@ -356,6 +356,46 @@ def test_semantic_segment_snr_path_runs():
     assert fn.shape == img.shape[:2] and np.isfinite(fn).all()
 
 
+def test_semantic_segment_survives_nan_and_inf():
+    from lazystretch.develop.semantic import segment
+    img = _demo_rgb().copy()
+    img[5, 5] = np.nan; img[6, 6] = np.inf; img[7, 7] = -np.inf
+    m = segment(img)
+    assert all(np.isfinite(v).all() and v.min() >= 0 and v.max() <= 1 for v in m.values())
+    # a NaN-riddled SNR map must not poison the nebulosity split either
+    snr = np.full(img.shape[:2], np.nan, np.float32); snr[:, :18] = 5.0
+    m2 = segment(img, snr=snr)
+    assert np.isfinite(m2["Faint nebulosity"]).all()
+
+
+def test_blend_suppresses_a_deleted_mask_gate():
+    # deleting a mask a gated op references must SUPPRESS the op, never flood the frame
+    doc = DevelopDocument(np.full((30, 40, 3), 0.3, np.float32))
+    doc.add_mask("Stars", np.zeros((30, 40), np.float32))     # all-zero → op is a no-op
+    doc.apply_op("saturation", {"amount": 0.8}, mask="Stars")
+    assert np.allclose(doc.result(), doc.base)                 # confined (mask is 0)
+    doc.remove_mask("Stars")
+    doc.replace_op(0, {"amount": 0.8})                         # recompute; mask now gone
+    assert np.allclose(doc.result(), doc.base)                 # suppressed, NOT flooded
+
+
+def test_auto_develop_plan_gates_steps_with_semantic_masks():
+    from lazystretch.develop.auto import auto_develop_plan, _SEMANTIC_GATES
+    img = _dirty_image()
+    plan = auto_develop_plan(img)
+    steps, plan_masks = plan["steps"], plan["masks"]
+    # every referenced gate mask is provided
+    for s in steps:
+        if s.get("mask"):
+            assert s["mask"] in plan_masks
+    # steps whose op is in the gate table (and present) get gated
+    gated = {s["name"] for s in steps if s.get("mask")}
+    assert gated & set(_SEMANTIC_GATES)                        # at least one semantic gate
+    # provided masks are valid
+    for v in plan_masks.values():
+        assert v.dtype == np.float32 and np.isfinite(v).all() and 0 <= v.min() and v.max() <= 1
+
+
 def test_jpeg_save_respects_quality(tmp_path):
     import os
     from lazystretch.io.image_io import save_image, load_image

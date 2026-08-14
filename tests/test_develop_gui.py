@@ -306,12 +306,17 @@ def test_auto_panel_flow(qapp):
     p.doc = DevelopDocument(img)
     p._set_enabled_tools(True); p._refresh_canvas(fit=True)
 
-    from lazystretch.develop.auto import analyze
-    steps = analyze(p.doc.result())
+    from lazystretch.develop.auto import auto_develop_plan
+    plan = auto_develop_plan(p.doc.result())
+    steps = plan["steps"]
     assert len(steps) >= 2
-    p._show_auto(steps)
+    p._show_auto(plan)
     assert p.auto_panel is not None
     assert len(p.auto_panel.selected_steps()) == len(steps)
+    # the recipe's semantic-mask gates were installed into the library
+    assert set(plan["masks"]) <= set(p.doc.mask_names())
+    gated = [s for s in steps if s.get("mask")]
+    assert gated and all(s["mask"] in p.doc.masks for s in gated)   # gates resolve by name
     p.auto_panel._checks[0][0].setChecked(False)               # untick one
     assert len(p.auto_panel.selected_steps()) == len(steps) - 1
     p._auto_preview()                                           # previews on the proxy
@@ -319,10 +324,15 @@ def test_auto_panel_flow(qapp):
 
     sel = list(p.auto_panel.selected_steps())
     for s in sel:                                              # simulate the worker commit
-        p.doc.apply_op(s["name"], s["params"])
+        p.doc.apply_op(s["name"], s["params"],
+                       mask=s.get("mask"), mask_invert=s.get("mask_invert", False))
     p._finish_auto(sel)
     assert p.auto_panel is None
     assert [o.name for o in p.doc.ops] == [s["name"] for s in sel]
+    # a gated auto step actually carries its semantic mask
+    if gated:
+        applied = next(o for o in p.doc.ops if o.name == gated[0]["name"])
+        assert applied.mask == gated[0]["mask"]
 
 
 def test_mask_combine_and_rename_flow(qapp, monkeypatch):
@@ -368,9 +378,31 @@ def test_auto_masks_populate_the_library(qapp):
     assert len(names) == len(set(names))
 
 
+def test_auto_masks_do_not_clobber_user_masks(qapp):
+    from lazystretch.develop.semantic import segment
+    p = _loaded_panel(qapp)
+    p.doc.add_mask("Nebulosity", np.ones(p.doc.base.shape[:2], np.float32))   # a user mask
+    p._add_auto_masks(segment(p.doc.result()))
+    assert np.allclose(p.doc.masks["Nebulosity"], 1.0)         # user mask untouched
+    assert "Nebulosity 2" in p.doc.mask_names()                # auto one bumped
+    # re-running is idempotent (clears its own previous set, no growth)
+    n = len(p.doc.mask_names())
+    p._add_auto_masks(segment(p.doc.result()))
+    assert len(p.doc.mask_names()) == n
+
+
+def test_busy_disables_view_and_mask_controls(qapp):
+    p = _loaded_panel(qapp)
+    p._set_busy(True)
+    assert not p.before_btn.isEnabled() and not p.fit_btn.isEnabled()
+    assert not p.mask_group.isEnabled() and not p.auto_masks_btn.isEnabled()
+    p._set_busy(False)
+    assert p.before_btn.isEnabled() and p.fit_btn.isEnabled()
+
+
 def test_show_auto_empty_is_noop(qapp):
     p = _loaded_panel(qapp)
-    p._show_auto([])
+    p._show_auto({"steps": [], "masks": {}})
     assert p.auto_panel is None
 
 

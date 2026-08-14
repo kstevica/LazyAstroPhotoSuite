@@ -39,7 +39,8 @@ def segment(img: np.ndarray, snr: Optional[np.ndarray] = None) -> Dict[str, np.n
     """Return semantic soft masks for ``img`` (float [0,1], mono or RGB)."""
     from scipy.ndimage import grey_opening, gaussian_filter, maximum_filter
 
-    a = np.clip(np.asarray(img, dtype=np.float64), 0.0, 1.0)
+    a = np.nan_to_num(np.asarray(img, dtype=np.float64), nan=0.0, posinf=1.0, neginf=0.0)
+    a = np.clip(a, 0.0, 1.0)                                # NaN/inf → finite before any reduction
     is_rgb = a.ndim == 3 and a.shape[2] == 3
     a3 = a if is_rgb else np.repeat(np.atleast_3d(a), 3, axis=2)
     L = _luma(a3)
@@ -64,7 +65,8 @@ def segment(img: np.ndarray, snr: Optional[np.ndarray] = None) -> Dict[str, np.n
     neb = _smoothstep(0.015, 0.12, neb_s)
     out["Nebulosity"] = neb.astype(np.float32)
     if snr is not None and getattr(snr, "shape", None) == L.shape:
-        s = np.clip(np.asarray(snr, dtype=np.float64), 0.0, None)
+        s = np.nan_to_num(np.asarray(snr, dtype=np.float64), nan=0.0, posinf=0.0, neginf=0.0)
+        s = np.clip(s, 0.0, None)
         s = s / (np.percentile(s, 99) + 1e-6)
         confident = _smoothstep(0.2, 0.6, s)
     else:
