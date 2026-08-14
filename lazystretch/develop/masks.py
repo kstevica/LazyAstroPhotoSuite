@@ -1,9 +1,9 @@
 """Mask generators for the Develop window.
 
 Masks are 2-D float arrays in [0, 1] stored on the document by name; any tool can then
-be gated by one (the Lighthouse blend ``orig + w·mask·(proc − orig)``). Three kinds:
+be gated by one (the masked blend ``orig + w·mask·(proc − orig)``). Three kinds:
 
-* **Luminosity masks** — the Lighthouse model: extract luminance, normalise, raise to
+* **Luminosity masks** — extract luminance, normalise, raise to
   ``2**(depth-1)`` for Lights or the complement for Darks (deeper = more selective).
 * **Range masks** — bright/dark/mid selection by lightness with soft edges (reuses
   ``processes.masks.build_range_mask``).
@@ -30,7 +30,7 @@ def _luminance(img: np.ndarray) -> np.ndarray:
 
 
 def luminosity_mask(img: np.ndarray, kind: str = LUM_LIGHTS, depth: int = 1) -> np.ndarray:
-    """Lighthouse luminosity mask. ``kind`` ∈ {lights, darks}; ``depth`` 1..5."""
+    """Luminosity mask. ``kind`` ∈ {lights, darks}; ``depth`` 1..5 (deeper = more selective)."""
     depth = int(np.clip(round(depth), 1, 5))
     power = 2 ** (depth - 1)
     L = _luminance(img)

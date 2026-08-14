@@ -6,9 +6,8 @@ by hand — curves, crop, colour, detail (wavelets / HDR / local contrast), grad
 cleanup, masks — in any order, with a linear undo/redo history. The initial stretch
 (STF / histogram transformation) is intentionally NOT part of this window; that is
 LazyStretch's job. Every tool is a thin front-end over the headless functions already
-used by the automated pipeline (``lazystretch.processes.*``), plus faithful ports of
-the Lighthouse suite ("Lightroom for PixInsight"): luminosity masks, à-trous wavelet
-clarity and OKLab Selective Color.
+used by the automated pipeline (``lazystretch.processes.*``), plus a set of creative
+"Studio" tools: luminosity masks, à-trous wavelet clarity and OKLab Selective Color.
 
 Public surface:
     DevelopDocument   — the edit document: base image + ordered op history + masks.

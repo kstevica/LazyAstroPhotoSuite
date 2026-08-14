@@ -1,7 +1,6 @@
 """Detail tools: mid-scale structure boost and multiscale-median noise reduction.
 
-(à-trous wavelet clarity/sharpen lives in ``ops/lighthouse.py`` — it is a faithful
-port of the Lighthouse wavelet engine.)
+(à-trous wavelet clarity/sharpen lives in ``ops/studio.py``.)
 """
 from __future__ import annotations
 

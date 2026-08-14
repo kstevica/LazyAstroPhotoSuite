@@ -10,6 +10,7 @@ live on the full-resolution image.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -43,8 +44,41 @@ from ..develop import DevelopDocument, ops as dev_ops
 from ..develop import masks as dev_masks
 from ..io.image_io import load_image, save_image
 from .preview import PreviewView
-from .widgets import FloatSlider, RunLogView
+from .widgets import FloatSlider
 from .worker import CallableWorker
+
+
+class DevelopLog(QTreeWidget):
+    """A simple 3-column edit log: absolute Time · Event · Value (the applied values).
+
+    Unlike the run-log used by the batch tools, Develop logs discrete edits, so the
+    third column carries each step's actual values rather than a duration.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setColumnCount(3)
+        self.setHeaderLabels(["Time", "Event", "Value"])
+        self.setRootIsDecorated(False)
+        self.setUniformRowHeights(True)
+        self.header().setStretchLastSection(True)
+        self.setColumnWidth(0, 74)
+        self.setColumnWidth(1, 190)
+
+    def add(self, event: str, value: str = "") -> None:
+        item = QTreeWidgetItem([datetime.now().strftime("%H:%M:%S"), str(event), str(value)])
+        self.addTopLevelItem(item)
+        self.scrollToBottom()
+
+    # QPlainTextEdit / RunLogView-compatible aliases used by existing call sites.
+    def append(self, msg: str) -> None:
+        self.add(msg)
+
+    def appendPlainText(self, msg: str) -> None:
+        self.add(msg)
+
+    def finish(self) -> None:
+        pass
 
 # Heavy tools (wavelets, HDR, ABE, NR, deconv, …) preview on a downscaled proxy of the
 # current result so sliders stay responsive; Apply always recomputes at full resolution.
@@ -632,7 +666,7 @@ class LazyDevelopPanel(QWidget):
 
         self.progress = QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0)
         v.addWidget(self.progress)
-        self.log_view = RunLogView()
+        self.log_view = DevelopLog()
         v.addWidget(self.log_view, 2)
         return w
 
@@ -849,6 +883,45 @@ class LazyDevelopPanel(QWidget):
         downstream_heavy = any(dev_ops.get(o.name).heavy for o in self.doc.ops[start:])
         return op.heavy or downstream_heavy
 
+    def _op_value_str(self, op: "dev_ops.Op", params: dict, gate: dict) -> str:
+        """A concise 'what was applied' string for the log Value column."""
+        parts: List[str] = []
+        for spec in op.params:
+            if spec.key not in params or params[spec.key] is None:
+                continue
+            v = params[spec.key]
+            if spec.kind == "choice":
+                ch = spec.choices or []
+                parts.append(str(ch[int(v)]) if 0 <= int(v) < len(ch) else str(v))
+            elif spec.kind == "bool":
+                if bool(v) != bool(spec.default):        # only note a changed toggle
+                    parts.append(spec.label if v else f"no {spec.label.lower()}")
+            elif spec.kind == "curve":
+                n = len(v) if v else 0
+                if n > 2:
+                    parts.append(f"{n} pts")
+            elif spec.kind == "rect":
+                r = v or {}
+                w = int(round((r.get("x1", 1) - r.get("x0", 0)) * 100))
+                h = int(round((r.get("y1", 1) - r.get("y0", 0)) * 100))
+                parts.append(f"{w}%×{h}%")
+            else:                                        # float / int
+                try:
+                    fv = float(v)
+                except (TypeError, ValueError):
+                    continue
+                if abs(fv - float(spec.default)) < 1e-9:  # unchanged from default → skip
+                    continue
+                name = spec.label.replace(" ±", "").replace("…", "").strip()
+                parts.append(f"{name} {fv:.{spec.decimals}f}" if spec.kind == "float"
+                             else f"{name} {int(fv)}")
+        if gate.get("mask"):
+            parts.append(("¬" if gate.get("mask_invert") else "") + str(gate["mask"]))
+        opac = float(gate.get("opacity", 1.0))
+        if opac < 0.999:
+            parts.append(f"{int(round(opac * 100))}%")
+        return ", ".join(parts)
+
     def _apply_tool(self):
         if self.tool_panel is None or self.doc is None or self._busy():
             return
@@ -856,6 +929,7 @@ class LazyDevelopPanel(QWidget):
         params = self.tool_panel.params()
         gate = self.tool_panel.gate()
         idx = self.tool_panel.edit_index
+        value = self._op_value_str(op, params, gate)
 
         def commit():
             if idx is None:
@@ -867,7 +941,7 @@ class LazyDevelopPanel(QWidget):
         heavy = self._apply_is_heavy(op, idx)
         if not heavy:
             commit()
-            self._finish_apply(verb, op.label)
+            self._finish_apply(verb, op.label, value)
             return
         self._set_busy(True)
         self.status_label.setText(f"{'Updating' if idx is not None else 'Applying'} {op.label}…")
@@ -875,17 +949,18 @@ class LazyDevelopPanel(QWidget):
         def fn(log, progress):
             log(f"{op.label}…")
             commit()
-            return {"label": op.label, "verb": verb}
+            return {"label": op.label, "verb": verb, "value": value}
 
         self.worker = CallableWorker(fn, mode="apply")
         self.worker.logline.connect(self.log_view.appendPlainText)
-        self.worker.finished_ok.connect(lambda r: self._finish_apply(r["verb"], r["label"]))
+        self.worker.finished_ok.connect(
+            lambda r: self._finish_apply(r["verb"], r["label"], r["value"]))
         self.worker.failed.connect(self._on_failed)
         self.worker.start()
 
-    def _finish_apply(self, verb, label):
+    def _finish_apply(self, verb, label, value=""):
         self._set_busy(False)
-        self.log_view.append(f"{verb} {label}")
+        self.log_view.add(f"{verb} {label}", value)
         self._cancel_tool(refresh=False)
         self.toolbox.clearSelection()
         self._refresh_canvas()

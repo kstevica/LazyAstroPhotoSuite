@@ -1,16 +1,14 @@
-"""Ports of the Lighthouse suite ("Lightroom for PixInsight").
+"""Studio tools — the "creative darkroom" bench.
 
 Two flagship tools:
 
 * **Selective Color** — Photoshop-style per-colour-group CMYK correction. Colour
   classification is done in OKLab via cosine similarity between a pixel's chroma
-  direction and each group's hue direction (no atan2 → no hue wraparound), with the
-  exact per-group half-widths, chroma-proportional weighting, chroma noise gate and
-  shadow guard from ``LighthouseSelectiveColor.jsh``. One op edits one group; stack
-  several for a full grade.
+  direction and each group's hue direction (no atan2 → no hue wraparound), with
+  per-group half-widths, chroma-proportional weighting, a chroma noise gate and a
+  shadow guard. One op edits one group; stack several for a full grade.
 * **Wavelet clarity** — multi-scale à-trous (starlet) sharpening + denoise, six dyadic
-  layers (1,2,4,8,16,32 px), per-layer Sharpen/Denoise and a master Strength, mirroring
-  ``LighthouseWavelets.jsh``.
+  layers (1,2,4,8,16,32 px), per-layer Sharpen/Denoise and a master Strength.
 
 Both run on luminance and ratio-scale RGB to preserve hue, like the rest of the suite.
 """
@@ -40,7 +38,7 @@ def _luma(a):
 # ============================================================================
 
 # key, kind (0=hue, 1=tonal), OKLab hue direction (ua, ub), cos(halfWidth), tone.
-# Constants verbatim from LighthouseSelectiveColor.jsh (LIGHTHOUSE_SC_GROUPS).
+# The hue directions / half-widths come from a reference OKLab selective-colour model.
 _SC_GROUPS = [
     ("Reds",     0,  0.872633,  0.488376, 0.151117,  0),
     ("Yellows",  0, -0.338233,  0.941063, 0.420635,  0),
@@ -198,7 +196,7 @@ def _wavelet_sharpen(img, p):
             soft = np.sign(w) * np.maximum(np.abs(w) - 3.0 * sig, 0.0)
             wdn = soft * (1.0 - 0.95 * d)                    # attenuate residual detail
             wi = w + d * (wdn - w)                           # dose by the Denoise amount
-        bias = (s ** 1.5) * 3.0 * strength                   # Lighthouse per-layer sharpen bias
+        bias = (s ** 1.5) * 3.0 * strength                   # per-layer sharpen bias
         out = out + (1.0 + bias) * wi
     newL = np.clip(out, 0.0, 1.0)
 
@@ -211,7 +209,7 @@ def _wavelet_sharpen(img, p):
 
 # ---------------------------------------------------------------- registration
 register(Op(
-    "selective_color", "Selective Color", "Lighthouse", _apply_selective_color,
+    "selective_color", "Selective Color", "Studio", _apply_selective_color,
     needs_color=True,
     params=[
         ParamSpec("group", "Colour group", "choice", default=0, choices=_SC_GROUP_NAMES),
@@ -229,7 +227,7 @@ register(Op(
 ))
 
 register(Op(
-    "wavelet_sharpen", "Wavelet clarity", "Lighthouse", _wavelet_sharpen, heavy=True,
+    "wavelet_sharpen", "Wavelet clarity", "Studio", _wavelet_sharpen, heavy=True,
     params=[
         ParamSpec("sharpen1", "Sharpen 1 (1px)", "float", 0.0, 100.0, 0.0, 0),
         ParamSpec("sharpen2", "Sharpen 2 (2px)", "float", 0.0, 100.0, 0.0, 0),
@@ -242,5 +240,5 @@ register(Op(
         ParamSpec("denoise3", "Denoise 3 (4px)", "float", 0.0, 100.0, 0.0, 0),
         ParamSpec("strength", "Master strength", "float", 0.0, 100.0, 100.0, 0),
     ],
-    tooltip="Multi-scale à-trous wavelet sharpening + denoise (Lighthouse engine).",
+    tooltip="Multi-scale à-trous wavelet sharpening + denoise.",
 ))

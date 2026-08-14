@@ -184,7 +184,7 @@ def test_curve_luminance_mode_preserves_hue_direction():
     assert out.mean() > img.mean()
 
 
-# --------------------------------------------------------------------------- Lighthouse
+# --------------------------------------------------------------------------- Studio tools
 def test_selective_color_targets_one_group():
     img = _demo_rgb().astype(np.float64)
     out = ops.get("selective_color").fn(img, {

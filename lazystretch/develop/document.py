@@ -3,7 +3,7 @@
 A document holds one base image plus an ordered list of applied tools (the *op
 history*), a PixInsight-style **linear** history (apply → undo → redo → revert-to-step)
 and a small store of named masks. Each applied op can be gated by a mask and an
-opacity; the blend is exactly the Lighthouse form ``orig + w·mask·(proc − orig)``.
+opacity; the blend is the standard masked form ``orig + w·mask·(proc − orig)``.
 
 Intermediate results are cached (``_cache[i]`` = the image after the first ``i`` ops)
 so undo is instant and re-running from any step is cheap. Everything is float32 in
