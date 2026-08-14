@@ -121,7 +121,7 @@ class LazyStackPanel(QWidget):
         fgrow.addWidget(self.ns_fg_btn)
         fgrow.addWidget(self.ns_fg_label, 1)
         nv.addLayout(fgrow)
-        self.ns_bias = FloatSlider("Sky ↔ foreground bias", -0.30, 0.30, 0.0, decimals=2)
+        self.ns_bias = FloatSlider("Sky ↔ foreground bias", -0.10, 0.10, 0.0, decimals=3)
         nv.addWidget(self.ns_bias)
         self.ns_preview_btn = QPushButton("Preview segmentation")
         self.ns_preview_btn.clicked.connect(self._preview_segmentation)
@@ -139,9 +139,18 @@ class LazyStackPanel(QWidget):
             self.paint_btns[mode] = b
         self.paint_btns[None].setChecked(True)
         nv.addLayout(paintrow)
-        self.brush_slider = FloatSlider("Brush size", 4, 60, 14, decimals=0)
+        self.brush_slider = FloatSlider("Brush size", 4, 120, 14, decimals=0)
         self.brush_slider.valueChanged.connect(lambda v: self.preview.set_brush(int(v)))
         nv.addWidget(self.brush_slider)
+        self.brush_falloff = FloatSlider("Brush falloff", 0.0, 1.0, 0.5, decimals=2)
+        self.brush_falloff.valueChanged.connect(lambda v: self.preview.set_falloff(v))
+        nv.addWidget(self.brush_falloff)
+        self.brush_strength = FloatSlider("Brush strength", 0.1, 1.0, 1.0, decimals=2)
+        self.brush_strength.valueChanged.connect(lambda v: self.preview.set_strength(v))
+        nv.addWidget(self.brush_strength)
+        self.fill_opposite_btn = QPushButton("Fill rest (opposite)")
+        self.fill_opposite_btn.clicked.connect(self._fill_opposite)
+        nv.addWidget(self.fill_opposite_btn)
         applyrow = QHBoxLayout()
         self.paint_apply_btn = QPushButton("Apply paint")
         self.paint_clear_btn = QPushButton("Clear paint")
@@ -247,6 +256,12 @@ class LazyStackPanel(QWidget):
         self.ns_mask_status.setText("Mask: auto — adjust with the bias slider, or paint to refine")
         self.ns_mask_status.setStyleSheet("color: gray;")
         self.status_label.setText("Paint cleared — auto/bias segmentation will be used.")
+
+    def _fill_opposite(self):
+        if self.preview.fill_opposite():
+            self.status_label.setText("Filled the unpainted area with the opposite class — Apply paint to use it.")
+        else:
+            self.status_label.setText("Paint ONE class first (only Sky or only Earth), then Fill rest (opposite).")
 
     def _on_nightscape_toggled(self, on: bool):
         # A moonlit star can look like a static hot pixel, and there are rarely darks/flats — so

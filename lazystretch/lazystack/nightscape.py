@@ -243,7 +243,10 @@ def refine_mask(median: np.ndarray, scribbles: np.ndarray, *,
     # Scribbles are AUTHORITATIVE: seed from the auto mask ONLY for a class the user didn't paint
     # (so a globally-wrong auto orientation is fully overridden when both classes are painted — the
     # case where painting matters most). Dense auto seeds would otherwise confine the strokes locally.
-    has_sky, has_earth = bool((scr > 0).any()), bool((scr < 0).any())
+    # Graded scribbles (float, soft brush): the CONFIDENT core (|v| > 0.15) seeds; faint falloff
+    # edges don't. (Backward-compatible with the old ±1 integer scribbles.)
+    sky_scr, earth_scr = scr > 0.15, scr < -0.15
+    has_sky, has_earth = bool(sky_scr.any()), bool(earth_scr.any())
     markers = np.zeros((H, W), dtype=np.int32)
     if auto_mask is not None:
         am = (_resize_mask(np.asarray(auto_mask, dtype=np.float64), (H, W))
@@ -252,8 +255,8 @@ def refine_mask(median: np.ndarray, scribbles: np.ndarray, *,
             markers[am > 0.85] = 1                        # seed sky from auto only if unpainted
         if not has_earth:
             markers[am < 0.15] = 2                        # seed foreground from auto only if unpainted
-    markers[scr > 0] = 1                                  # user SKY strokes win
-    markers[scr < 0] = 2                                  # user EARTH strokes win
+    markers[sky_scr] = 1                                  # user SKY strokes win
+    markers[earth_scr] = 2                                # user EARTH strokes win
 
     if not (markers == 1).any() or not (markers == 2).any():
         if auto_mask is not None:                         # can't seed both classes → keep auto

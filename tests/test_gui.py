@@ -247,3 +247,35 @@ def test_gui_recipe_controls_roundtrip(qapp, tmp_path):
     assert abs(w2.dials["deepen"].value() - 0.40) < 1e-2
     assert w2.checks["reduceCast"].isChecked()
     assert abs(w2.crop_slider.value() - 6.0) < 1e-2
+
+
+def test_nightscape_graded_brush_and_cursor(qapp):
+    from PySide6.QtCore import QPointF
+    from lazystretch.gui.stack_window import LazyStackPanel
+    sp = LazyStackPanel()
+    assert (sp.ns_bias._lo, sp.ns_bias._hi, sp.ns_bias._dec) == (-0.10, 0.10, 3)   # finer bias
+    pv = sp.preview
+    pv.set_image(np.stack([np.linspace(0, 1, 200)[None, :].repeat(160, 0)] * 3, -1), keep_view=False)
+    pv.set_paint_mode("sky"); pv.set_brush(20); pv.set_falloff(0.6); pv.set_strength(0.8)
+    pv._paint_at(QPointF(50, 80))
+    s = pv.scribbles()
+    assert s.dtype == np.float32 and abs(float(s[80, 50]) - 0.8) < 0.05      # graded, not binary
+    assert ((np.abs(s) > 0.05) & (np.abs(s) < 0.7)).any()                    # soft falloff edge
+    pv._update_cursor_geom(QPointF(50, 80))
+    assert abs(pv._cursor_outer.rect().width() / 2 - 20) < 1                 # cursor = brush size
+    assert abs(pv._cursor_inner.rect().width() / 2 - 8) < 1                  # core = size*(1-falloff)
+
+
+def test_nightscape_fill_opposite(qapp):
+    from PySide6.QtCore import QPointF
+    from lazystretch.gui.stack_window import LazyStackPanel
+    sp = LazyStackPanel()
+    pv = sp.preview
+    pv.set_image(np.zeros((160, 200, 3)), keep_view=False)
+    pv.set_paint_mode("sky"); pv.set_brush(15); pv.set_strength(1.0)
+    pv._paint_at(QPointF(40, 40))
+    assert not (pv.scribbles() < -0.5).any()                                 # only sky so far
+    assert pv.fill_opposite() is True                                        # one class → fillable
+    assert (pv.scribbles() < -0.5).any()                                     # rest filled as earth
+    pv.clear_scribbles()
+    assert pv.fill_opposite() is False                                       # nothing painted → no-op
