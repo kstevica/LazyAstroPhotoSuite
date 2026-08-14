@@ -156,16 +156,27 @@ def analyze(img: np.ndarray) -> List[Dict]:
     return steps
 
 
-# --------------------------------------------------------------------------- semantic plan
-# How each auto step is gated by a semantic mask (name, invert): protect stellar cores from
-# over-saturation, keep noise reduction / chroma off the bright nebula + stars, enhance local
-# contrast only inside the nebula, roll off only the blown cores.
+# How each auto step is gated by a semantic mask (name, invert). GLOBAL steps are absent
+# on purpose — gradient_cleanup (plane fit), bg_neutralize (global colour offset), scnr
+# (green removal must reach stars) and contrast (global tone) would seam or misbehave if
+# masked, so they run whole-frame.
 _SEMANTIC_GATES = {
-    "saturation":       ("Star cores", True),      # boost colour everywhere EXCEPT star cores
-    "chroma_nr":        ("Detail (protect)", True),  # smooth chroma off the bright signal
-    "noise_reduction":  ("Detail (protect)", True),  # protect the detailed nebula + stars
-    "local_contrast":   ("Nebulosity", False),     # add structure only in the nebula
-    "highlight_rolloff": ("Cores", False),         # only the blown cores
+    # colour — don't over-saturate bright star cores
+    "saturation":        ("Star cores", True),
+    # detail / noise — protect the detailed nebula + stars, work the rest
+    "chroma_nr":         ("Detail (protect)", True),
+    "noise_reduction":   ("Detail (protect)", True),
+    # structure — only inside the subject
+    "local_contrast":    ("Nebulosity", False),
+    "structure":         ("Nebulosity", False),
+    # background / veil — deepen the veil but protect the bright nebula
+    "deveil":            ("Nebulosity", True),
+    "dehaze":            ("Nebulosity", True),
+    "reduce_cast":       ("Sky", False),
+    # highlights — only the blown cores
+    "highlight_rolloff": ("Cores", False),
+    # emission — only where Hα actually is
+    "emission_boost":    ("Hα (red)", False),
 }
 
 

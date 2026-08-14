@@ -392,6 +392,17 @@ def test_auto_develop_plan_reuses_existing_library_masks():
     assert {s["mask"] for s in plan["steps"] if s.get("mask")} == gate_names
 
 
+def test_auto_develop_gates_deveil_to_protect_the_nebula():
+    # a milky/warm background triggers de-veil, which must be gated to protect the nebula
+    from lazystretch.develop.auto import auto_develop_plan
+    img = _dirty_image()
+    plan = auto_develop_plan(img)
+    dv = [s for s in plan["steps"] if s["name"] == "deveil"]
+    if dv:                                              # de-veil triggered for this image
+        assert dv[0]["mask"] == "Nebulosity" and dv[0]["mask_invert"] is True
+        assert "Nebulosity" in plan["masks"]
+
+
 def test_auto_develop_plan_gates_steps_with_semantic_masks():
     from lazystretch.develop.auto import auto_develop_plan, _SEMANTIC_GATES
     img = _dirty_image()
