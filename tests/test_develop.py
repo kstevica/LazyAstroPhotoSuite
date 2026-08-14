@@ -254,6 +254,59 @@ def test_recipe_roundtrip():
     assert np.allclose(doc2.result(), result, atol=1e-6)
 
 
+# --------------------------------------------------------------------------- auto-develop
+def _dirty_image(seed=0):
+    rng = np.random.default_rng(seed)
+    h, w = 140, 180
+    grad = np.broadcast_to(np.linspace(0.0, 0.14, w), (h, w))   # left→right gradient (full height)
+    img = np.stack([0.11 + grad, 0.16 + grad, 0.09 + grad], axis=-1).astype(np.float32)
+    img = img + 0.02 * rng.standard_normal((h, w, 3)).astype(np.float32)   # noise + green + warm
+    img[60:80, 80:110] += np.array([0.30, 0.10, 0.15])
+    return np.clip(img, 0.0, 1.0)
+
+
+def test_auto_analyze_is_ordered_valid_and_in_gamut():
+    from lazystretch.develop.auto import analyze, _ORDER
+    steps = analyze(_dirty_image())
+    assert len(steps) >= 3
+    names = [s["name"] for s in steps]
+    assert names == sorted(names, key=_ORDER.index)     # finishing order
+    doc = DevelopDocument(_dirty_image())
+    for s in steps:
+        ops.get(s["name"]).merged(s["params"])          # every name/param valid
+        doc.apply_op(s["name"], s["params"])
+    out = doc.result()
+    assert np.isfinite(out).all() and out.min() >= -1e-6 and out.max() <= 1 + 1e-6
+
+
+def test_auto_suggests_more_for_a_worse_image():
+    from lazystretch.develop.auto import analyze
+    # a clean image: neutral, low-noise, contrasty, saturated
+    clean = np.full((120, 120, 3), 0.04, np.float32)
+    clean[40:80, 40:80] = np.array([0.75, 0.20, 0.55])   # bright saturated structure
+    assert len(analyze(_dirty_image())) > len(analyze(clean))
+
+
+def test_auto_analyze_handles_mono():
+    from lazystretch.develop.auto import analyze
+    mono = np.clip(np.linspace(0, 0.3, 100 * 100).reshape(100, 100), 0, 1)
+    steps = analyze(mono)                                # must not raise; no colour steps
+    assert all(s["name"] not in ("scnr", "bg_neutralize", "saturation", "chroma_nr", "deveil")
+               for s in steps)
+
+
+def test_jpeg_save_respects_quality(tmp_path):
+    import os
+    from lazystretch.io.image_io import save_image, load_image
+    img = _demo_rgb()
+    lo = tmp_path / "lo.jpg"; hi = tmp_path / "hi.jpg"
+    save_image(str(lo), img, quality=40)
+    save_image(str(hi), img, quality=95)
+    assert lo.exists() and hi.exists()
+    assert os.path.getsize(hi) > os.path.getsize(lo)     # higher quality → bigger file
+    assert load_image(str(hi)).data.shape == img.shape   # round-trips back in
+
+
 @pytest.mark.parametrize("op_name", ["saturation", "scnr", "white_balance", "chroma_nr"])
 def test_color_ops_are_noop_on_mono(op_name):
     mono = np.clip(np.linspace(0, 1, 40 * 40).reshape(40, 40), 0, 1)

@@ -294,6 +294,53 @@ def test_recipe_file_roundtrip_through_panel(qapp, tmp_path, monkeypatch):
     assert np.allclose(p.doc.result(), result, atol=1e-6)
 
 
+def test_auto_panel_flow(qapp):
+    from lazystretch.gui.develop_window import LazyDevelopPanel
+    from lazystretch.develop import DevelopDocument
+    rng = np.random.default_rng(0)
+    h, w = 140, 180
+    grad = np.broadcast_to(np.linspace(0, 0.14, w), (h, w))
+    img = np.stack([0.11 + grad, 0.16 + grad, 0.09 + grad], -1).astype(np.float32)
+    img = np.clip(img + 0.02 * rng.standard_normal((h, w, 3)).astype(np.float32), 0, 1)
+    p = LazyDevelopPanel()
+    p.doc = DevelopDocument(img)
+    p._set_enabled_tools(True); p._refresh_canvas(fit=True)
+
+    from lazystretch.develop.auto import analyze
+    steps = analyze(p.doc.result())
+    assert len(steps) >= 2
+    p._show_auto(steps)
+    assert p.auto_panel is not None
+    assert len(p.auto_panel.selected_steps()) == len(steps)
+    p.auto_panel._checks[0][0].setChecked(False)               # untick one
+    assert len(p.auto_panel.selected_steps()) == len(steps) - 1
+    p._auto_preview()                                           # previews on the proxy
+    assert p._preview_kind == "auto"
+
+    sel = list(p.auto_panel.selected_steps())
+    for s in sel:                                              # simulate the worker commit
+        p.doc.apply_op(s["name"], s["params"])
+    p._finish_auto(sel)
+    assert p.auto_panel is None
+    assert [o.name for o in p.doc.ops] == [s["name"] for s in sel]
+
+
+def test_show_auto_empty_is_noop(qapp):
+    p = _loaded_panel(qapp)
+    p._show_auto([])
+    assert p.auto_panel is None
+
+
+def test_save_jpeg_prompts_quality(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog, QInputDialog
+    p = _loaded_panel(qapp)
+    out = tmp_path / "out.jpg"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", lambda *a, **k: (str(out), ""))
+    monkeypatch.setattr(QInputDialog, "getInt", lambda *a, **k: (70, True))
+    p._save()
+    assert out.exists()
+
+
 def test_needs_color_tool_blocked_on_mono(qapp):
     from lazystretch.gui.develop_window import LazyDevelopPanel
     p = LazyDevelopPanel()

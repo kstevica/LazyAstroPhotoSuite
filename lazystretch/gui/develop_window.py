@@ -27,6 +27,7 @@ from PySide6.QtWidgets import (
     QGraphicsSimpleTextItem,
     QGroupBox,
     QHBoxLayout,
+    QInputDialog,
     QLabel,
     QListWidget,
     QListWidgetItem,
@@ -487,6 +488,51 @@ class ToolPanel(QWidget):
 
 
 # =============================================================================
+# Auto-develop suggestion panel
+# =============================================================================
+class AutoPanel(QWidget):
+    """A checklist of analyser-suggested steps, in finishing order, with reasons."""
+
+    changed = Signal()
+    applied = Signal()
+    cancelled = Signal()
+
+    def __init__(self, steps: List[dict], parent=None):
+        super().__init__(parent)
+        self.steps = steps
+        self._checks: List = []
+        v = QVBoxLayout(self)
+        v.setContentsMargins(0, 0, 0, 0)
+
+        title = QLabel("Auto-develop")
+        f = title.font(); f.setBold(True); f.setPointSize(f.pointSize() + 1)
+        title.setFont(f)
+        v.addWidget(title)
+        hint = QLabel("Analysed the full image. Untick anything you don't want, then Apply all.")
+        hint.setWordWrap(True); hint.setStyleSheet("color: gray;")
+        v.addWidget(hint)
+
+        for s in steps:
+            op = dev_ops.get(s["name"])
+            cb = QCheckBox(f"{op.label} — {s['reason']}")
+            cb.setChecked(True)
+            cb.toggled.connect(lambda _=False: self.changed.emit())
+            self._checks.append((cb, s))
+            v.addWidget(cb)
+
+        row = QHBoxLayout()
+        self.apply_btn = QPushButton("Apply all")
+        self.cancel_btn = QPushButton("Cancel")
+        self.apply_btn.clicked.connect(self.applied.emit)
+        self.cancel_btn.clicked.connect(self.cancelled.emit)
+        row.addWidget(self.apply_btn); row.addWidget(self.cancel_btn)
+        v.addLayout(row)
+
+    def selected_steps(self) -> List[dict]:
+        return [s for cb, s in self._checks if cb.isChecked()]
+
+
+# =============================================================================
 # Main panel
 # =============================================================================
 class LazyDevelopPanel(QWidget):
@@ -497,6 +543,7 @@ class LazyDevelopPanel(QWidget):
         self.doc: Optional[DevelopDocument] = None
         self.worker: Optional[CallableWorker] = None
         self.tool_panel: Optional[ToolPanel] = None
+        self.auto_panel: Optional["AutoPanel"] = None
         self._showing_mask: Optional[str] = None
         self._paint_target = "sky"
         self._proxy: Optional[np.ndarray] = None      # cached downscaled current result
@@ -507,6 +554,11 @@ class LazyDevelopPanel(QWidget):
         self._preview_timer.setSingleShot(True)
         self._preview_timer.setInterval(120)
         self._preview_timer.timeout.connect(self._do_live_preview)
+
+        self._auto_timer = QTimer(self)
+        self._auto_timer.setSingleShot(True)
+        self._auto_timer.setInterval(180)
+        self._auto_timer.timeout.connect(self._auto_preview)
 
         splitter = QSplitter(Qt.Horizontal)
         splitter.addWidget(self._build_tree_pane())      # panel 1: tool tree
@@ -545,6 +597,11 @@ class LazyDevelopPanel(QWidget):
         self.load_recipe_btn.setEnabled(False)
         row2.addWidget(self.save_recipe_btn); row2.addWidget(self.load_recipe_btn)
         sv.addLayout(row2)
+        self.auto_btn = QPushButton("✨  Auto-develop…")
+        self.auto_btn.setToolTip("Analyse the whole image and suggest a finishing recipe.")
+        self.auto_btn.clicked.connect(self._open_auto)
+        self.auto_btn.setEnabled(False)
+        sv.addWidget(self.auto_btn)
         self.info_label = QLabel("No image loaded.")
         self.info_label.setStyleSheet("color: gray;")
         sv.addWidget(self.info_label)
@@ -695,7 +752,7 @@ class LazyDevelopPanel(QWidget):
     def _open(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Open image", "",
-            "Images (*.tif *.tiff *.png *.fits *.fit *.fts *.xisf);;All files (*)")
+            "Images (*.tif *.tiff *.png *.jpg *.jpeg *.fits *.fit *.fts *.xisf);;All files (*)")
         if not path:
             return
         try:
@@ -712,6 +769,7 @@ class LazyDevelopPanel(QWidget):
         self.save_btn.setEnabled(True)
         self.save_recipe_btn.setEnabled(True)
         self.load_recipe_btn.setEnabled(True)
+        self.auto_btn.setEnabled(True)
         self._set_enabled_tools(True)
         self._refresh_canvas(fit=True)
         self._refresh_history()
@@ -722,15 +780,25 @@ class LazyDevelopPanel(QWidget):
         if self.doc is None:
             return
         path, _ = QFileDialog.getSaveFileName(
-            self, "Save image", "", "TIFF (*.tif);;PNG (*.png);;FITS (*.fits)")
+            self, "Save image", "",
+            "TIFF (*.tif);;JPEG (*.jpg);;PNG (*.png);;FITS (*.fits)")
         if not path:
             return
+        quality = 92
+        if Path(path).suffix.lower() in (".jpg", ".jpeg"):
+            q, ok = QInputDialog.getInt(self, "JPEG quality",
+                                        "Quality (1–100):", 92, 1, 100, 1)
+            if not ok:
+                return
+            quality = q
         try:
-            save_image(path, np.asarray(self.doc.result(), dtype=np.float64), bit_depth=16)
+            save_image(path, np.asarray(self.doc.result(), dtype=np.float64),
+                       bit_depth=16, quality=quality)
         except Exception as exc:
             QMessageBox.critical(self, "Save failed", str(exc))
             return
-        self.log_view.append(f"Saved {Path(path).name}")
+        qtxt = f" (q{quality})" if Path(path).suffix.lower() in (".jpg", ".jpeg") else ""
+        self.log_view.add(f"Saved {Path(path).name}{qtxt}")
         self.status_label.setText(f"Saved {Path(path).name}")
 
     def _save_recipe(self):
@@ -817,10 +885,12 @@ class LazyDevelopPanel(QWidget):
     def _cancel_tool(self, refresh=True):
         self.canvas.set_rect_mode(False)
         self._edit_proxy = None
-        if self.tool_panel is not None:
-            self.tool_panel.setParent(None)
-            self.tool_panel.deleteLater()
-            self.tool_panel = None
+        for attr in ("tool_panel", "auto_panel"):
+            panel = getattr(self, attr)
+            if panel is not None:
+                panel.setParent(None)
+                panel.deleteLater()
+                setattr(self, attr, None)
         self._placeholder.setVisible(True)
         if refresh and self.doc is not None:
             self._refresh_canvas()
@@ -942,6 +1012,100 @@ class LazyDevelopPanel(QWidget):
         if opac < 0.999:
             parts.append(f"{int(round(opac * 100))}%")
         return ", ".join(parts)
+
+    # -------------------------------------------------------------- auto-develop
+    def _open_auto(self):
+        """Analyse the full image (in a worker), then show suggested steps."""
+        if self.doc is None or self._busy():
+            return
+        self._cancel_tool(refresh=False)
+        self.toolbox.clearSelection()
+        self._set_busy(True)
+        self.status_label.setText("Analysing the whole image…")
+        img = self.doc.result()                       # read-only in the worker
+
+        def fn(log, progress):
+            log("Analysing the whole image…")
+            from ..develop.auto import analyze
+            return {"steps": analyze(img)}
+
+        self.worker = CallableWorker(fn, mode="auto")
+        self.worker.logline.connect(self.log_view.appendPlainText)
+        self.worker.finished_ok.connect(lambda r: self._show_auto(r["steps"]))
+        self.worker.failed.connect(self._on_failed)
+        self.worker.start()
+
+    def _show_auto(self, steps):
+        self._set_busy(False)
+        if not steps:
+            self.status_label.setText("Auto-develop: nothing to fix — the image already looks clean.")
+            self.log_view.add("Auto-develop", "no changes suggested")
+            return
+        self.auto_panel = AutoPanel(steps)
+        self.auto_panel.changed.connect(self._schedule_auto_preview)
+        self.auto_panel.applied.connect(self._apply_auto)
+        self.auto_panel.cancelled.connect(self._cancel_tool)
+        self.tool_holder_layout.addWidget(self.auto_panel)
+        self._placeholder.setVisible(False)
+        self._auto_preview()
+
+    def _schedule_auto_preview(self):
+        if self.auto_panel is not None:
+            self._auto_timer.start()
+
+    def _auto_preview(self):
+        if self.auto_panel is None or self.doc is None or self._busy():
+            return
+        steps = self.auto_panel.selected_steps()
+        pdoc = DevelopDocument(self._get_proxy())     # preview the recipe on a proxy
+        try:
+            for s in steps:
+                pdoc.apply_op(s["name"], s["params"])
+        except Exception as exc:
+            self.status_label.setText(f"Auto preview: {exc}")
+            return
+        self.before_btn.blockSignals(True)
+        self.before_btn.setChecked(False)
+        self.before_btn.blockSignals(False)
+        keep = (self._preview_kind == "auto")
+        self._preview_kind = "auto"
+        self.canvas.set_image(np.asarray(pdoc.result(), dtype=np.float32), keep_view=keep)
+        self.status_label.setText(
+            f"Auto-develop preview: {len(steps)} step(s) (proxy — Apply computes full resolution)")
+
+    def _apply_auto(self):
+        if self.auto_panel is None or self.doc is None or self._busy():
+            return
+        steps = list(self.auto_panel.selected_steps())
+        if not steps:
+            self._cancel_tool()
+            return
+        self._set_busy(True)
+        self.status_label.setText(f"Applying auto-develop ({len(steps)} steps)…")
+
+        def fn(log, progress):
+            for i, s in enumerate(steps):
+                log(f"{dev_ops.get(s['name']).label}…")
+                progress(i + 1, len(steps), s["name"])
+                self.doc.apply_op(s["name"], s["params"])
+            return {"steps": steps}
+
+        self.worker = CallableWorker(fn, mode="auto-apply")
+        self.worker.logline.connect(self.log_view.appendPlainText)
+        self.worker.finished_ok.connect(lambda r: self._finish_auto(r["steps"]))
+        self.worker.failed.connect(self._on_failed)
+        self.worker.start()
+
+    def _finish_auto(self, steps):
+        self._set_busy(False)
+        for s in steps:
+            op = dev_ops.get(s["name"])
+            self.log_view.add(f"Auto: {op.label}",
+                              self._op_value_str(op, op.merged(s["params"]), {"opacity": 1.0}))
+        self._cancel_tool(refresh=False)
+        self.toolbox.clearSelection()
+        self._refresh_canvas()
+        self._refresh_history()
 
     def _apply_tool(self):
         if self.tool_panel is None or self.doc is None or self._busy():
@@ -1172,7 +1336,7 @@ class LazyDevelopPanel(QWidget):
         # While the worker mutates the document off-thread, lock every control that could
         # also read/mutate it on the main thread (avoids a cross-thread cache race).
         for b in (self.open_btn, self.save_btn, self.save_recipe_btn, self.load_recipe_btn,
-                  self.toolbox, self.tool_holder, self.history_list):
+                  self.auto_btn, self.toolbox, self.tool_holder, self.history_list):
             b.setEnabled(not busy)
         if busy:
             self.undo_btn.setEnabled(False)

@@ -21,6 +21,7 @@ import numpy as np
 FITS_EXT = {".fit", ".fits", ".fts"}
 TIFF_EXT = {".tif", ".tiff"}
 PNG_EXT = {".png"}
+JPEG_EXT = {".jpg", ".jpeg"}
 XISF_EXT = {".xisf"}
 RAW_EXT = {".cr2", ".cr3", ".nef", ".arw", ".raf", ".dng", ".orf", ".rw2",
            ".pef", ".srw", ".raw"}
@@ -252,7 +253,7 @@ def load_image(path: "str | Path") -> LoadedImage:
         return _load_fits(p)
     if ext in TIFF_EXT:
         return _load_tiff(p)
-    if ext in PNG_EXT:
+    if ext in PNG_EXT or ext in JPEG_EXT:
         return _load_png(p)
     if ext in XISF_EXT:
         return _load_xisf(p)
@@ -269,11 +270,13 @@ def _to_planes_first(a: np.ndarray) -> np.ndarray:
 
 
 def save_image(path: "str | Path", data: np.ndarray, *, bit_depth: int = 16,
+               quality: int = 92,
                header: Optional[Dict[str, object]] = None) -> str:
-    """Write ``data`` (float [0,1]) to FITS / TIFF / PNG chosen by extension.
+    """Write ``data`` (float [0,1]) to FITS / TIFF / PNG / JPEG chosen by extension.
 
-    ``bit_depth`` applies to TIFF/PNG (8 or 16). FITS is always written float32.
-    XISF write is intentionally unsupported (PLAN §11) — use FITS/TIFF instead.
+    ``bit_depth`` applies to TIFF/PNG (8 or 16). FITS is always written float32. JPEG is
+    always 8-bit; ``quality`` (1..100) sets its compression quality. XISF write is
+    intentionally unsupported (PLAN §11) — use FITS/TIFF instead.
     """
     p = Path(path)
     ext = p.suffix.lower()
@@ -308,6 +311,11 @@ def save_image(path: "str | Path", data: np.ndarray, *, bit_depth: int = 16,
         else:
             arr = np.rint(a * 255.0).astype(np.uint8)
         iio.imwrite(str(p), arr)
+    elif ext in JPEG_EXT:
+        import imageio.v3 as iio
+
+        arr = np.rint(a * 255.0).astype(np.uint8)       # JPEG is 8-bit
+        iio.imwrite(str(p), arr, quality=int(np.clip(quality, 1, 100)))
     elif ext in XISF_EXT:
         raise ValueError(
             f"XISF write is not supported ({p.name}); XISF is read-only (PLAN §11). "
