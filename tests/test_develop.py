@@ -242,6 +242,33 @@ def test_darks_mask_is_complement_of_lights_at_depth1():
     assert np.allclose(lights + darks, 1.0, atol=1e-5)
 
 
+def test_mask_set_operations():
+    a = np.array([[0.0, 0.5], [1.0, 0.2]], np.float32)
+    b = np.array([[0.3, 0.9], [0.4, 0.2]], np.float32)
+    assert np.allclose(masks.combine_masks(a, b, "intersect"), np.minimum(a, b))
+    assert np.allclose(masks.combine_masks(a, b, "union"), np.maximum(a, b))
+    assert np.allclose(masks.combine_masks(a, b, "subtract"), np.minimum(a, 1 - b))
+    assert np.allclose(masks.combine_masks(a, None, "invert"), 1 - a)
+    # readable names
+    assert masks.combined_name("Nebula", "subtract", "Bright") == "Nebula ∩ ¬Bright"
+    assert masks.combined_name("Sky", "invert") == "¬Sky"
+
+
+def test_rename_mask_repoints_op_gates():
+    doc = DevelopDocument(_demo_rgb())
+    doc.add_mask("Sky", np.ones(doc.base.shape[:2], np.float32))
+    doc.apply_op("saturation", {"amount": 0.3}, mask="Sky")
+    assert doc.ops[-1].mask == "Sky"
+    assert doc.rename_mask("Sky", "Background")
+    assert "Background" in doc.masks and "Sky" not in doc.masks
+    assert doc.ops[-1].mask == "Background"          # gate repointed
+    # rejects duplicate / empty / no-op names
+    doc.add_mask("Stars", np.zeros(doc.base.shape[:2], np.float32))
+    assert not doc.rename_mask("Background", "Stars")
+    assert not doc.rename_mask("Background", "")
+    assert not doc.rename_mask("Background", "Background")
+
+
 def test_recipe_roundtrip():
     doc = DevelopDocument(_demo_rgb())
     doc.apply_op("saturation", {"amount": 0.4})

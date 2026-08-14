@@ -121,6 +121,17 @@ class DevelopDocument:
     def remove_mask(self, name: str) -> None:
         self.masks.pop(name, None)
 
+    def rename_mask(self, old: str, new: str) -> bool:
+        """Rename a mask and repoint every op that gates on it (no recompute needed)."""
+        new = (new or "").strip()
+        if old not in self.masks or not new or new == old or new in self.masks:
+            return False
+        self.masks[new] = self.masks.pop(old)
+        for op in self.ops:
+            if op.mask == old:
+                op.mask = new
+        return True
+
     def mask_names(self) -> List[str]:
         return list(self.masks.keys())
 

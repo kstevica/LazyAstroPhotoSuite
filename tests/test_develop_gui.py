@@ -325,6 +325,34 @@ def test_auto_panel_flow(qapp):
     assert [o.name for o in p.doc.ops] == [s["name"] for s in sel]
 
 
+def test_mask_combine_and_rename_flow(qapp, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    p = _loaded_panel(qapp)
+    p._make_lum_mask("lights")
+    p._make_highlights_mask()
+    assert set(p.doc.mask_names()) == {"Lum lights", "Highlights"}
+    # intersect the two → a new composite mask appears
+    p.combine_a.setCurrentText("Lum lights")
+    p.combine_op.setCurrentIndex(0)                    # ∩ intersect
+    p.combine_b.setCurrentText("Highlights")
+    p._combine_masks()
+    comp = [n for n in p.doc.mask_names() if "∩" in n]
+    assert comp and np.allclose(
+        p.doc.masks[comp[0]],
+        np.minimum(p.doc.masks["Lum lights"], p.doc.masks["Highlights"]))
+    # invert disables operand B and still works
+    p.combine_op.setCurrentIndex(3)                    # ¬ invert A
+    assert not p.combine_b.isEnabled()
+    p.combine_a.setCurrentText("Highlights")
+    p._combine_masks()
+    assert any(n.startswith("¬") for n in p.doc.mask_names())
+    # rename the first mask via the panel (dialog stubbed)
+    monkeypatch.setattr(QInputDialog, "getText", lambda *a, **k: ("Renamed", True))
+    first = p.mask_list.item(0).text()
+    p._rename_mask(p.mask_list.item(0))
+    assert "Renamed" in p.doc.mask_names() and first not in p.doc.mask_names()
+
+
 def test_show_auto_empty_is_noop(qapp):
     p = _loaded_panel(qapp)
     p._show_auto([])

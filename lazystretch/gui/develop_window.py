@@ -670,9 +670,13 @@ class LazyDevelopPanel(QWidget):
     def _build_mask_group(self) -> QWidget:
         box = QGroupBox("Masks")
         v = QVBoxLayout(box)
+        hint = QLabel("A library any tool can gate on. Double-click to rename.")
+        hint.setStyleSheet("color: gray;"); hint.setWordWrap(True)
+        v.addWidget(hint)
         self.mask_list = QListWidget()
         self.mask_list.setMaximumHeight(90)
         self.mask_list.itemClicked.connect(self._toggle_mask_view)
+        self.mask_list.itemDoubleClicked.connect(self._rename_mask)
         v.addWidget(self.mask_list)
         r1 = QHBoxLayout()
         b_lights = QPushButton("Lum lights"); b_darks = QPushButton("Lum darks")
@@ -686,6 +690,20 @@ class LazyDevelopPanel(QWidget):
         b_range.clicked.connect(self._make_range_mask)
         r2.addWidget(b_bright); r2.addWidget(b_range)
         v.addLayout(r2)
+        # Combine masks into a reusable composite (e.g. Nebula ∩ ¬Bright stars).
+        cr = QHBoxLayout()
+        self.combine_a = QComboBox(); self.combine_b = QComboBox()
+        self.combine_op = QComboBox()
+        self.combine_op.addItems(["∩ intersect", "∪ union", "− subtract", "¬ invert A"])
+        self.combine_op.currentIndexChanged.connect(self._update_combine_enabled)
+        cr.addWidget(self.combine_a, 1); cr.addWidget(self.combine_op)
+        cr.addWidget(self.combine_b, 1)
+        v.addLayout(cr)
+        cr2 = QHBoxLayout()
+        self.combine_btn = QPushButton("Combine →")
+        self.combine_btn.clicked.connect(self._combine_masks)
+        cr2.addWidget(self.combine_btn)
+        v.addLayout(cr2)
         r3 = QHBoxLayout()
         self.paint_btn = QPushButton("Paint mask…"); self.paint_btn.setCheckable(True)
         self.paint_btn.toggled.connect(self._toggle_paint)
@@ -1251,11 +1269,59 @@ class LazyDevelopPanel(QWidget):
         return name
 
     def _refresh_masks(self):
+        names = self.doc.mask_names()
         self.mask_list.clear()
-        for n in self.doc.mask_names():
+        for n in names:
             self.mask_list.addItem(QListWidgetItem(n))
+        for combo in (self.combine_a, self.combine_b):
+            cur = combo.currentText()
+            combo.blockSignals(True)
+            combo.clear(); combo.addItems(names)
+            idx = combo.findText(cur)
+            combo.setCurrentIndex(idx if idx >= 0 else 0)
+            combo.blockSignals(False)
+        self._update_combine_enabled()
         if self.tool_panel is not None:
-            self.tool_panel.refresh_masks(self.doc.mask_names())
+            self.tool_panel.refresh_masks(names)
+
+    def _update_combine_enabled(self):
+        n = len(self.doc.mask_names()) if self.doc else 0
+        invert = self.combine_op.currentIndex() == 3        # ¬ invert A
+        self.combine_b.setEnabled(n >= 1 and not invert)
+        self.combine_btn.setEnabled(n >= (1 if invert else 2))
+
+    def _rename_mask(self, item):
+        if self.doc is None:
+            return
+        old = item.text()
+        new, ok = QInputDialog.getText(self, "Rename mask", "New name:", text=old)
+        if not ok:
+            return
+        if self.doc.rename_mask(old, new.strip()):
+            if self._showing_mask == old:
+                self._showing_mask = new.strip()
+            self._refresh_masks()
+        elif new.strip() and new.strip() != old:
+            QMessageBox.information(self, "Rename mask", "That name is already in use.")
+
+    def _combine_masks(self):
+        if self.doc is None:
+            return
+        names = self.doc.mask_names()
+        op = ("intersect", "union", "subtract", "invert")[self.combine_op.currentIndex()]
+        na = self.combine_a.currentText()
+        if na not in self.doc.masks:
+            return
+        a = self.doc.masks[na]
+        nb = self.combine_b.currentText()
+        b = self.doc.masks.get(nb) if op != "invert" else None
+        if op != "invert" and b is None:
+            return
+        result = dev_masks.combine_masks(a, b, op)
+        name = self._unique_mask_name(dev_masks.combined_name(na, op, None if op == "invert" else nb))
+        self.doc.add_mask(name, result)
+        self._refresh_masks()
+        self.status_label.setText(f"Created mask: {name}")
 
     def _toggle_mask_view(self, item):
         name = item.text()
