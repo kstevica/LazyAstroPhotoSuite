@@ -63,6 +63,22 @@ def test_float_slider_maps_range(qapp):
     assert abs(fs.value() - 0.25) < 1e-3
 
 
+def test_app_name_and_macos_menu_rename():
+    import sys
+
+    from lazystretch.gui import app as gui_app
+    from lazystretch.gui.shell import _TITLES
+
+    # the suite presents under one name, matching the launcher window title
+    assert gui_app.APP_NAME == "LazyAstroPhotoSuite" == _TITLES["home"]
+    # the macOS app-menu rename is best-effort and must NEVER raise; on macOS it succeeds
+    result = gui_app._rename_macos_app(gui_app.APP_NAME)
+    assert result in (True, False)
+    if sys.platform == "darwin":
+        assert result is True
+    assert gui_app._rename_macos_app("x") is (False if sys.platform != "darwin" else True)
+
+
 def test_run_log_export_to_text_and_save(qapp, tmp_path, monkeypatch):
     from PySide6.QtWidgets import QFileDialog
     from lazystretch.gui.widgets import RunLogView
