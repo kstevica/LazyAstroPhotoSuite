@@ -293,7 +293,8 @@ class LauncherPage(QWidget):
         # credit footer, bottom-right
         foot = QHBoxLayout()
         foot.addStretch(1)
-        footer = QLabel(f"LazyAstroPhotoSuite by Stevica Kuharski   ·   v{_VERSION}   ·   @kstevica")
+        footer = QLabel(f"LazyAstroPhotoSuite  v{_VERSION}   ·   kstevica.com/laps   "
+                        f"·   kstevica@gmail.com")
         footer.setStyleSheet(
             "color: rgba(196,206,228,0.60); background: transparent; font-size: 12px;")
         foot.addWidget(footer)

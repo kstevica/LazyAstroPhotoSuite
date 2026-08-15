@@ -6,6 +6,12 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
 
 ## [Unreleased]
 
+### Docs & branding
+- **README rewritten** as a standalone-product doc (LazyAstroPhotoSuite) and a new **USAGE.md**
+  tutorial covering every tool. The website (**kstevica.com/laps**) and contact
+  (**kstevica@gmail.com**) appear in the README, the tutorial, and the launcher footer.
+- **LazyFlight launcher card** now uses an M45 (Pleiades) image.
+
 ### Packaging
 - **Standalone macOS app build** (`build/build_macos.sh`, PyInstaller) — compiles the whole
   suite into a self-contained `LazyAstroPhotoSuite.app` (arm64) that needs no Python. The
