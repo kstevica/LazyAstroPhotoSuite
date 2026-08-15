@@ -55,7 +55,8 @@ class FlightCanvas(PreviewView):
         self._sel = -1
         self._drag = -1
         self._markers = []
-        self._bg_last = None                             # last drag pos (scene coords)
+        self._bg_last = None                             # left-drag: background move (scene)
+        self._view_last = None                           # middle/right-drag: pan the view (screen)
 
     def set_image(self, a, keep_view=None):
         """Fast-path preview updates: on a same-size frame just swap the pixmap so
@@ -83,6 +84,10 @@ class FlightCanvas(PreviewView):
         return -1
 
     def mousePressEvent(self, ev):
+        if ev.button() in (Qt.MiddleButton, Qt.RightButton):   # pan the zoomed-in view
+            self._view_last = ev.position()
+            self.setCursor(Qt.ClosedHandCursor)
+            return
         if not self._img_size:
             return super().mousePressEvent(ev)
         if self.pick_mode:
@@ -100,6 +105,14 @@ class FlightCanvas(PreviewView):
         super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
+        if self._view_last is not None:                  # scroll the view (hand-pan)
+            d = ev.position() - self._view_last
+            self._view_last = ev.position()
+            self.horizontalScrollBar().setValue(
+                self.horizontalScrollBar().value() - int(d.x()))
+            self.verticalScrollBar().setValue(
+                self.verticalScrollBar().value() - int(d.y()))
+            return
         if self.pick_mode and self._drag >= 0 and self._img_size:
             nx, ny = self._norm(ev)
             self.pointMoved.emit(self._drag, nx, ny)
@@ -115,6 +128,10 @@ class FlightCanvas(PreviewView):
         super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
+        if self._view_last is not None:
+            self._view_last = None
+            self.unsetCursor()
+            return
         if self.pick_mode and self._drag >= 0:
             self._drag = -1
             return
@@ -322,8 +339,8 @@ class LazyFlightPanel(QWidget):
         # --- right: canvas + scrub -------------------------------------------
         right = QVBoxLayout()
         self.canvas = FlightCanvas()
-        self.canvas.setToolTip("Drag to move the background in the frame · "
-                               "scroll to zoom the view")
+        self.canvas.setToolTip("Left-drag: move background in the frame · "
+                               "scroll: zoom the view · middle/right-drag: pan the view")
         self.canvas.pointAdded.connect(self._on_point_added)
         self.canvas.pointMoved.connect(self._on_point_moved)
         self.canvas.pointSelected.connect(self._on_point_selected)
