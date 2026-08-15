@@ -144,6 +144,10 @@ def test_shell_opens_flight_panel(qapp):
     panel.rotate.set_value(12.0); panel.pan.set_value(0.05); panel._rebuild_cams()
     assert max(c.roll for c in panel._cams) == pytest.approx(12.0, abs=0.2)  # peaks
     assert panel._cams[-1].roll < 1.0                    # returns → seamless loop
+    # 3D tilt (X/Y perspective) is a static per-clip orientation
+    panel.tilt_x.set_value(3.0); panel.tilt_y.set_value(-2.0); panel._rebuild_cams()
+    assert panel._cams[0].rot_x == pytest.approx(3.0, abs=0.1)
+    assert panel._cams[0].rot_y == pytest.approx(-2.0, abs=0.1)
     panel._render_preview()                              # must not raise
     # portrait output frame is taller than wide
     panel.orient_combo.setCurrentText("Portrait"); panel._reopen_engine()

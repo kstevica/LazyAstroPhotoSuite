@@ -220,9 +220,15 @@ class LazyFlightPanel(QWidget):
         self.zoom = FloatSlider("Zoom", 1.0, 3.0, 1.4, decimals=2)
         self.zoom.valueChanged.connect(self._on_zoom)
         cam.addWidget(self.zoom)
-        self.rotate = FloatSlider("Rotate (°)", 0.0, 30.0, 8.0, decimals=0)
+        self.rotate = FloatSlider("Rotate Z (°)", -12.0, 12.0, 0.0, decimals=0)
         self.rotate.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.rotate)
+        self.tilt_x = FloatSlider("Tilt X (°)", -4.0, 4.0, 0.0, decimals=1)
+        self.tilt_x.valueChanged.connect(self._rebuild_cams)
+        cam.addWidget(self.tilt_x)
+        self.tilt_y = FloatSlider("Tilt Y (°)", -4.0, 4.0, 0.0, decimals=1)
+        self.tilt_y.valueChanged.connect(self._rebuild_cams)
+        cam.addWidget(self.tilt_y)
         self.pan = FloatSlider("Pan", 0.0, 0.12, 0.035, decimals=3)
         self.pan.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.pan)
@@ -369,8 +375,9 @@ class LazyFlightPanel(QWidget):
 
     # --------------------------------------------------------------- helpers
     def _set_controls_enabled(self, on: bool):
-        for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.pan,
-                  self.bloom, self.style, self.saturation, self.haze, self.stars,
+        for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.tilt_x,
+                  self.tilt_y, self.pan, self.bloom, self.style, self.saturation,
+                  self.haze, self.stars,
                   self.star_min, self.star_max, self.streaks, self.streak_len,
                   self.mode_combo, self.semantic, self.show_depth, self.fps_combo,
                   self.width_combo, self.orient_combo, self.ratio_combo,
@@ -390,9 +397,9 @@ class LazyFlightPanel(QWidget):
         for w in (self.style, self.saturation, self.haze):
             w.setEnabled(mode == "space")                # space-only look controls
         self.stars.setEnabled(mode in ("space", "v2"))   # both synth star fields
-        for w in (self.rotate, self.pan, self.streaks, self.streak_len,
-                  self.star_min, self.star_max, self.orient_combo, self.ratio_combo,
-                  self.pick_btn, self.clear_pts_btn):
+        for w in (self.rotate, self.tilt_x, self.tilt_y, self.pan, self.streaks,
+                  self.streak_len, self.star_min, self.star_max, self.orient_combo,
+                  self.ratio_combo, self.pick_btn, self.clear_pts_btn):
             w.setEnabled(v2)                              # v2-only
         self.semantic.setEnabled(mode in ("space", "parallax", "volumetric"))
         self.path_combo.setEnabled(mode in ("parallax", "volumetric"))
@@ -578,6 +585,8 @@ class LazyFlightPanel(QWidget):
         elif mode == "v2":
             self._cams = fly_v2(n, zoom_end=zoom_end,
                                 rotate_deg=float(self.rotate.value()),
+                                rot_x=float(self.tilt_x.value()),
+                                rot_y=float(self.tilt_y.value()),
                                 pan_points=list(self._pan_points),
                                 pan=float(self.pan.value()))
             self._clamp_base_pan()                       # keep framing within borders
@@ -707,6 +716,8 @@ class LazyFlightPanel(QWidget):
         width = int(self.width_combo.currentText())
         mode = self._mode()
         zoom_end = float(self.zoom.value())
+        rot_x = float(self.tilt_x.value())
+        rot_y = float(self.tilt_y.value())
         bloom = float(self.bloom.value())
         sat = float(self.saturation.value())
         stylize = float(self.style.value())
@@ -740,10 +751,11 @@ class LazyFlightPanel(QWidget):
                 return render_v2(
                     img, out, seconds=seconds, fps=fps, out_w=out_w, out_h=out_h,
                     workers=workers, star_count=star_count, bloom=bloom,
-                    zoom_end=zoom_end, rotate_deg=rotate_deg, pan_points=pan_points,
-                    pan=pan, base_pan=base_pan, star_min=star_min, star_max=star_max,
-                    streaks=streaks, streak_len=streak_len, crf=crf,
-                    bitrate_mbps=bitrate, on_frame=on_frame)
+                    zoom_end=zoom_end, rotate_deg=rotate_deg, rot_x=rot_x,
+                    rot_y=rot_y, pan_points=pan_points, pan=pan, base_pan=base_pan,
+                    star_min=star_min, star_max=star_max, streaks=streaks,
+                    streak_len=streak_len, crf=crf, bitrate_mbps=bitrate,
+                    on_frame=on_frame)
             if mode == "space":
                 return render_space(
                     img, out, seconds=seconds, fps=fps, render_width=width,

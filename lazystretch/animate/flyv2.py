@@ -26,12 +26,16 @@ from .depth import _as_rgb
 
 @dataclass
 class V2Cam:
-    """One frame's pose. ``zoom``/``roll``/``pan`` transform the background;
-    ``c`` advances the star inflow (the starfield stays centred on the viewport)."""
+    """One frame's pose. ``zoom``/``pan`` and the three rotations transform the
+    background: ``roll`` = Z (in-plane), ``rot_x`` / ``rot_y`` = 3D tilt of the
+    image plane (perspective). ``c`` advances the star inflow (the starfield stays
+    centred on the viewport)."""
     zoom: float = 1.0
     roll: float = 0.0
     pan_x: float = 0.0
     pan_y: float = 0.0
+    rot_x: float = 0.0
+    rot_y: float = 0.0
     c: float = 0.0
     twinkle: float = 0.0
 
@@ -117,27 +121,56 @@ class V2Fly:
 
     # ---------------------------------------------------------------- bg warp
     def _warp_bg(self, cam: V2Cam) -> np.ndarray:
-        from scipy.ndimage import affine_transform
+        """Project the image plane into the output frame with a pinhole camera:
+        ``roll`` rotates in-plane (Z), ``rot_x``/``rot_y`` tilt the plane in 3D so
+        it keystones (real perspective). A pure Z-roll reduces to the old affine."""
+        from scipy.ndimage import map_coordinates
 
-        ow, oh = self.out_w, self.out_h
-        cover = max(ow / self.bw, oh / self.bh)          # fill the output frame
+        ow, oh, bw, bh = self.out_w, self.out_h, self.bw, self.bh
+        cover = max(ow / bw, oh / bh)
         # clamp zoom-out so the frame can never leave the image (no border shows)
-        zmin = max((1.0 + abs(cam.pan_x)) * ow / self.bw,
-                   (1.0 + abs(cam.pan_y)) * oh / self.bh) / (self.overscan * cover)
-        zoom = max(cam.zoom, zmin)
-        s = self.overscan * cover * zoom
-        th = np.deg2rad(cam.roll)
-        cos, sin = np.cos(th), np.sin(th)
-        m2 = (1.0 / s) * np.array([[cos, sin], [-sin, cos]])
-        oc = np.array([(oh - 1) / 2.0, (ow - 1) / 2.0])
-        bc = np.array([(self.bh - 1) / 2.0, (self.bw - 1) / 2.0])
-        offset_out = np.array([cam.pan_y * oh / 2.0, cam.pan_x * ow / 2.0])
-        off2 = bc + m2 @ (offset_out - oc)               # centre bg on the pan point
-        m3 = np.eye(3)
-        m3[:2, :2] = m2
-        return affine_transform(self.bg, m3, offset=[off2[0], off2[1], 0.0],
-                                order=1, mode="nearest", prefilter=False,
-                                output_shape=(oh, ow, 3))
+        zmin = max((1.0 + abs(cam.pan_x)) * ow / bw,
+                   (1.0 + abs(cam.pan_y)) * oh / bh) / (self.overscan * cover)
+        s = self.overscan * cover * max(cam.zoom, zmin)
+
+        rz, rx, ry = (np.deg2rad(cam.roll), np.deg2rad(cam.rot_x),
+                      np.deg2rad(cam.rot_y))
+        cz, sz = np.cos(rz), np.sin(rz)
+        cx, sx = np.cos(rx), np.sin(rx)
+        cy, sy = np.cos(ry), np.sin(ry)
+        # image rows point down → the in-plane (Z) roll uses the [[c, s],[-s, c]]
+        # convention so it matches the legacy 2D affine exactly
+        Rz = np.array([[cz, sz, 0.0], [-sz, cz, 0.0], [0.0, 0.0, 1.0]])
+        Ry = np.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]])
+        Rx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]])
+        R = Rz @ Ry @ Rx                                 # image plane x=col, y=row, z=depth
+        D = max(bw, bh) * 1.3                            # camera distance (perspective strength)
+
+        oc_row, oc_col = (oh - 1) / 2.0, (ow - 1) / 2.0
+        bc_row, bc_col = (bh - 1) / 2.0, (bw - 1) / 2.0
+        # pan focus: the bg point that lands at the output centre (uses the Z-roll)
+        m2 = (1.0 / s) * np.array([[cz, sz], [-sz, cz]])
+        bc_eff = np.array([bc_row, bc_col]) + m2 @ np.array(
+            [cam.pan_y * oh / 2.0, cam.pan_x * ow / 2.0])
+
+        r20, r21 = R[2, 0] / D, R[2, 1] / D
+        # forward homography H: plane [X(col), Y(row), 1] → output homog [u, v, w]
+        H = np.array([
+            [oc_col * r20 + s * R[0, 0], oc_col * r21 + s * R[0, 1], oc_col],
+            [oc_row * r20 + s * R[1, 0], oc_row * r21 + s * R[1, 1], oc_row],
+            [r20, r21, 1.0],
+        ])
+        hi = np.linalg.inv(H)
+        yy, xx = np.mgrid[0:oh, 0:ow].astype(np.float64)
+        wdiv = hi[2, 0] * xx + hi[2, 1] * yy + hi[2, 2]
+        px = (hi[0, 0] * xx + hi[0, 1] * yy + hi[0, 2]) / wdiv    # plane X (col)
+        py = (hi[1, 0] * xx + hi[1, 1] * yy + hi[1, 2]) / wdiv    # plane Y (row)
+        coords = np.stack([bc_eff[0] + py, bc_eff[1] + px])
+        out = np.empty((oh, ow, 3), np.float32)
+        for ch in range(3):
+            out[..., ch] = map_coordinates(self.bg[..., ch], coords, order=1,
+                                           mode="nearest", prefilter=False)
+        return out
 
     # ----------------------------------------------------------------- stars
     def _sigmas(self):
@@ -233,6 +266,7 @@ class V2Fly:
 
 
 def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
+           rot_x: float = 0.0, rot_y: float = 0.0,
            pan_points: Optional[List[Tuple[float, float]]] = None,
            pan: float = 0.035, star_speed: float = 2.0,
            base_pan: Tuple[float, float] = (0.0, 0.0)):
@@ -249,6 +283,7 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
         cams.append(V2Cam(
             zoom=float(zoom[i]),
             roll=float(roll),
+            rot_x=float(rot_x), rot_y=float(rot_y),      # static 3D tilt
             pan_x=float(path[i, 0]) + bx, pan_y=float(path[i, 1]) + by,
             c=star_speed * u,                            # wraps in the renderer → loops
             twinkle=u * 2 * np.pi * 6.0,
@@ -260,6 +295,7 @@ def render_v2(img, out_path: str, *, seconds: float = 8.0, fps: int = 24,
               out_w: Optional[int] = None, out_h: Optional[int] = None,
               render_width: int = 1280, workers: int = 1, star_count: int = 1400,
               bloom: float = 0.25, zoom_end: float = 1.4, rotate_deg: float = 8.0,
+              rot_x: float = 0.0, rot_y: float = 0.0,
               pan_points: Optional[List[Tuple[float, float]]] = None,
               pan: float = 0.035, star_speed: float = 2.0,
               base_pan: Tuple[float, float] = (0.0, 0.0),
@@ -288,8 +324,8 @@ def render_v2(img, out_path: str, *, seconds: float = 8.0, fps: int = 24,
                 star_min=star_min, star_max=star_max, streaks=streaks,
                 streak_len=streak_len, **(engine_kw or {}))
     n = max(int(round(seconds * fps)), 2)
-    cams = fly_v2(n, zoom_end=zoom_end, rotate_deg=rotate_deg,
-                  pan_points=pan_points, pan=pan, star_speed=star_speed,
-                  base_pan=base_pan)
+    cams = fly_v2(n, zoom_end=zoom_end, rotate_deg=rotate_deg, rot_x=rot_x,
+                  rot_y=rot_y, pan_points=pan_points, pan=pan,
+                  star_speed=star_speed, base_pan=base_pan)
     frames = parallel_frames(eng, cams, int(workers), on_frame)
     return write_video(frames, out_path, fps=fps, crf=crf, bitrate_mbps=bitrate_mbps)

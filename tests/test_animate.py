@@ -155,6 +155,22 @@ def test_v2fly_bg_unchanged_and_moves():
     assert cams[-1].c > 0.0                              # stars flew in
 
 
+def test_v2fly_3d_tilt_perspective():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam
+
+    rgb, _ = _scene()
+    eng = V2Fly(rgb, star_count=0)
+    flat = eng._warp_bg(V2Cam(zoom=1.2))
+    tx = eng._warp_bg(V2Cam(zoom=1.2, rot_x=4.0))        # tilt about X
+    ty = eng._warp_bg(V2Cam(zoom=1.2, rot_y=-4.0))       # tilt about Y
+    assert flat.shape == (eng.out_h, eng.out_w, 3)
+    assert np.isfinite(tx).all() and np.isfinite(ty).all()
+    # perspective tilt changes the frame (keystone), and the two axes differ
+    assert float(np.mean(np.abs(flat - tx))) > 1e-3
+    assert float(np.mean(np.abs(flat - ty))) > 1e-3
+    assert not np.array_equal(tx, ty)
+
+
 def test_v2fly_star_field_wraps_seamlessly():
     from lazystretch.animate.flyv2 import V2Fly, V2Cam
 
