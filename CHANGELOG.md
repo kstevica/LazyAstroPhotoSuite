@@ -7,15 +7,17 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
 ## [Unreleased]
 
 ### Packaging
-- **Standalone macOS app build** (`build/build_macos.sh`, Nuitka) — compiles the whole suite
-  into a self-contained `LazyAstroPhotoSuite.app` (~343 MB, arm64) that needs no Python. The
+- **Standalone macOS app build** (`build/build_macos.sh`, PyInstaller) — compiles the whole
+  suite into a self-contained `LazyAstroPhotoSuite.app` (arm64) that needs no Python. The
   bundle's `CFBundleName` shows **LazyAstroPhotoSuite** in the app menu natively, carries a
   themed icon (`build/make_icon.py`), and includes the launcher art, data JSON, DSO catalogs,
   and an ffmpeg binary (via imageio-ffmpeg) so LazyFlight export works offline. External AI
   tools (RC-Astro, StarNet, GraXpert, ASTAP) stay unbundled and feature-detected. Freeze
-  hardening: `multiprocessing.freeze_support()` at both entry points and an absolute import
-  in the GUI entry so it runs as frozen `__main__`. Requires a non-Apple CPython to build
-  (see `build/README.md`); a new `build` extra pins the tooling.
+  hardening: `multiprocessing.freeze_support()` in the entry point. PyInstaller (not Nuitka):
+  Nuitka's C-compilation breaks astropy's runtime PLY unit-grammar build ("Unable to build
+  parser"); PyInstaller keeps modules as bytecode + ships an astropy hook. A `build` extra
+  pins the tooling; `build/README.md` documents setup, signing/notarization, and the
+  deployment-target caveat.
 
 ### Added
 - **Star diffraction spikes (LazyDevelop).** A new "Star spikes" Studio tool auto-detects

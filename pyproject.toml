@@ -26,7 +26,7 @@ xisf = ["xisf>=0.9"]            # optional XISF read support
 bg = ["photutils>=1.9"]        # optional photutils Background2D (ABE)
 video = ["imageio-ffmpeg>=0.4"] # LazyFlight mp4 encode when no system ffmpeg
 spcc = ["astroquery>=0.4.7", "gaiaxpy>=2.1"]   # SPCC-lite prerequisites (scaffolded)
-build = ["nuitka>=2.4", "imageio-ffmpeg>=0.4", "ordered-set", "zstandard"]  # standalone .app
+build = ["pyinstaller>=6.0", "imageio-ffmpeg>=0.4", "astroalign>=2.5", "rawpy>=0.19"]  # standalone .app
 
 [project.scripts]
 lazystretch = "lazystretch.cli:main"

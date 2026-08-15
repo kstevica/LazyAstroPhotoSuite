@@ -42,3 +42,7 @@ build/dist/
 .venv-build/
 build/appicon.iconset/
 build/_icon_1024.png
+build/pyi-work/
+build/pyi-spec/
+build/_pi*/
+build/_probe*.py
