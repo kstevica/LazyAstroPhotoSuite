@@ -246,6 +246,7 @@ class DevelopCanvas(PreviewView):
         self._new_len = 0.06                       # length assigned to newly-added stars
         self._preview_count = 4                    # schematic spike count/angle for the overlay
         self._preview_angle = 0.0
+        self._preview_jitter = 0.0
         self.setMouseTracking(True)                # hover cursors without a pressed button
 
     def set_rect_mode(self, on: bool):
@@ -467,9 +468,10 @@ class DevelopCanvas(PreviewView):
     def set_new_len(self, v: float):
         self._new_len = float(v)
 
-    def set_preview(self, count: int, angle_deg: float):
+    def set_preview(self, count: int, angle_deg: float, jitter: float = 0.0):
         self._preview_count = int(count)
         self._preview_angle = float(angle_deg)
+        self._preview_jitter = float(jitter)
         self._redraw_stars()
 
     def set_active_len(self, v: float):
@@ -489,6 +491,7 @@ class DevelopCanvas(PreviewView):
         r = 7.0 / max(self.transform().m11(), 1e-6)        # marker radius, zoom-independent
         n = max(int(getattr(self, "_preview_count", 4)), 3)
         a0 = np.radians(getattr(self, "_preview_angle", 0.0))
+        jit = float(getattr(self, "_preview_jitter", 0.0))
         for i, s in enumerate(self._stars):
             cx = s["x"] * (w - 1); cy = s["y"] * (h - 1)
             active = (i == self._active)
@@ -496,8 +499,13 @@ class DevelopCanvas(PreviewView):
             length = float(s.get("len", getattr(self, "_new_len", 0.06))) * diag
             for k in range(n):                             # schematic spike overlay (live)
                 ang = a0 + k * 2.0 * np.pi / n
-                line = self.scene().addLine(cx, cy, cx + np.cos(ang) * length,
-                                            cy + np.sin(ang) * length,
+                lk = length
+                if jit > 0:                                # match render's deterministic jitter
+                    hsh = (np.sin(s["x"] * 127.1 + s["y"] * 311.7 + k * 74.7)
+                           * 43758.5453) % 1.0
+                    lk = length * (1.0 + jit * (2.0 * hsh - 1.0) * 0.5)
+                line = self.scene().addLine(cx, cy, cx + np.cos(ang) * lk,
+                                            cy + np.sin(ang) * lk,
                                             QPen(col, 0))
                 line.setOpacity(0.9 if active else 0.55)
                 line.setZValue(5)
@@ -1203,7 +1211,8 @@ class LazyDevelopPanel(QWidget):
         p = panel.params()
         length = float(p.get("length", 0.06))
         self.canvas.set_new_len(length)
-        self.canvas.set_preview(int(p.get("count", 4)), float(p.get("angle", 0.0)))
+        self.canvas.set_preview(int(p.get("count", 4)), float(p.get("angle", 0.0)),
+                                float(p.get("jitter", 0.0)))
         stars = list(p.get("stars") or [])
         if not stars and panel.edit_index is None:          # new tool → auto-detect
             stars = detect_stars(base, max_stars=int(p.get("max_stars", 30)))
@@ -1228,7 +1237,8 @@ class LazyDevelopPanel(QWidget):
     def _on_star_globals(self):
         if self.tool_panel is not None and self.tool_panel.wants_stars():
             p = self.tool_panel.params()
-            self.canvas.set_preview(int(p.get("count", 4)), float(p.get("angle", 0.0)))
+            self.canvas.set_preview(int(p.get("count", 4)), float(p.get("angle", 0.0)),
+                                float(p.get("jitter", 0.0)))
 
     def _on_stars_changed(self, stars):
         if self.tool_panel is not None and self.tool_panel.wants_stars():

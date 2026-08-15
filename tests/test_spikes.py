@@ -64,6 +64,30 @@ def test_render_spikes_count_clamped_and_noop():
         assert np.isfinite(out).all() and out.max() <= 1 + 1e-6
 
 
+def test_fringe_adds_chromatic_colour():
+    img, _ = _sky_with_stars(centers=())
+    star = {"x": 0.5, "y": 0.5, "len": 0.2, "flux": 1.0, "col": [1, 1, 1]}   # white star
+    plain = render_spikes(img, [star], count=4, fringe=0.0)
+    fringed = render_spikes(img, [star], count=4, fringe=1.0)
+    assert not np.allclose(plain, fringed)
+    # on the outer part of the right arm, the fringe introduces channel spread (colour)
+    h, w = img.shape[:2]
+    cy = int(round(0.5 * (h - 1)))
+    x = w // 2 + int(0.16 * np.hypot(h, w))
+    chroma = lambda o: float(o[cy, x].max() - o[cy, x].min())
+    assert chroma(fringed) > chroma(plain) + 0.02
+
+
+def test_arm_length_jitter_is_optional_and_deterministic():
+    img, _ = _sky_with_stars(centers=())
+    star = {"x": 0.5, "y": 0.5, "len": 0.2, "flux": 1.0, "col": [1, 1, 1]}
+    even = render_spikes(img, [star], count=6, jitter=0.0)
+    jit = render_spikes(img, [star], count=6, jitter=0.8)
+    assert not np.allclose(even, jit)                    # arms now differ in length
+    # deterministic: the same star jitters identically every render (stable preview↔apply)
+    assert np.array_equal(jit, render_spikes(img, [star], count=6, jitter=0.8))
+
+
 def test_render_spikes_does_not_mutate_input():
     img, _ = _sky_with_stars()
     before = img.copy()

@@ -236,6 +236,7 @@ def _star_spikes(img, p):
         count=int(p.get("count", 4)), angle_deg=float(p.get("angle", 0.0)),
         thickness=float(p.get("thickness", 1.0)), intensity=float(p.get("intensity", 1.0)),
         colored=bool(p.get("colored", True)), base_len=float(p.get("length", 0.06)),
+        fringe=float(p.get("fringe", 0.0)), jitter=float(p.get("jitter", 0.0)),
     )
 
 
@@ -248,13 +249,18 @@ register(Op(
         ParamSpec("angle", "Rotation°", "float", 0.0, 90.0, 0.0, 0),
         ParamSpec("thickness", "Thickness", "float", 0.3, 4.0, 1.0, 1),
         ParamSpec("intensity", "Intensity", "float", 0.0, 2.0, 1.0, 2),
+        ParamSpec("fringe", "Chromatic fringe", "float", 0.0, 1.0, 0.0, 2,
+                  tooltip="Blend a warm→cool spectral gradient into the outer arms "
+                          "(refractor-style diffraction colour). 0 = off."),
+        ParamSpec("jitter", "Arm-length jitter", "float", 0.0, 1.0, 0.0, 2,
+                  tooltip="Vary each arm's length a little (0 = all arms equal)."),
         ParamSpec("colored", "Tint by star colour", "bool", default=True),
         ParamSpec("max_stars", "Auto-detect count", "int", 1, 200, 30, 0),
     ],
     tooltip="Diffraction spikes on stars. Auto-detects the brightest stars; click one to "
             "select, click empty to add, drag to move, right-click to remove. Spike count "
             "(3–32), rotation, thickness and intensity are global; Length applies to the "
-            "selected star (and sets new stars).",
+            "selected star (and sets new stars). Optional chromatic fringe + arm jitter.",
 ))
 
 register(Op(
