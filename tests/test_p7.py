@@ -5,7 +5,8 @@ import sys
 import numpy as np
 import pytest
 
-from lazystretch.external import DeepSNR, GraXpert, SPCC, StarX, Tools
+from lazystretch.external import (BlurX, DeepSNR, GraXpert, NoiseX, RCStarX, SPCC, StarX,
+                                   Tools)
 from lazystretch.objects.model import Parameters
 from lazystretch.objects.presets import apply_preset, curated_for
 from lazystretch.pipeline.runcore import run_pipeline
@@ -78,7 +79,8 @@ def test_pipeline_starsadj_changes_reduction_level(tmp_path):
     exe = tmp_path / "fake_starnet"
     exe.write_text(f"#!{sys.executable}\nimport shutil,sys\na=sys.argv;shutil.copyfile(a[a.index(chr(45)+chr(105))+1],a[a.index(chr(45)+chr(111))+1])\n")
     exe.chmod(exe.stat().st_mode | stat.S_IRWXU)
-    tools = Tools(GraXpert("/nope"), StarX(str(exe)), DeepSNR("/nope"), SPCC())
+    tools = Tools(GraXpert("/nope"), StarX(str(exe)), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX("/nope"))
     img = _rgb(120, 160)
     # galaxy starLevel = 0.60; starsAdj +0.20 -> effective 0.80
     p = Parameters.for_object("galaxy", starsAdj=0.20)
@@ -91,7 +93,8 @@ def test_pipeline_remove_stars_outputs_layer(tmp_path):
     exe = tmp_path / "fake_starnet"
     exe.write_text(f"#!{sys.executable}\nimport shutil,sys\na=sys.argv;shutil.copyfile(a[a.index(chr(45)+chr(105))+1],a[a.index(chr(45)+chr(111))+1])\n")
     exe.chmod(exe.stat().st_mode | stat.S_IRWXU)
-    tools = Tools(GraXpert("/nope"), StarX(str(exe)), DeepSNR("/nope"), SPCC())
+    tools = Tools(GraXpert("/nope"), StarX(str(exe)), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX("/nope"))
     img = _rgb(120, 160)
     p = Parameters.for_object("galaxy", removeStars=True)
     r = run_pipeline(img, p, preview=False, tools=tools)

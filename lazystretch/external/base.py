@@ -19,6 +19,7 @@ class ExternalTool:
     """
 
     name: str = "external-tool"
+    label: str = "external-tool"      # short name for user-facing log lines
     executables: List[str] = []
     env_var: Optional[str] = None
 

@@ -20,6 +20,7 @@ from .shellout import run_image_roundtrip
 
 class StarX(ExternalTool):
     name = "StarXTerminator"
+    label = "StarNet"
     executables = ["starnet++", "starnet2", "StarNet", "starnet"]
     env_var = "LAZYSTRETCH_STARNET"
 

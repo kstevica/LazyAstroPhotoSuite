@@ -7,7 +7,8 @@ import sys
 import numpy as np
 import pytest
 
-from lazystretch.external import SPCC, DeepSNR, GraXpert, StarX, Tools, star_recombine
+from lazystretch.external import (SPCC, BlurX, DeepSNR, GraXpert, NoiseX, RCStarX, StarX,
+                                   Tools, star_recombine)
 from lazystretch.objects.model import Parameters
 from lazystretch.pipeline.runcore import run_pipeline
 from lazystretch.processes.deconv import richardson_lucy
@@ -42,7 +43,8 @@ def _rgb(H=64, W=80, seed=0):
 # --- graceful degradation (no tools) ----------------------------------------
 
 def test_tools_absent_report_unavailable():
-    t = Tools(GraXpert("/nope"), StarX("/nope"), DeepSNR("/nope"), SPCC())
+    t = Tools(GraXpert("/nope"), StarX("/nope"), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX("/nope"))
     st = t.status()
     assert st["GraXpert (background)"] is False
     assert st["StarNet (star reduction)"] is False
@@ -89,7 +91,8 @@ def test_graxpert_roundtrip_via_fake(tmp_path):
 def test_pipeline_uses_fake_tools(tmp_path):
     starnet = _make_exe(tmp_path / "fake_starnet", _FAKE_STARNET)
     graxpert = _make_exe(tmp_path / "fake_graxpert", _FAKE_GRAXPERT)
-    tools = Tools(GraXpert(graxpert), StarX(starnet), DeepSNR("/nope"), SPCC())
+    tools = Tools(GraXpert(graxpert), StarX(starnet), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX("/nope"))
     img = _rgb(120, 160)
     # galaxy: doNR + doStarReduce on; execute (not preview) so the wall runs
     p = Parameters.for_object("galaxy")
@@ -103,12 +106,13 @@ def test_pipeline_uses_fake_tools(tmp_path):
 
 def test_pipeline_degrades_without_tools():
     img = _rgb(120, 160)
-    tools = Tools(GraXpert("/nope"), StarX("/nope"), DeepSNR("/nope"), SPCC())
+    tools = Tools(GraXpert("/nope"), StarX("/nope"), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX("/nope"))
     r = run_pipeline(img, Parameters.for_object("galaxy"), preview=False, tools=tools)
     assert r.steps_skipped == []
     joined = " ".join(r.log)
     assert "MMT fallback" in joined            # NR fell back to MMT
-    assert "Star reduction skipped (StarNet not installed)" in joined
+    assert "Star reduction skipped (no star tool installed)" in joined
 
 
 # --- classical deconvolution + star math ------------------------------------

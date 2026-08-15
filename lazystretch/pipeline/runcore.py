@@ -5,11 +5,13 @@ exactly what will run), gates each step by the same conditions PI uses (preview 
 isColor, narrowband, inputStretched, class predicates), and runs each in its own
 try/except, continuing on error — PI's per-step fault isolation.
 
-External "wall" tools (``Tools``: GraXpert, StarNet, SPCC-lite) are feature-detected and
-used when installed, else the pipeline degrades: GraXpert denoise -> MMT; GraXpert
-background -> ABE polynomial; StarNet reduction/star-protect -> skipped/global; SPCC ->
-BN+CC. Preview forces the wall OFF (the deterministic, no-plugin subset). Deconvolution
-has no open CLI equivalent, so BlurX -> optional classical Richardson-Lucy (off by default).
+External "wall" tools (``Tools``) are feature-detected and used when installed, else the
+pipeline degrades. When RC-Astro's stand-alone CLI is present it wins at every slot it
+covers — the real products beat the substitutes: BlurXTerminator -> classical
+Richardson-Lucy (off by default) -> skip; StarXTerminator -> StarNet -> skipped/global;
+NoiseXTerminator -> DeepSNR -> GraXpert -> MMT. Background: GraXpert -> ABE polynomial;
+SPCC -> BN+CC. Each RC-Astro slot falls back in-step if its run fails (e.g. inactive
+licence). Preview forces the wall OFF (the deterministic, no-plugin subset).
 """
 from __future__ import annotations
 
@@ -312,10 +314,24 @@ def run_pipeline(
     elif preview:
         _log("-- Deconvolution skipped (preview: BlurX off)")
     elif do_bxt:
-        if params.useClassicalDeconv:
+        have_bxt = tools.blurx.is_available()
+        if have_bxt or params.useClassicalDeconv:
             def _dec():
-                ctx["img"] = deconv.richardson_lucy(ctx["img"])
-            add("Deconvolution (classical Richardson-Lucy — weak BlurX substitute)", _dec)
+                if tools.blurx.is_available():
+                    try:
+                        ctx["img"] = tools.blurx.deconvolve(ctx["img"])
+                        _log("   via BlurXTerminator (RC-Astro)")
+                        return
+                    except Exception as e:
+                        _log(f"   BlurXTerminator failed ({e}); "
+                             + ("falling back to classical RL"
+                                if params.useClassicalDeconv else "skipping"))
+                if params.useClassicalDeconv:
+                    ctx["img"] = deconv.richardson_lucy(ctx["img"])
+                    _log("   via classical Richardson-Lucy")
+            add("Deconvolution (BlurXTerminator)" if have_bxt
+                else "Deconvolution (classical Richardson-Lucy — weak BlurX substitute)",
+                _dec)
         else:
             _log("-- Deconvolution skipped (no BlurX; enable classical RL to approximate)")
 
@@ -367,12 +383,20 @@ def run_pipeline(
         masked = params.useNRMask
         def _nr():
             orig = ctx["img"]
-            if tools.deepsnr.is_available():
-                processed = tools.deepsnr.denoise(orig); via = "DeepSNR"
-            elif tools.graxpert.is_available():
-                processed = tools.graxpert.denoise(orig); via = "GraXpert"
-            else:
-                processed = multiscale.noise_reduction_mmt(orig); via = "MMT fallback"
+            processed = None; via = ""
+            if tools.noisex.is_available():                 # the real NoiseXTerminator
+                try:
+                    processed = tools.noisex.denoise(orig); via = "NoiseXTerminator"
+                except Exception as e:
+                    _log(f"   NoiseXTerminator failed ({e}); falling back")
+                    processed = None
+            if processed is None:
+                if tools.deepsnr.is_available():
+                    processed = tools.deepsnr.denoise(orig); via = "DeepSNR"
+                elif tools.graxpert.is_available():
+                    processed = tools.graxpert.denoise(orig); via = "GraXpert"
+                else:
+                    processed = multiscale.noise_reduction_mmt(orig); via = "MMT fallback"
             sr = ctx["snr_raw"]
             if sr is not None:
                 # Protect high-SNR signal/stars from over-smoothing; low-SNR background is denoised
@@ -454,16 +478,20 @@ def run_pipeline(
         star_protect_here = star_pro and star_protect_applies_to(cls, data)
         def _sat():
             processed = tone.saturation(ctx["img"], eff.sat)
-            if star_protect_here and tools.starx.is_available():
-                sm = tools.starx.star_mask(ctx["img"])
-                ctx["img"] = masks.apply_masked(ctx["img"], processed, sm, invert=True)
-                _log("   star-protected (StarNet star mask)")
-            else:
-                if star_pro and not star_protect_here:
-                    _log(f"   global saturation (star-protect skipped for {cls} class)")
-                elif star_pro:
-                    _log("   global saturation (StarNet not installed)")
-                ctx["img"] = processed
+            st = tools.star_tool()
+            if star_protect_here and st is not None:
+                try:
+                    sm = st.star_mask(ctx["img"])
+                    ctx["img"] = masks.apply_masked(ctx["img"], processed, sm, invert=True)
+                    _log(f"   star-protected ({st.label} star mask)")
+                    return
+                except Exception as e:                      # never lose the saturation boost
+                    _log(f"   {st.label} star mask failed ({e}); global saturation")
+            elif star_pro and not star_protect_here:
+                _log(f"   global saturation (star-protect skipped for {cls} class)")
+            elif star_pro:
+                _log("   global saturation (no star tool installed)")
+            ctx["img"] = processed
         add(f"Saturation boost ({eff.sat:.2f})"
             + (" star-protected" if star_protect_here else ""), _sat)
 
@@ -510,27 +538,30 @@ def run_pipeline(
     if preview and (params.doStarReduce or params.removeStars):
         _log("-- Star handling skipped (preview: StarX off)")
     elif do_remove:
-        if tools.starx.is_available():
+        st = tools.star_tool()
+        if st is not None:
             def _remove():
-                starless, stars = tools.starx.remove_stars(ctx["img"])
+                starless, stars = st.remove_stars(ctx["img"])
                 ctx["img"] = starless
                 ctx["stars_layer"] = stars
-                _log(f"   stars removed; stars layer kept (mean {float(stars.mean()):.5f})")
+                _log(f"   stars removed via {st.label}; stars layer kept "
+                     f"(mean {float(stars.mean()):.5f})")
             add("Remove stars (starless result + stars layer)", _remove)
         else:
-            _log("-- Remove stars skipped (StarNet not installed)")
+            _log("-- Remove stars skipped (no star tool installed)")
     elif do_star:
-        if tools.starx.is_available():
+        st = tools.star_tool()
+        if st is not None:
             eff_star = float(np.clip(prof.starLevel + params.starsAdj, 0.0, 1.0))
             eff_star = float(ledger.record("Stars", "reduction level", eff_star))
             def _starred():
-                ctx["img"] = tools.starx.reduce_stars(ctx["img"], eff_star, params.smallStars)
-                _log(f"   via StarNet (level {eff_star:.2f}"
+                ctx["img"] = st.reduce_stars(ctx["img"], eff_star, params.smallStars)
+                _log(f"   via {st.label} (level {eff_star:.2f}"
                      f"{f' [class {prof.starLevel:.2f}{params.starsAdj:+.2f}]' if params.starsAdj else ''}, "
                      f"small stars {params.smallStars:.2f})")
             add(f"Star reduction (level {eff_star:.2f})", _starred)
         else:
-            _log("-- Star reduction skipped (StarNet not installed)")
+            _log("-- Star reduction skipped (no star tool installed)")
 
     # --- software star reduction (port-only): thin the star carpet morphologically, no
     #     StarNet. Runs in preview + execute so dense widefields can reveal dust/nebulosity. ---

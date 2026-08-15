@@ -55,6 +55,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--starnet-path", help="path to StarNet (else $LAZYSTRETCH_STARNET or PATH)")
     p.add_argument("--graxpert-path", help="path to GraXpert (else $LAZYSTRETCH_GRAXPERT or the .app)")
     p.add_argument("--deepsnr-path", help="path to DeepSNR (else $LAZYSTRETCH_DEEPSNR or PATH)")
+    p.add_argument("--rcastro-path", help="path to the RC-Astro CLI 'rc-astro' binary "
+                   "(else $LAZYSTRETCH_RCASTRO or PATH); enables real BlurX/StarX/NoiseX")
     p.add_argument("--no-gpu", action="store_true", help="disable GPU for external tools")
     p.add_argument("--deconv", action="store_true",
                    help="classical Richardson-Lucy deconvolution (weak BlurX substitute)")
@@ -197,7 +199,8 @@ def main(argv: Optional[list] = None) -> int:
     args = build_parser().parse_args(argv)
 
     tools = Tools.resolve(graxpert_path=args.graxpert_path, starnet_path=args.starnet_path,
-                          deepsnr_path=args.deepsnr_path, gpu=not args.no_gpu)
+                          deepsnr_path=args.deepsnr_path, rcastro_path=args.rcastro_path,
+                          gpu=not args.no_gpu)
     if args.tools:
         print("Detected external tools:")
         for name, ok in tools.status().items():
