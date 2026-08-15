@@ -52,6 +52,23 @@ class FlightCanvas(PreviewView):
         self._drag = -1
         self._markers = []
 
+    def set_image(self, a, keep_view=None):
+        """Show ``a`` but keep the user's drag-pan/zoom across preview updates,
+        and pad the scene so the image can be dragged around even at fit."""
+        a = np.asarray(a)
+        same = self._has_image and self._img_size == (a.shape[1], a.shape[0])
+        if same and keep_view is not False:              # fast path: swap pixmap only
+            from PySide6.QtGui import QPixmap
+            from .preview import ndarray_to_qimage
+            self._array = a
+            self._item.setPixmap(QPixmap.fromImage(ndarray_to_qimage(a)))
+            return
+        super().set_image(a, keep_view=keep_view)
+        r = self._item.boundingRect()                    # room to pan the image around
+        self._scene.setSceneRect(r.adjusted(-r.width(), -r.height(),
+                                            r.width(), r.height()))
+        self.centerOn(self._item)
+
     def _norm(self, ev):
         sp = self.mapToScene(ev.position().toPoint())
         w, h = self._img_size
@@ -81,6 +98,8 @@ class FlightCanvas(PreviewView):
             nx, ny = self._norm(ev)
             self.pointMoved.emit(self._drag, nx, ny)
             return
+        if ev.buttons() & Qt.LeftButton and self._has_image:
+            self._user_zoomed = True                     # panning → don't auto-refit
         super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
@@ -274,6 +293,8 @@ class LazyFlightPanel(QWidget):
         # --- right: canvas + scrub -------------------------------------------
         right = QVBoxLayout()
         self.canvas = FlightCanvas()
+        self.canvas.setToolTip("Drag to move the image · scroll to zoom · "
+                               "double-click to reset")
         self.canvas.pointAdded.connect(self._on_point_added)
         self.canvas.pointMoved.connect(self._on_point_moved)
         self.canvas.pointSelected.connect(self._on_point_selected)
