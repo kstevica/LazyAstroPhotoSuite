@@ -228,6 +228,19 @@ def test_v2fly_output_frame_and_pan_points():
     assert float(hops.max()) < 0.25                      # smooth, no abrupt corners
 
 
+def test_v2fly_points_centre_exactly():
+    from lazystretch.animate.flyv2 import _pan_path
+
+    pts = [[-0.5, -0.25, 1.1, 5.0, 0.0, 0.0], [0.45, 0.1, 1.6, -3.0, 2.0, -1.0],
+           [0.0, 0.4, 2.0, 0.0, -2.0, 1.0]]
+    for n in (96, 143):                                  # incl. n not divisible by k
+        pan, chan = _pan_path(pts, n)
+        for seg, p in enumerate(pts):
+            j = int(round(seg * n / len(pts)))           # the frame that lands on it
+            assert np.allclose(pan[j], p[:2], atol=1e-6)      # centred exactly
+            assert np.allclose(chan[j], p[2:], atol=1e-6)     # its zoom/roll/tilt too
+
+
 def test_v2fly_streaks_and_size_change_output():
     from lazystretch.animate.flyv2 import V2Fly, V2Cam
 
