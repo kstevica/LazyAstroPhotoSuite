@@ -63,6 +63,63 @@ def test_float_slider_maps_range(qapp):
     assert abs(fs.value() - 0.25) < 1e-3
 
 
+def test_run_log_export_to_text_and_save(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    from lazystretch.gui.widgets import RunLogView
+
+    log = RunLogView()
+    log.start()
+    log.append("Auto-stretch (STF -> HistogramTransformation)")
+    log.append("   via NoiseXTerminator (linear)")
+    log.finish()
+    text = log.log_to_text()
+    assert "Auto-stretch" in text and "NoiseXTerminator" in text
+
+    path = tmp_path / "run.txt"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    assert log.save_log() == str(path) and path.exists()
+    body = path.read_text()
+    assert "LazyStretch run log" in body and "Auto-stretch" in body
+
+    # cancelling the dialog writes nothing and returns None
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: ("", "")))
+    assert log.save_log() is None
+
+    # empty log exports empty text (no crash)
+    log.start()
+    assert log.log_to_text() == ""
+
+
+def test_mainwindow_save_log_button_writes_file(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    from lazystretch.gui.main_window import MainWindow
+
+    w = MainWindow()
+    assert hasattr(w, "save_log_btn")
+    w.log_view.append("hello from the run log")
+    path = tmp_path / "m.txt"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    w.save_log_btn.click()
+    assert path.exists() and "hello from the run log" in path.read_text()
+
+
+def test_develop_log_export(qapp, tmp_path, monkeypatch):
+    from PySide6.QtWidgets import QFileDialog
+    from lazystretch.gui.develop_window import DevelopLog
+
+    log = DevelopLog()
+    log.add("Curves", "+0.20")
+    assert "Curves" in log.log_to_text() and "+0.20" in log.log_to_text()
+    path = tmp_path / "d.txt"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    assert log.save_log() == str(path)
+    assert "LazyDevelop log" in path.read_text()
+
+
 def test_shell_launcher_and_lazy_panel(qapp):
     from lazystretch.gui.main_window import LazyStretchPanel, MainWindow
     from lazystretch.gui.shell import AppShell

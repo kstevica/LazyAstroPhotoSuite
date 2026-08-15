@@ -7,6 +7,10 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
 ## [Unreleased]
 
 ### Added
+- **Save / export logs.** Every run log can be written to a text file: a "Save log…" button
+  in the Stretch, LazyMoonSun, and LazyDevelop windows, plus a right-click "Copy log" /
+  "Save log…" menu on any log view (shared `LogExportMixin`). The CLI gains `--log-file
+  <path>` to write the full run log alongside the output.
 - **RC-Astro standalone CLI support** — when the `rc-astro` CLI (v1.1.x) is installed and
   licensed, the pipeline uses the *real* BlurXTerminator / StarXTerminator /
   NoiseXTerminator instead of the open-source substitutes. One feature-detected binary

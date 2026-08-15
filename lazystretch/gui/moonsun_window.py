@@ -152,9 +152,18 @@ class LazyMoonSunPanel(QWidget):
         v.addWidget(self.preview, 7)
 
         self.log_view = RunLogView()
+        self.log_view.log_title = "LazyMoonSun log"
+        log_hdr = QHBoxLayout()
+        log_hdr.addWidget(QLabel("Run log"))
+        log_hdr.addStretch(1)
+        self.save_log_btn = QPushButton("Save log…")
+        self.save_log_btn.setToolTip("Save the run log to a text file (or right-click the log)")
+        self.save_log_btn.clicked.connect(lambda: self.log_view.save_log(self))
+        log_hdr.addWidget(self.save_log_btn)
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
         self.status_label = QLabel("Pick a burst folder, then Stack.")
+        v.addLayout(log_hdr)
         v.addWidget(self.log_view, 3)
         v.addWidget(self.progress)
         v.addWidget(self.status_label)

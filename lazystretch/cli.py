@@ -62,6 +62,7 @@ def build_parser() -> argparse.ArgumentParser:
                    help="classical Richardson-Lucy deconvolution (weak BlurX substitute)")
     p.add_argument("--tools", action="store_true", help="print detected external tools and exit")
     p.add_argument("-q", "--quiet", action="store_true", help="don't echo the pipeline log")
+    p.add_argument("--log-file", help="also write the full run log to this text file")
 
     # dials (default None so a curated preset is not clobbered by an unset dial)
     p.add_argument("--sat", type=float, dest="satAdj")
@@ -279,6 +280,17 @@ def main(argv: Optional[list] = None) -> int:
         for line in result.log:
             if line.startswith(("   ", "--", "Auto", "Combined", "Identified")):
                 print("  " + line.strip())
+
+    if args.log_file:                                    # full, unfiltered run log
+        try:
+            with open(args.log_file, "w") as f:
+                f.write(f"# LazyStretch run log — class '{result.object_class}', "
+                        f"{len(result.steps_run)} steps run, "
+                        f"{len(result.steps_skipped)} skipped\n\n")
+                f.write("\n".join(result.log) + "\n")
+            print(f"Log -> {args.log_file}")
+        except OSError as e:
+            print(f"warning: could not write log file: {e}", file=sys.stderr)
 
     # output path
     if args.output:

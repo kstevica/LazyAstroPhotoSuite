@@ -47,16 +47,18 @@ from ..develop import DevelopDocument, ops as dev_ops
 from ..develop import masks as dev_masks
 from ..io.image_io import load_image, save_image
 from .preview import PreviewView
-from .widgets import FloatSlider
+from .widgets import FloatSlider, LogExportMixin
 from .worker import CallableWorker
 
 
-class DevelopLog(QTreeWidget):
+class DevelopLog(LogExportMixin, QTreeWidget):
     """A simple 3-column edit log: absolute Time · Event · Value (the applied values).
 
     Unlike the run-log used by the batch tools, Develop logs discrete edits, so the
     third column carries each step's actual values rather than a duration.
     """
+
+    log_title = "LazyDevelop log"
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -772,6 +774,14 @@ class LazyDevelopPanel(QWidget):
         self.progress = QProgressBar(); self.progress.setRange(0, 100); self.progress.setValue(0)
         v.addWidget(self.progress)
         self.log_view = DevelopLog()
+        log_hdr = QHBoxLayout()
+        log_hdr.addWidget(QLabel("Edit log"))
+        log_hdr.addStretch(1)
+        self.save_log_btn = QPushButton("Save log…")
+        self.save_log_btn.setToolTip("Save the edit log to a text file (or right-click the log)")
+        self.save_log_btn.clicked.connect(lambda: self.log_view.save_log(self))
+        log_hdr.addWidget(self.save_log_btn)
+        v.addLayout(log_hdr)
         v.addWidget(self.log_view, 2)
         return w
 

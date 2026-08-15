@@ -2,15 +2,18 @@
 from __future__ import annotations
 
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QSlider,
     QTreeWidget,
@@ -114,13 +117,67 @@ class FilePicker(QWidget):
         self._label.setStyleSheet("color: gray;")
 
 
-class RunLogView(QTreeWidget):
+class LogExportMixin:
+    """Copy / Save the log for any 3-column ``QTreeWidget`` log view.
+
+    Adds a right-click menu ("Copy log", "Save log…") and a ``save_log`` method that writes
+    the whole log to a plain-text file. Mixed into ``RunLogView`` (batch tools) and the
+    Develop edit log so every tool can export its log the same way. Set ``log_title`` on the
+    instance to name the export (header line + default filename)."""
+
+    log_title = "LazyStretch log"
+
+    def log_to_text(self) -> str:
+        """The full log as readable plain text: ``  time  event  [extra]`` per row."""
+        cols = self.columnCount()
+        lines = []
+        for i in range(self.topLevelItemCount()):
+            it = self.topLevelItem(i)
+            parts = [(it.text(c) or "").strip() for c in range(cols)]
+            time_s = parts[0] if cols > 0 else ""
+            event = parts[1] if cols > 1 else (parts[0] if cols == 1 else "")
+            extra = parts[2] if cols > 2 else ""
+            line = f"{time_s:>8}  {event}" if time_s else event
+            if extra:
+                line += f"  [{extra}]"
+            lines.append(line.rstrip())
+        return "\n".join(lines) + ("\n" if lines else "")
+
+    def copy_log(self) -> None:
+        QApplication.clipboard().setText(self.log_to_text())
+
+    def save_log(self, parent=None) -> Optional[str]:
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        default = f"{self.log_title.lower().replace(' ', '-')}-{stamp}.txt"
+        path, _ = QFileDialog.getSaveFileName(parent or self, "Save log", default,
+                                              "Text log (*.txt);;All files (*)")
+        if not path:
+            return None
+        with open(path, "w") as f:
+            f.write(f"# {self.log_title} — exported {datetime.now():%Y-%m-%d %H:%M:%S}\n\n")
+            f.write(self.log_to_text())
+        return path
+
+    def contextMenuEvent(self, ev):                    # right-click -> Copy / Save
+        menu = QMenu(self)
+        act_copy = menu.addAction("Copy log", self.copy_log)
+        act_save = menu.addAction("Save log…", lambda: self.save_log(self))
+        empty = self.topLevelItemCount() == 0
+        act_copy.setEnabled(not empty)
+        act_save.setEnabled(not empty)
+        menu.exec(ev.globalPos())
+
+
+class RunLogView(LogExportMixin, QTreeWidget):
     """A 3-column run log: time-since-start · event · how long the step took.
 
     Each ``append`` stamps the elapsed time since the run began; the step's duration is the
     gap until the next line, backfilled when that line arrives (``finish`` closes the last
     one). Drop-in for the old QPlainTextEdit — ``appendPlainText`` and ``clear`` still work.
+    Right-click (or a host "Save log…" button) exports the log via ``LogExportMixin``.
     """
+
+    log_title = "LazyStretch run log"
 
     _MAX_ROWS = 4000
 

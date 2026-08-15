@@ -88,3 +88,22 @@ def test_cli_save_and_load_recipe(tmp_path):
     q = _make_params(args2, "emission")
     assert q.object_class == "galaxy"        # recipe's class wins
     assert abs(q.satAdj - 0.3) < 1e-9 and q.darkLaneGC is True
+
+
+def test_cli_log_file_written(tmp_path):
+    import numpy as np
+
+    from lazystretch.cli import main
+    from lazystretch.io.image_io import save_image
+
+    img = np.clip(np.random.default_rng(0).random((48, 64, 3)) * 0.2, 0, 1)
+    ip = tmp_path / "in.tif"
+    save_image(str(ip), img, bit_depth=16)
+    lp = tmp_path / "run.log"
+    op = tmp_path / "out.tif"
+    rc = main([str(ip), "--class", "galaxy", "--quiet",
+               "--output", str(op), "--log-file", str(lp)])
+    assert rc == 0 and op.exists()
+    assert lp.exists()
+    body = lp.read_text()
+    assert "LazyStretch run log" in body and "Auto-stretch" in body

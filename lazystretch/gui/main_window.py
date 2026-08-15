@@ -456,6 +456,13 @@ class LazyStretchPanel(QWidget):
 
         # --- log (full width; the action buttons live above the image) ---
         self.log_view = RunLogView()
+        log_hdr = QHBoxLayout()
+        log_hdr.addWidget(QLabel("Run log"))
+        log_hdr.addStretch(1)
+        self.save_log_btn = QPushButton("Save log…")
+        self.save_log_btn.setToolTip("Save the run log to a text file (or right-click the log)")
+        self.save_log_btn.clicked.connect(lambda: self.log_view.save_log(self))
+        log_hdr.addWidget(self.save_log_btn)
 
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
@@ -463,6 +470,7 @@ class LazyStretchPanel(QWidget):
         iv.addWidget(self.detected_label)
         iv.addWidget(self.tools_label)
         iv.addWidget(self.history_group)
+        iv.addLayout(log_hdr)
         iv.addWidget(self.log_view, 1)
         iv.addWidget(self.progress)
         iv.addWidget(self.status_label)
