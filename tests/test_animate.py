@@ -152,6 +152,36 @@ def test_v2fly_bg_unchanged_and_moves():
     assert cams[-1].c > 0.0                              # stars flew in
 
 
+def test_v2fly_output_frame_and_pan_points():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam, fly_v2
+
+    rgb, _ = _scene(h=80, w=160)                          # landscape source
+    # portrait output frame, independent of the image aspect
+    eng = V2Fly(rgb, out_w=90, out_h=160, star_count=100, star_min=1.2, star_max=5.0)
+    fr = eng.render_frame(V2Cam(zoom=1.0))
+    assert fr.shape == (160, 90, 3)                       # portrait, cover-fit
+    assert np.isfinite(fr).all()
+    # multi-point pan: smooth path (no abrupt jumps) + star focus follows velocity
+    cams = fly_v2(48, pan_points=[(-0.5, -0.3), (0.4, 0.1), (0.0, 0.45)])
+    steps = np.array([[c.pan_x, c.pan_y] for c in cams])
+    hops = np.linalg.norm(np.diff(steps, axis=0), axis=1)
+    assert float(hops.max()) < 0.25                      # smooth, no abrupt corners
+    assert any(abs(c.focus_x) > 1e-3 or abs(c.focus_y) > 1e-3 for c in cams)
+
+
+def test_v2fly_streaks_and_size_change_output():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam
+
+    rgb, _ = _scene()
+    cam = V2Cam(zoom=1.3, c=1.0)
+    dots = V2Fly(rgb, star_count=300, streaks=False).render_frame(cam)
+    trails = V2Fly(rgb, star_count=300, streaks=True, streak_len=60).render_frame(cam)
+    assert float(np.mean(np.abs(dots - trails))) > 1e-4  # streaks change the render
+    small = V2Fly(rgb, star_count=300, star_max=2.0).render_frame(cam)
+    big = V2Fly(rgb, star_count=300, star_max=6.0).render_frame(cam)
+    assert float(np.mean(np.abs(small - big))) > 1e-4    # size range matters
+
+
 def test_color_grade_black_stays_black():
     from lazystretch.animate.volume3d import color_grade
 

@@ -12,9 +12,10 @@ from typing import Optional
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtGui import QColor, QPen
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QGroupBox, QHBoxLayout, QLabel,
-    QProgressBar, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QGraphicsEllipseItem, QGroupBox,
+    QHBoxLayout, QLabel, QProgressBar, QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..animate import render_flythrough
@@ -23,7 +24,7 @@ from ..animate.encode import ffmpeg_available
 from ..animate.parallel import auto_workers
 from ..animate.render import Flythrough3D
 from ..animate.volume3d import SpaceFly, fly_volume, render_space
-from ..animate.flyv2 import V2Fly, fly_v2, render_v2
+from ..animate.flyv2 import V2Fly, V2Cam, fly_v2, render_v2
 from ..io.image_io import load_image
 from .preview import PreviewView
 from .widgets import FloatSlider
@@ -31,6 +32,45 @@ from .worker import CallableWorker
 
 _PREVIEW_W = 760          # live-preview render width (fast)
 _PREVIEW_FPS = 24         # frames the scrub bar addresses
+_RATIOS = ["16:9", "3:2", "4:3", "5:4", "1:1"]
+
+
+class FlightCanvas(PreviewView):
+    """Preview that can also capture up to N pan-point clicks (v2)."""
+
+    pointPicked = Signal(float, float)                   # normalised [-1, 1]
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.pick_mode = False
+        self._markers = []
+
+    def mousePressEvent(self, ev):
+        if self.pick_mode and self._img_size:
+            sp = self.mapToScene(ev.position().toPoint())
+            w, h = self._img_size
+            nx = float(np.clip(sp.x() / w * 2.0 - 1.0, -1.0, 1.0))
+            ny = float(np.clip(sp.y() / h * 2.0 - 1.0, -1.0, 1.0))
+            self.pointPicked.emit(nx, ny)
+            return
+        super().mousePressEvent(ev)
+
+    def set_markers(self, points):
+        for m in self._markers:
+            self._scene.removeItem(m)
+        self._markers = []
+        if not self._img_size:
+            return
+        w, h = self._img_size
+        r = max(w, h) * 0.013
+        pen = QPen(QColor(120, 220, 255)); pen.setCosmetic(True); pen.setWidth(2)
+        for (px, py) in points:
+            x = (px + 1.0) * w / 2.0
+            y = (py + 1.0) * h / 2.0
+            it = QGraphicsEllipseItem(x - r, y - r, 2 * r, 2 * r)
+            it.setPen(pen); it.setBrush(QColor(120, 220, 255, 70)); it.setZValue(6)
+            self._scene.addItem(it)
+            self._markers.append(it)
 
 
 class LazyFlightPanel(QWidget):
@@ -42,6 +82,7 @@ class LazyFlightPanel(QWidget):
         self._engine: Optional[Flythrough3D] = None    # preview engine (low-res)
         self._cams = []                                # preview camera path
         self._masks = None                             # semantic masks (optional)
+        self._pan_points = []                          # v2 pan targets (normalised)
         self.worker: Optional[CallableWorker] = None
         self._busy = False
         self._play = QTimer(self)
@@ -128,6 +169,12 @@ class LazyFlightPanel(QWidget):
         self.stars = FloatSlider("Stars", 300, 2500, 1300, decimals=0)
         self.stars.valueChanged.connect(self._rebuild_soon)
         look.addWidget(self.stars)
+        self.star_min = FloatSlider("Star min size", 0.3, 3.0, 0.9, decimals=2)
+        self.star_min.valueChanged.connect(self._on_star_size)
+        look.addWidget(self.star_min)
+        self.star_max = FloatSlider("Star max size", 1.0, 8.0, 3.6, decimals=2)
+        self.star_max.valueChanged.connect(self._on_star_size)
+        look.addWidget(self.star_max)
         self.streaks = QCheckBox("Radial star streaks (v2)")
         self.streaks.toggled.connect(self._on_streaks)
         look.addWidget(self.streaks)
@@ -148,7 +195,15 @@ class LazyFlightPanel(QWidget):
         self.width_combo = QComboBox()
         self.width_combo.addItems(["960", "1280", "1600", "1920"])
         self.width_combo.setCurrentText("1280")
-        out.addWidget(self._row("Width", self.width_combo))
+        out.addWidget(self._row("Long edge", self.width_combo))
+        self.orient_combo = QComboBox()                  # v2 output framing
+        self.orient_combo.addItems(["Landscape", "Portrait", "Square"])
+        self.orient_combo.currentIndexChanged.connect(self._reopen_engine)
+        out.addWidget(self._row("Orientation", self.orient_combo))
+        self.ratio_combo = QComboBox()
+        self.ratio_combo.addItems(_RATIOS)
+        self.ratio_combo.currentIndexChanged.connect(self._reopen_engine)
+        out.addWidget(self._row("Aspect", self.ratio_combo))
         self.parallel = QCheckBox(f"Parallel render ({auto_workers()} cores)")
         self.parallel.setChecked(True)
         out.addWidget(self.parallel)
@@ -169,8 +224,22 @@ class LazyFlightPanel(QWidget):
 
         # --- right: canvas + scrub -------------------------------------------
         right = QVBoxLayout()
-        self.canvas = PreviewView()
+        self.canvas = FlightCanvas()
+        self.canvas.pointPicked.connect(self._on_point_picked)
         right.addWidget(self.canvas, 1)
+        pp = QHBoxLayout()
+        self.pick_btn = QPushButton("Pick pan points (v2)")
+        self.pick_btn.setCheckable(True)
+        self.pick_btn.toggled.connect(self._toggle_pick)
+        pp.addWidget(self.pick_btn)
+        self.clear_pts_btn = QPushButton("Clear")
+        self.clear_pts_btn.clicked.connect(self._clear_points)
+        pp.addWidget(self.clear_pts_btn)
+        self.pts_label = QLabel("0 points")
+        self.pts_label.setStyleSheet("color: gray;")
+        pp.addWidget(self.pts_label)
+        pp.addStretch(1)
+        right.addLayout(pp)
         bar = QHBoxLayout()
         self.play_btn = QPushButton("▶ Play")
         self.play_btn.setCheckable(True)
@@ -197,22 +266,85 @@ class LazyFlightPanel(QWidget):
     def _set_controls_enabled(self, on: bool):
         for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.pan,
                   self.bloom, self.style, self.saturation, self.haze, self.stars,
-                  self.streaks, self.mode_combo, self.semantic, self.show_depth,
-                  self.fps_combo, self.width_combo, self.render_btn,
-                  self.play_btn, self.scrub):
+                  self.star_min, self.star_max, self.streaks, self.mode_combo,
+                  self.semantic, self.show_depth, self.fps_combo, self.width_combo,
+                  self.orient_combo, self.ratio_combo, self.render_btn,
+                  self.pick_btn, self.clear_pts_btn, self.play_btn, self.scrub):
             w.setEnabled(on)
         if on:
             self._sync_mode_controls()
 
     def _sync_mode_controls(self):
         mode = self._mode()
+        v2 = mode == "v2"
         for w in (self.style, self.saturation, self.haze):
             w.setEnabled(mode == "space")                # space-only look controls
         self.stars.setEnabled(mode in ("space", "v2"))   # both synth star fields
-        for w in (self.rotate, self.pan, self.streaks):
-            w.setEnabled(mode == "v2")                    # v2-only
+        for w in (self.rotate, self.pan, self.streaks, self.star_min, self.star_max,
+                  self.orient_combo, self.ratio_combo, self.pick_btn,
+                  self.clear_pts_btn):
+            w.setEnabled(v2)                              # v2-only
         self.semantic.setEnabled(mode in ("space", "parallax", "volumetric"))
         self.path_combo.setEnabled(mode in ("parallax", "volumetric"))
+
+    def _aspect_wh(self) -> float:
+        a, b = (float(x) for x in self.ratio_combo.currentText().split(":"))
+        wh = a / b
+        orient = self.orient_combo.currentText()
+        if orient == "Portrait":
+            return 1.0 / wh
+        if orient == "Square":
+            return 1.0
+        return wh
+
+    def _frame_size(self, long_edge: int):
+        wh = self._aspect_wh()
+        if wh >= 1.0:
+            w, h = long_edge, int(round(long_edge / wh))
+        else:
+            h, w = long_edge, int(round(long_edge * wh))
+        return w - w % 2, h - h % 2
+
+    def _on_star_size(self, *_):
+        if isinstance(self._engine, V2Fly):              # read at render time, no rebuild
+            lo, hi = float(self.star_min.value()), float(self.star_max.value())
+            self._engine.star_min = min(lo, hi)
+            self._engine.star_max = max(lo, hi)
+        self._render_preview()
+
+    # ------------------------------------------------------------ pan points
+    def _toggle_pick(self, on: bool):
+        self.canvas.pick_mode = bool(on) and self._mode() == "v2"
+        self.pick_btn.setText("Done picking" if self.canvas.pick_mode else
+                              "Pick pan points (v2)")
+        if self.canvas.pick_mode:
+            if self.play_btn.isChecked():
+                self.play_btn.setChecked(False)
+            self._show_pick_frame()                      # static base for placing
+        else:
+            self.canvas.set_markers([])
+            self._rebuild_cams()
+
+    def _show_pick_frame(self):
+        if isinstance(self._engine, V2Fly):
+            self.canvas.set_image(self._engine._warp_bg(V2Cam()), keep_view=True)
+            self.canvas.set_markers(self._pan_points)
+
+    def _on_point_picked(self, nx: float, ny: float):
+        if len(self._pan_points) >= 5:
+            self._pan_points = self._pan_points[1:]      # keep the last 5
+        self._pan_points.append((nx, ny))
+        self.pts_label.setText(f"{len(self._pan_points)} points")
+        self.canvas.set_markers(self._pan_points)
+
+    def _clear_points(self):
+        self._pan_points = []
+        self.pts_label.setText("0 points")
+        self.canvas.set_markers([])
+        if self.canvas.pick_mode:
+            self._show_pick_frame()
+        else:
+            self._rebuild_cams()
 
     def _rebuild_soon(self, *_):
         """A space-look control changed → rebuild the engine, debounced."""
@@ -272,8 +404,12 @@ class LazyFlightPanel(QWidget):
                                     star_count=int(self.stars.value()),
                                     haze_slabs=5, bloom=float(self.bloom.value()))
         elif mode == "v2":
-            self._engine = V2Fly(small, star_count=int(self.stars.value()),
+            ow, oh = self._frame_size(_PREVIEW_W)
+            self._engine = V2Fly(small, out_w=ow, out_h=oh,
+                                 star_count=int(self.stars.value()),
                                  bloom=float(self.bloom.value()),
+                                 star_min=float(self.star_min.value()),
+                                 star_max=float(self.star_max.value()),
                                  streaks=self.streaks.isChecked())
         else:
             self._engine = Flythrough3D(small, masks=self._masks,
@@ -294,6 +430,7 @@ class LazyFlightPanel(QWidget):
         elif mode == "v2":
             self._cams = fly_v2(n, zoom_end=zoom_end,
                                 rotate_deg=float(self.rotate.value()),
+                                pan_points=list(self._pan_points),
                                 pan=float(self.pan.value()))
         else:
             try:
@@ -315,7 +452,7 @@ class LazyFlightPanel(QWidget):
 
     # --------------------------------------------------------------- preview
     def _render_preview(self):
-        if self._engine is None or self._busy:
+        if self._engine is None or self._busy or self.canvas.pick_mode:
             return
         if self.show_depth.isChecked():
             z = getattr(self._engine, "depth", None)
@@ -386,6 +523,10 @@ class LazyFlightPanel(QWidget):
         rotate_deg = float(self.rotate.value())
         pan = float(self.pan.value())
         streaks = self.streaks.isChecked()
+        lo, hi = float(self.star_min.value()), float(self.star_max.value())
+        star_min, star_max = min(lo, hi), max(lo, hi)
+        pan_points = list(self._pan_points)
+        out_w, out_h = self._frame_size(width)
         c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
         workers = auto_workers() if self.parallel.isChecked() else 1
 
@@ -398,9 +539,10 @@ class LazyFlightPanel(QWidget):
                 progress(i + 1, n, "frame")
             if mode == "v2":
                 return render_v2(
-                    img, out, seconds=seconds, fps=fps, render_width=width,
+                    img, out, seconds=seconds, fps=fps, out_w=out_w, out_h=out_h,
                     workers=workers, star_count=star_count, bloom=bloom,
-                    zoom_end=zoom_end, rotate_deg=rotate_deg, pan=pan,
+                    zoom_end=zoom_end, rotate_deg=rotate_deg, pan_points=pan_points,
+                    pan=pan, star_min=star_min, star_max=star_max,
                     streaks=streaks, on_frame=on_frame)
             if mode == "space":
                 return render_space(

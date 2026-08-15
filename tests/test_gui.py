@@ -153,6 +153,16 @@ def test_shell_opens_flight_panel(qapp):
     panel.rotate.set_value(12.0); panel.pan.set_value(0.05); panel._rebuild_cams()
     assert panel._cams[-1].roll == pytest.approx(12.0)
     panel._render_preview()                              # must not raise
+    # portrait output frame is taller than wide
+    panel.orient_combo.setCurrentText("Portrait"); panel._reopen_engine()
+    assert panel._engine.out_h > panel._engine.out_w
+    # live star-size + pan points
+    panel.star_min.set_value(1.5); panel.star_max.set_value(6.0); panel._on_star_size()
+    assert panel._engine.star_max == pytest.approx(6.0, abs=0.02)   # slider quantises
+    panel._on_point_picked(-0.4, -0.2); panel._on_point_picked(0.3, 0.4)
+    assert len(panel._pan_points) == 2
+    panel._toggle_pick(True); assert panel.canvas.pick_mode
+    panel._toggle_pick(False)
 
     # switching to volumetric (index 3) rebuilds a Flythrough3D engine
     panel.mode_combo.setCurrentIndex(3)
