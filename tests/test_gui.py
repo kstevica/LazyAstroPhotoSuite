@@ -115,6 +115,8 @@ def test_shell_opens_flight_panel(qapp):
     from lazystretch.gui.flight_window import LazyFlightPanel
     from lazystretch.gui.shell import AppShell
     from lazystretch.animate.render import Cam
+    from lazystretch.animate.render import Flythrough3D
+    from lazystretch.animate.volume3d import SpaceFly
 
     s = AppShell()
     s.open_tool("fly")
@@ -129,15 +131,24 @@ def test_shell_opens_flight_panel(qapp):
     img = np.stack([blob * 0.9, blob * 0.5, blob * 0.35], axis=-1).astype(np.float32)
     img[40, 60] = 1.0
     panel.img = img
+    panel._masks = None
+
+    # default mode is Space 3D → SpaceFly engine
+    assert panel._mode() == "space"
     panel._reopen_engine()
-    assert panel._engine is not None and len(panel._cams) > 1
+    assert isinstance(panel._engine, SpaceFly) and len(panel._cams) > 1
     panel.scrub.setValue(50)
     panel._render_preview()                              # must not raise
-    # depth view toggles, mode switch, and a fresh camera path all work
-    panel.show_depth.setChecked(True); panel._render_preview()
+    panel.show_depth.setChecked(True); panel._render_preview()   # depth view (via ._neb)
     panel.show_depth.setChecked(False)
-    panel.mode_combo.setCurrentIndex(1)
+    # stylize is user-definable and rebuilds the engine
+    panel.style.set_value(0.6); panel._reopen_engine()
+    assert isinstance(panel._engine, SpaceFly)
+
+    # switching to volumetric (index 2) rebuilds a Flythrough3D engine
+    panel.mode_combo.setCurrentIndex(2)
     assert panel._mode() == "volumetric"
+    assert isinstance(panel._engine, Flythrough3D)
     # only dolly paths are offered (flyby/orbit shear the gas)
     assert {panel.path_combo.itemText(i) for i in range(panel.path_combo.count())} \
         == {"flythrough", "pullback"}

@@ -1,9 +1,9 @@
 """LazyFlight panel — turn a finished still into a 3D fly-through video.
 
 Open a stretched/developed master, dial the camera move and look, scrub a live
-low-res preview, then render the full-resolution mp4 off the UI thread. The
-preview always runs the fast ``parallax`` engine for responsiveness; the final
-render honours the chosen mode (``parallax`` or the slower ``volumetric`` glow).
+low-res preview, then render the full-resolution mp4 off the UI thread. Modes:
+``space 3D`` (the default — recognisable nebula + synthetic 3D star field + haze,
+user-definable colour), ``parallax`` (fast depth warp), ``volumetric`` (glow).
 """
 from __future__ import annotations
 
@@ -22,6 +22,7 @@ from ..animate.clip import PATHS, _resize, build_cameras
 from ..animate.encode import ffmpeg_available
 from ..animate.parallel import auto_workers
 from ..animate.render import Flythrough3D
+from ..animate.volume3d import SpaceFly, fly_volume, render_space
 from ..io.image_io import load_image
 from .preview import PreviewView
 from .widgets import FloatSlider
@@ -49,6 +50,10 @@ class LazyFlightPanel(QWidget):
         self._debounce.setSingleShot(True)
         self._debounce.setInterval(40)
         self._debounce.timeout.connect(self._render_preview)
+        self._rebuild_timer = QTimer(self)               # engine rebuild (style/haze/…)
+        self._rebuild_timer.setSingleShot(True)
+        self._rebuild_timer.setInterval(350)
+        self._rebuild_timer.timeout.connect(self._reopen_engine)
 
         self._build_ui()
         self._set_controls_enabled(False)
@@ -95,12 +100,26 @@ class LazyFlightPanel(QWidget):
 
         look_box = QGroupBox("Look")
         look = QVBoxLayout(look_box)
-        self.bloom = FloatSlider("Bloom", 0.0, 1.0, 0.45, decimals=2)
+        self.mode_combo = QComboBox()
+        self.mode_combo.addItems(["space 3D", "parallax (fast)", "volumetric (glow)"])
+        self.mode_combo.currentIndexChanged.connect(self._reopen_engine)
+        look.addWidget(self._row("Mode", self.mode_combo))
+        self.bloom = FloatSlider("Bloom", 0.0, 1.0, 0.32, decimals=2)
         self.bloom.valueChanged.connect(self._on_bloom)
         look.addWidget(self.bloom)
-        self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["parallax (fast)", "volumetric (glow)"])
-        look.addWidget(self._row("Render mode", self.mode_combo))
+        # --- Space-3D controls (rebuild the engine → debounced) ---------------
+        self.style = FloatSlider("Style (real→space)", 0.0, 1.0, 0.0, decimals=2)
+        self.style.valueChanged.connect(self._rebuild_soon)
+        look.addWidget(self.style)
+        self.saturation = FloatSlider("Saturation", 0.5, 2.5, 1.35, decimals=2)
+        self.saturation.valueChanged.connect(self._rebuild_soon)
+        look.addWidget(self.saturation)
+        self.haze = FloatSlider("Haze", 0.0, 0.6, 0.22, decimals=2)
+        self.haze.valueChanged.connect(self._rebuild_soon)
+        look.addWidget(self.haze)
+        self.stars = FloatSlider("Stars", 300, 2500, 1300, decimals=0)
+        self.stars.valueChanged.connect(self._rebuild_soon)
+        look.addWidget(self.stars)
         self.semantic = QCheckBox("Mask-driven depth (recommended)")
         self.semantic.setChecked(True)                   # the high-quality default
         self.semantic.toggled.connect(self._reopen_engine)
@@ -165,11 +184,25 @@ class LazyFlightPanel(QWidget):
 
     # --------------------------------------------------------------- helpers
     def _set_controls_enabled(self, on: bool):
-        for w in (self.path_combo, self.dur, self.zoom, self.bloom,
+        for w in (self.path_combo, self.dur, self.zoom, self.bloom, self.style,
+                  self.saturation, self.haze, self.stars,
                   self.mode_combo, self.semantic, self.show_depth,
                   self.fps_combo, self.width_combo, self.render_btn,
                   self.play_btn, self.scrub):
             w.setEnabled(on)
+        if on:
+            self._sync_mode_controls()
+
+    def _sync_mode_controls(self):
+        space = self._mode() == "space"
+        for w in (self.style, self.saturation, self.haze, self.stars):
+            w.setEnabled(space)                          # space-only look controls
+        self.path_combo.setEnabled(not space)            # space uses its own dolly
+
+    def _rebuild_soon(self, *_):
+        """A space-look control changed → rebuild the engine, debounced."""
+        if self.img is not None and not self._busy:
+            self._rebuild_timer.start()
 
     def _set_busy(self, busy: bool):
         self._busy = busy
@@ -177,7 +210,8 @@ class LazyFlightPanel(QWidget):
         self._set_controls_enabled(not busy and self.img is not None)
 
     def _mode(self) -> str:
-        return "volumetric" if self.mode_combo.currentIndex() == 1 else "parallax"
+        return {0: "space", 1: "parallax", 2: "volumetric"}.get(
+            self.mode_combo.currentIndex(), "space")
 
     # ------------------------------------------------------------------ open
     def _open(self):
@@ -202,18 +236,28 @@ class LazyFlightPanel(QWidget):
 
     def _reopen_engine(self):
         """(Re)build the low-res preview engine for the current image/options."""
-        if self.img is None:
+        if self.img is None or self._busy:
             return
         self.status.setText("Preparing preview…")
         QWidget.repaint(self)
         small = _resize(self.img, _PREVIEW_W)
         if self.semantic.isChecked():
-            from ..develop.semantic import segment
-            self._masks = segment(small)
+            if self._masks is None:                      # cached per image (slow)
+                from ..develop.semantic import segment
+                self._masks = segment(small)
         else:
             self._masks = None
-        self._engine = Flythrough3D(small, masks=self._masks,
-                                    bloom=self.bloom.value(), mode="parallax")
+        if self._mode() == "space":
+            self._engine = SpaceFly(small, masks=self._masks,
+                                    saturation=float(self.saturation.value()),
+                                    stylize=float(self.style.value()),
+                                    haze=float(self.haze.value()),
+                                    star_count=int(self.stars.value()),
+                                    haze_slabs=5, bloom=float(self.bloom.value()))
+        else:
+            self._engine = Flythrough3D(small, masks=self._masks,
+                                        bloom=float(self.bloom.value()), mode="parallax")
+        self._sync_mode_controls()
         self.status.setText("")
         self._rebuild_cams()
 
@@ -221,11 +265,16 @@ class LazyFlightPanel(QWidget):
         if self._engine is None:
             return
         n = max(int(round(self.dur.value() * _PREVIEW_FPS)), 2)
-        try:
-            self._cams = build_cameras(self.path_combo.currentText(), n,
-                                       zoom_end=float(self.zoom.value()))
-        except TypeError:                               # path without zoom_end
-            self._cams = build_cameras(self.path_combo.currentText(), n)
+        zoom_end = float(self.zoom.value())
+        if self._mode() == "space":
+            c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
+            self._cams = fly_volume(n, c_end=c_end, zoom_end=zoom_end)
+        else:
+            try:
+                self._cams = build_cameras(self.path_combo.currentText(), n,
+                                           zoom_end=zoom_end)
+            except TypeError:                            # path without zoom_end
+                self._cams = build_cameras(self.path_combo.currentText(), n)
         self._render_preview()
 
     def _on_bloom(self, val: float):
@@ -238,9 +287,13 @@ class LazyFlightPanel(QWidget):
         if self._engine is None or self._busy:
             return
         if self.show_depth.isChecked():
-            z = self._engine.depth.astype(np.float32)
-            self.canvas.set_image(np.repeat(z[..., None], 3, axis=2), keep_view=True)
-            return
+            z = getattr(self._engine, "depth", None)
+            if z is None:                                 # SpaceFly keeps it on ._neb
+                z = getattr(getattr(self._engine, "_neb", None), "depth", None)
+            if z is not None:
+                z = z.astype(np.float32)
+                self.canvas.set_image(np.repeat(z[..., None], 3, axis=2), keep_view=True)
+                return
         if not self._cams:
             return
         i = int(round(self.scrub.value() / 100.0 * (len(self._cams) - 1)))
@@ -287,7 +340,7 @@ class LazyFlightPanel(QWidget):
             self.play_btn.setChecked(False)
 
         img = self.img
-        masks = self._masks if self.semantic.isChecked() else None
+        use_masks = self.semantic.isChecked()
         seconds = float(self.dur.value())
         fps = int(self.fps_combo.currentText())
         path = self.path_combo.currentText()
@@ -295,16 +348,26 @@ class LazyFlightPanel(QWidget):
         mode = self._mode()
         zoom_end = float(self.zoom.value())
         bloom = float(self.bloom.value())
+        sat = float(self.saturation.value())
+        stylize = float(self.style.value())
+        haze = float(self.haze.value())
+        star_count = int(self.stars.value())
+        c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
         workers = auto_workers() if self.parallel.isChecked() else 1
 
         def job(log, progress):
-            if masks is not None:                       # match render res for depth
+            m = None
+            if use_masks:                               # match render res for depth
                 from ..develop.semantic import segment
                 m = segment(_resize(img, width))
-            else:
-                m = None
             def on_frame(i, n, _fr):
                 progress(i + 1, n, "frame")
+            if mode == "space":
+                return render_space(
+                    img, out, seconds=seconds, fps=fps, render_width=width,
+                    workers=workers, masks=m, saturation=sat, stylize=stylize,
+                    haze=haze, star_count=star_count, c_end=c_end,
+                    zoom_end=zoom_end, engine_kw={"bloom": bloom}, on_frame=on_frame)
             return render_flythrough(
                 img, out, seconds=seconds, fps=fps, path=path, mode=mode,
                 render_width=width, workers=workers, masks=m,

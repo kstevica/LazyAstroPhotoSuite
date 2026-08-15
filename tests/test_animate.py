@@ -116,6 +116,48 @@ def test_camera_paths(name, fn):
     assert build_cameras(name, 10)                        # registered in PATHS
 
 
+def test_spacefly_renders_and_moves():
+    from lazystretch.animate.volume3d import SpaceFly, VolCam, fly_volume
+
+    rgb, _ = _scene()
+    eng = SpaceFly(rgb, star_count=200, haze_slabs=4)
+    a = eng.render_frame(VolCam(c=0.0, zoom=1.0))
+    b = eng.render_frame(VolCam(c=0.3, zoom=1.2))
+    assert a.shape == rgb.shape and a.dtype == np.float32
+    assert np.isfinite(a).all()
+    assert 0.0 <= float(a.min()) and float(a.max()) <= 1.0
+    assert float(a.max()) > 0.05                          # not black
+    assert float(np.mean(np.abs(a - b))) > 1e-3           # fly-in changes it
+    cams = fly_volume(24)
+    assert len(cams) == 24 and cams[0].c == pytest.approx(0.0)
+    assert cams[-1].c > 0.0                               # flew forward
+
+
+def test_color_grade_black_stays_black():
+    from lazystretch.animate.volume3d import color_grade
+
+    rgb, _ = _scene()
+    rgb[:] = 0.0                                           # empty space
+    faithful = color_grade(rgb, saturation=1.4, stylize=0.0)
+    stylized = color_grade(rgb, saturation=1.4, stylize=0.8)
+    assert float(faithful.max()) < 1e-3                   # black in → black out
+    assert float(stylized.max()) < 1e-3                   # palette must not tint space
+
+
+def test_spacefly_parallel_render_matches():
+    from lazystretch.animate.volume3d import SpaceFly, fly_volume
+    from lazystretch.animate.parallel import parallel_frames
+
+    rgb, _ = _scene()
+    eng = SpaceFly(rgb, star_count=120, haze_slabs=3)
+    cams = fly_volume(4)
+    seq = list(parallel_frames(eng, cams, workers=1))
+    par = list(parallel_frames(eng, cams, workers=2))     # SpaceFly must pickle
+    assert len(seq) == len(par) == 4
+    for a, b in zip(seq, par):
+        assert np.array_equal(a, b)
+
+
 def test_parallel_frames_match_sequential():
     from lazystretch.animate.parallel import parallel_frames, auto_workers
 
