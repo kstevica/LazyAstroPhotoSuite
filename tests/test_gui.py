@@ -156,11 +156,21 @@ def test_shell_opens_flight_panel(qapp):
     # portrait output frame is taller than wide
     panel.orient_combo.setCurrentText("Portrait"); panel._reopen_engine()
     assert panel._engine.out_h > panel._engine.out_w
-    # live star-size + pan points
+    # live star-size + pan points (keyframes: x, y, per-point zoom)
     panel.star_min.set_value(1.5); panel.star_max.set_value(6.0); panel._on_star_size()
     assert panel._engine.star_max == pytest.approx(6.0, abs=0.02)   # slider quantises
-    panel._on_point_picked(-0.4, -0.2); panel._on_point_picked(0.3, 0.4)
-    assert len(panel._pan_points) == 2
+    panel.zoom.set_value(1.1); panel._on_point_added(-0.4, -0.2)
+    panel.zoom.set_value(2.0); panel._on_point_added(0.3, 0.4)
+    assert len(panel._pan_points) == 2 and len(panel._pan_points[0]) == 3
+    assert panel._pan_points[0][2] == pytest.approx(1.1, abs=0.02)  # point 1 zoom
+    # selecting point 1 reflects its zoom onto the slider (= starting zoom)
+    panel._on_point_selected(0)
+    assert panel.zoom.value() == pytest.approx(1.1, abs=0.02)
+    # dragging a point moves it
+    panel._on_point_moved(1, -0.1, 0.2)
+    assert panel._pan_points[1][0] == pytest.approx(-0.1, abs=1e-6)
+    panel._rebuild_cams()
+    assert panel._cams[0].zoom == pytest.approx(1.1, abs=0.05)      # start = point 1
     panel._toggle_pick(True); assert panel.canvas.pick_mode
     panel._toggle_pick(False)
 

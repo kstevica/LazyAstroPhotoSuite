@@ -46,31 +46,42 @@ def _catmull(p0, p1, p2, p3, t):
                   + (-p0 + 3 * p1 - 3 * p2 + p3) * t3)
 
 
-def _pan_path(points, n, ellipse_r=0.03) -> Tuple[np.ndarray, np.ndarray]:
-    """Smooth closed path through ``points`` (frame-normalised [-1,1]) sampled at
-    ``n`` frames, plus a leading star-focus derived from the pan velocity."""
-    pts = np.array(points, dtype=float) if points else np.array([[0.0, 0.0]])
-    k = len(pts)
+def _smoother(u):
+    return u * u * u * (u * (u * 6 - 15) + 10)
+
+
+def _pan_path(points, n, ellipse_r=0.03, zoom_end=1.4):
+    """Smooth closed path through ``points`` (frame-normalised [-1,1], each with a
+    zoom) sampled at ``n`` frames. Returns (pan[n,2], focus[n,2], zoom[n]). The
+    first point's zoom is the starting zoom; the star focus leads the pan
+    velocity so the stars change direction on a turn."""
+    src = points if points else [(0.0, 0.0, zoom_end)]
+    xy = np.array([(p[0], p[1]) for p in src], dtype=float)
+    zs = np.array([p[2] if len(p) > 2 else zoom_end for p in src], dtype=float)
+    k = len(xy)
     u = np.linspace(0.0, 1.0, n, endpoint=False)
-    if k == 1:
-        base = np.repeat(pts, n, axis=0)
-        er = max(ellipse_r, 0.06)                        # a clear orbit for one point
-    else:
+    if k == 1:                                           # zoom in toward the point
+        base = np.repeat(xy, n, axis=0)
+        zoom = 1.0 + (zs[0] - 1.0) * _smoother(u)
+        er = max(ellipse_r, 0.06)
+    else:                                                # keyframe path + zoom
         base = np.zeros((n, 2))
+        zoom = np.zeros(n)
         for j in range(n):
             s = (j / n) * k                              # closed loop over k segments
             i = int(s) % k
             tt = s - int(s)
-            base[j] = _catmull(pts[(i - 1) % k], pts[i], pts[(i + 1) % k],
-                               pts[(i + 2) % k], tt)
+            base[j] = _catmull(xy[(i - 1) % k], xy[i], xy[(i + 1) % k],
+                               xy[(i + 2) % k], tt)
+            zoom[j] = _catmull(zs[(i - 1) % k], zs[i], zs[(i + 1) % k],
+                               zs[(i + 2) % k], tt)
         er = ellipse_r
-    # gentle elliptical wobble so motion is never locked-off and turns stay round
     wob = np.stack([er * np.cos(2 * np.pi * u), er * 0.6 * np.sin(2 * np.pi * u)], 1)
     pan = base + wob
-    # star focus leads the pan velocity → stars stream from the travel direction
     vel = np.gradient(pan, axis=0) * n
     focus = np.clip(vel * 0.28, -0.6, 0.6)
-    return pan.astype(np.float32), focus.astype(np.float32)
+    return (pan.astype(np.float32), focus.astype(np.float32),
+            np.clip(zoom, 0.2, 8.0).astype(np.float32))
 
 
 class V2Fly:
@@ -226,15 +237,13 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
            pan: float = 0.035, star_speed: float = 1.8):
     """Parametrised v2 path: eased zoom-in, steady roll, a smooth (elliptical)
     pan through ``pan_points``, and a star inflow whose focus follows the pan."""
-    if not pan_points:
-        pan_points = [(0.0, 0.0)]
-    path, focus = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02))
+    path, focus, zoom = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02),
+                                  zoom_end=zoom_end)
     cams = []
     for i in range(n):
         u = i / max(n - 1, 1)
-        ez = u * u * u * (u * (u * 6 - 15) + 10)          # smootherstep zoom
         cams.append(V2Cam(
-            zoom=1.0 + (zoom_end - 1.0) * ez,
+            zoom=float(zoom[i]),
             roll=rotate_deg * u,
             pan_x=float(path[i, 0]), pan_y=float(path[i, 1]),
             focus_x=float(focus[i, 0]), focus_y=float(focus[i, 1]),

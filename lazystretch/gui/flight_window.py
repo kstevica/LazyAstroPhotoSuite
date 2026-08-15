@@ -12,10 +12,11 @@ from typing import Optional
 
 import numpy as np
 from PySide6.QtCore import Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPen
+from PySide6.QtGui import QColor, QFont, QPen
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFileDialog, QGraphicsEllipseItem, QGroupBox,
-    QHBoxLayout, QLabel, QProgressBar, QPushButton, QSlider, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QGraphicsEllipseItem,
+    QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel, QProgressBar,
+    QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..animate import render_flythrough
@@ -36,41 +37,85 @@ _RATIOS = ["16:9", "3:2", "4:3", "5:4", "1:1"]
 
 
 class FlightCanvas(PreviewView):
-    """Preview that can also capture up to N pan-point clicks (v2)."""
+    """Preview that also edits v2 pan points: click empty space to add, click a
+    point to select, drag to move. Points are numbered 1..N."""
 
-    pointPicked = Signal(float, float)                   # normalised [-1, 1]
+    pointAdded = Signal(float, float)                    # normalised [-1, 1]
+    pointMoved = Signal(int, float, float)
+    pointSelected = Signal(int)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.pick_mode = False
+        self._pts = []                                   # [(x, y), …] normalised
+        self._sel = -1
+        self._drag = -1
         self._markers = []
+
+    def _norm(self, ev):
+        sp = self.mapToScene(ev.position().toPoint())
+        w, h = self._img_size
+        return (float(np.clip(sp.x() / w * 2.0 - 1.0, -1.0, 1.0)),
+                float(np.clip(sp.y() / h * 2.0 - 1.0, -1.0, 1.0)))
+
+    def _hit(self, nx, ny):
+        for i, (px, py) in enumerate(self._pts):
+            if (px - nx) ** 2 + (py - ny) ** 2 < 0.06 ** 2:
+                return i
+        return -1
 
     def mousePressEvent(self, ev):
         if self.pick_mode and self._img_size:
-            sp = self.mapToScene(ev.position().toPoint())
-            w, h = self._img_size
-            nx = float(np.clip(sp.x() / w * 2.0 - 1.0, -1.0, 1.0))
-            ny = float(np.clip(sp.y() / h * 2.0 - 1.0, -1.0, 1.0))
-            self.pointPicked.emit(nx, ny)
+            nx, ny = self._norm(ev)
+            i = self._hit(nx, ny)
+            if i >= 0:
+                self._drag = i
+                self.pointSelected.emit(i)
+            else:
+                self.pointAdded.emit(nx, ny)
             return
         super().mousePressEvent(ev)
 
-    def set_markers(self, points):
+    def mouseMoveEvent(self, ev):
+        if self.pick_mode and self._drag >= 0 and self._img_size:
+            nx, ny = self._norm(ev)
+            self.pointMoved.emit(self._drag, nx, ny)
+            return
+        super().mouseMoveEvent(ev)
+
+    def mouseReleaseEvent(self, ev):
+        if self.pick_mode and self._drag >= 0:
+            self._drag = -1
+            return
+        super().mouseReleaseEvent(ev)
+
+    def set_points(self, points, selected=-1):
+        self._pts = list(points)
+        self._sel = selected
         for m in self._markers:
             self._scene.removeItem(m)
         self._markers = []
         if not self._img_size:
             return
         w, h = self._img_size
-        r = max(w, h) * 0.013
-        pen = QPen(QColor(120, 220, 255)); pen.setCosmetic(True); pen.setWidth(2)
-        for (px, py) in points:
+        r = max(w, h) * 0.022
+        for i, (px, py) in enumerate(self._pts):
             x = (px + 1.0) * w / 2.0
             y = (py + 1.0) * h / 2.0
-            it = QGraphicsEllipseItem(x - r, y - r, 2 * r, 2 * r)
-            it.setPen(pen); it.setBrush(QColor(120, 220, 255, 70)); it.setZValue(6)
-            self._scene.addItem(it)
-            self._markers.append(it)
+            sel = i == self._sel
+            col = QColor(255, 215, 90) if sel else QColor(120, 220, 255)
+            pen = QPen(col); pen.setCosmetic(True); pen.setWidth(3 if sel else 2)
+            e = QGraphicsEllipseItem(x - r, y - r, 2 * r, 2 * r)
+            e.setPen(pen); e.setBrush(QColor(col.red(), col.green(), col.blue(), 70))
+            e.setZValue(6)
+            self._scene.addItem(e); self._markers.append(e)
+            t = QGraphicsSimpleTextItem(str(i + 1))
+            f = QFont(); f.setPixelSize(max(int(r * 1.3), 6)); f.setBold(True)
+            t.setFont(f)
+            br = t.boundingRect()
+            t.setPos(x - br.width() / 2.0, y - br.height() / 2.0)
+            t.setBrush(QColor(15, 18, 28)); t.setZValue(7)
+            self._scene.addItem(t); self._markers.append(t)
 
 
 class LazyFlightPanel(QWidget):
@@ -82,7 +127,8 @@ class LazyFlightPanel(QWidget):
         self._engine: Optional[Flythrough3D] = None    # preview engine (low-res)
         self._cams = []                                # preview camera path
         self._masks = None                             # semantic masks (optional)
-        self._pan_points = []                          # v2 pan targets (normalised)
+        self._pan_points = []                          # v2 keyframes [x, y, zoom]
+        self._sel_point = -1                           # selected pan point index
         self.worker: Optional[CallableWorker] = None
         self._busy = False
         self._play = QTimer(self)
@@ -135,8 +181,8 @@ class LazyFlightPanel(QWidget):
         self.dur = FloatSlider("Duration (s)", 3.0, 30.0, 8.0, decimals=0)
         self.dur.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.dur)
-        self.zoom = FloatSlider("Zoom", 1.05, 2.0, 1.4, decimals=2)
-        self.zoom.valueChanged.connect(self._rebuild_cams)
+        self.zoom = FloatSlider("Zoom", 1.0, 3.0, 1.4, decimals=2)
+        self.zoom.valueChanged.connect(self._on_zoom)
         cam.addWidget(self.zoom)
         self.rotate = FloatSlider("Rotate (°)", 0.0, 30.0, 8.0, decimals=0)
         self.rotate.valueChanged.connect(self._rebuild_cams)
@@ -228,10 +274,12 @@ class LazyFlightPanel(QWidget):
         # --- right: canvas + scrub -------------------------------------------
         right = QVBoxLayout()
         self.canvas = FlightCanvas()
-        self.canvas.pointPicked.connect(self._on_point_picked)
+        self.canvas.pointAdded.connect(self._on_point_added)
+        self.canvas.pointMoved.connect(self._on_point_moved)
+        self.canvas.pointSelected.connect(self._on_point_selected)
         right.addWidget(self.canvas, 1)
         pp = QHBoxLayout()
-        self.pick_btn = QPushButton("Pick pan points (v2)")
+        self.pick_btn = QPushButton("Edit pan points (v2)")
         self.pick_btn.setCheckable(True)
         self.pick_btn.toggled.connect(self._toggle_pick)
         pp.addWidget(self.pick_btn)
@@ -316,38 +364,73 @@ class LazyFlightPanel(QWidget):
             self._engine.star_max = max(lo, hi)
         self._render_preview()
 
+    def _on_zoom(self, val: float):
+        # in v2, the Zoom slider edits the selected pan point's zoom (point 1 =
+        # starting zoom); otherwise it's the plain zoom target
+        if self._mode() == "v2" and 0 <= self._sel_point < len(self._pan_points):
+            self._pan_points[self._sel_point][2] = float(val)
+            if self.canvas.pick_mode:
+                self._draw_points()
+        self._rebuild_cams()
+
     # ------------------------------------------------------------ pan points
+    def _draw_points(self):
+        self.canvas.set_points([(p[0], p[1]) for p in self._pan_points],
+                               self._sel_point)
+
+    def _select_point(self, i: int):
+        self._sel_point = i
+        if 0 <= i < len(self._pan_points):
+            self.zoom.blockSignals(True)                 # reflect this point's zoom
+            self.zoom.set_value(self._pan_points[i][2])
+            self.zoom.blockSignals(False)
+        self.pts_label.setText(f"{len(self._pan_points)} pts"
+                               + (f" · #{i + 1} z{self._pan_points[i][2]:.2f}"
+                                  if 0 <= i < len(self._pan_points) else ""))
+
     def _toggle_pick(self, on: bool):
         self.canvas.pick_mode = bool(on) and self._mode() == "v2"
-        self.pick_btn.setText("Done picking" if self.canvas.pick_mode else
-                              "Pick pan points (v2)")
+        self.pick_btn.setText("Done" if self.canvas.pick_mode else
+                              "Edit pan points (v2)")
         if self.canvas.pick_mode:
             if self.play_btn.isChecked():
                 self.play_btn.setChecked(False)
-            self._show_pick_frame()                      # static base for placing
+            self._show_pick_frame()
         else:
-            self.canvas.set_markers([])
+            self.canvas.set_points([])
             self._rebuild_cams()
 
     def _show_pick_frame(self):
         if isinstance(self._engine, V2Fly):
             self.canvas.set_image(self._engine._warp_bg(V2Cam()), keep_view=True)
-            self.canvas.set_markers(self._pan_points)
+            self._draw_points()
 
-    def _on_point_picked(self, nx: float, ny: float):
+    def _on_point_added(self, nx: float, ny: float):
         if len(self._pan_points) >= 5:
-            self._pan_points = self._pan_points[1:]      # keep the last 5
-        self._pan_points.append((nx, ny))
-        self.pts_label.setText(f"{len(self._pan_points)} points")
-        self.canvas.set_markers(self._pan_points)
+            return
+        self._pan_points.append([nx, ny, float(self.zoom.value())])
+        self._select_point(len(self._pan_points) - 1)
+        self._draw_points()
+
+    def _on_point_moved(self, i: int, nx: float, ny: float):
+        if 0 <= i < len(self._pan_points):
+            self._pan_points[i][0] = nx
+            self._pan_points[i][1] = ny
+            self._select_point(i)
+            self._draw_points()
+
+    def _on_point_selected(self, i: int):
+        self._select_point(i)
+        self._draw_points()
 
     def _clear_points(self):
         self._pan_points = []
-        self.pts_label.setText("0 points")
-        self.canvas.set_markers([])
+        self._sel_point = -1
+        self.pts_label.setText("0 pts")
         if self.canvas.pick_mode:
             self._show_pick_frame()
         else:
+            self.canvas.set_points([])
             self._rebuild_cams()
 
     def _rebuild_soon(self, *_):
