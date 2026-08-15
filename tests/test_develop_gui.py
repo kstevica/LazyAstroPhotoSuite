@@ -228,6 +228,49 @@ def test_crop_rect_shows_live_pixel_size(qapp):
     assert c._rect_label is None
 
 
+def test_crop_rect_drag_to_refine(qapp):
+    from lazystretch.gui.develop_window import DevelopCanvas
+    c = DevelopCanvas()
+    img = np.zeros((100, 200, 3), np.float32)            # h=100, w=200
+    c.set_image(img, keep_view=False)
+    c.resetTransform()                                   # m11=1 -> ~10px hit tolerance
+    c.set_rect_mode(True)
+    c.show_rect({"x0": 0.25, "y0": 0.25, "x1": 0.75, "y1": 0.75})   # px (50,25)-(150,75)
+    assert c._rect == {"x0": 0.25, "y0": 0.25, "x1": 0.75, "y1": 0.75}
+
+    got = {}
+    c.rectSelected.connect(lambda r: got.update(r))
+
+    # hit-test: inside -> move, on a border -> resize (that edge/corner), far out -> new
+    assert c._hit_test(100, 50)[0] == "move"
+    assert c._hit_test(50, 50) == ("resize", {"l"})
+    assert c._hit_test(50, 25) == ("resize", {"l", "t"})
+    assert c._hit_test(5, 5)[0] == "new"
+
+    # MOVE the whole rect by (+20, +10) px
+    c._move_anchor = (100, 50); c._move_rect0 = dict(c._rect)
+    c._apply_move(120, 60, 200, 100)
+    assert c._rect["x0"] == pytest.approx(0.35) and c._rect["y0"] == pytest.approx(0.35)
+    assert c._rect["x1"] == pytest.approx(0.85) and c._rect["y1"] == pytest.approx(0.85)
+    assert got["x0"] == pytest.approx(0.35)              # rectSelected fired
+
+    # RESIZE just the right edge out to x=180 px
+    c._drag_edges = {"r"}
+    c._apply_resize(180, 60, 200, 100)
+    assert c._rect["x1"] == pytest.approx(0.9) and c._rect["x0"] == pytest.approx(0.35)
+
+    # MOVE clamps at the frame edge, preserving the rect's size
+    c.show_rect({"x0": 0.6, "y0": 0.0, "x1": 1.0, "y1": 0.4})       # width 0.4
+    c._move_anchor = (160, 20); c._move_rect0 = dict(c._rect)
+    c._apply_move(400, 20, 200, 100)                                 # shove far right
+    assert c._rect["x1"] == pytest.approx(1.0) and c._rect["x0"] == pytest.approx(0.6)
+
+    # a FULL-frame rect: an inside drag starts a fresh rubber-band (nothing to move)
+    c.show_rect({"x0": 0.0, "y0": 0.0, "x1": 1.0, "y1": 1.0})
+    assert c._hit_test(100, 50)[0] == "new"
+    c.set_rect_mode(False)
+
+
 def test_heavy_tool_previews_on_downscaled_proxy(qapp):
     from lazystretch.gui.develop_window import LazyDevelopPanel, PROXY_MAX_DIM
     big = np.clip(0.2 + 0.05 * np.random.default_rng(0).standard_normal((1500, 2400, 3)),

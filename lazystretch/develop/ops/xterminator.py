@@ -82,7 +82,10 @@ register(Op(
         ParamSpec("sharpen_nonstellar", "Sharpen nonstellar", "float", 0.0, 1.0, 0.9, 2),
     ],
     tooltip="Deconvolution / sharpening. Uses RC-Astro BlurXTerminator if the rc-astro CLI "
-            "is installed, otherwise classical Richardson-Lucy. Best on linear data.",
+            "is installed, otherwise classical Richardson-Lucy. Note: BlurX is designed for "
+            "LINEAR data, but LazyDevelop works on the already-stretched image, so this "
+            "sharpens in the nonlinear domain (its ideal slot is the pipeline's linear "
+            "deconvolution step).",
 ))
 
 register(Op(

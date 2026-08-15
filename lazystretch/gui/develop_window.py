@@ -231,6 +231,12 @@ class DevelopCanvas(PreviewView):
         self._rect_item: Optional[QGraphicsRectItem] = None
         self._rect_label: Optional[QGraphicsSimpleTextItem] = None
         self._rect_start = None
+        self._rect: Optional[dict] = None          # current selection (normalised)
+        self._drag_mode = None                     # 'new' | 'move' | 'resize'
+        self._drag_edges: set = set()              # subset of {'l','r','t','b'} for resize
+        self._move_anchor = None                   # (px, py) where a move drag began
+        self._move_rect0: Optional[dict] = None    # the rect at move-drag start
+        self.setMouseTracking(True)                # hover cursors without a pressed button
 
     def set_rect_mode(self, on: bool):
         self._rect_mode = bool(on)
@@ -239,6 +245,7 @@ class DevelopCanvas(PreviewView):
         else:
             self.setDragMode(PreviewView.ScrollHandDrag)
             self._clear_rect_item()
+            self.unsetCursor()
 
     def _clear_rect_item(self):
         for attr in ("_rect_item", "_rect_label"):
@@ -246,11 +253,15 @@ class DevelopCanvas(PreviewView):
             if item is not None and item.scene() is not None:
                 self.scene().removeItem(item)
             setattr(self, attr, None)
+        self._rect = None
+        self._drag_mode = None
+        self._rect_start = None
 
     def show_rect(self, rect: dict):
         arr = self.current_array()
         if arr is None:
             return
+        self._rect = dict(rect)                     # remember it so it can be dragged/refined
         h, w = arr.shape[:2]
         x0 = rect.get("x0", 0.0) * w; x1 = rect.get("x1", 1.0) * w
         y0 = rect.get("y0", 0.0) * h; y1 = rect.get("y1", 1.0) * h
@@ -276,39 +287,135 @@ class DevelopCanvas(PreviewView):
         self._rect_label.setPos(min(x0, x1) + 6 / max(self.transform().m11(), 1e-6),
                                 min(y0, y1) + 6 / max(self.transform().m22(), 1e-6))
 
+    # --- crop rectangle: draw a new one, or drag an existing one to refine it -----
+    def _px_bounds(self):
+        """Current selection in pixel coords (x0, y0, x1, y1), or None."""
+        arr = self.current_array()
+        if arr is None or self._rect is None:
+            return None
+        h, w = arr.shape[:2]
+        return (self._rect["x0"] * w, self._rect["y0"] * h,
+                self._rect["x1"] * w, self._rect["y1"] * h)
+
+    def _hit_test(self, px, py):
+        """Classify a click at pixel (px, py): ('resize', edges) on a handle, ('move', ..)
+        inside a partial rect, else ('new', ..) to start a fresh rubber-band."""
+        b = self._px_bounds()
+        if b is None:
+            return "new", set()
+        x0, y0, x1, y1 = b
+        tol = 10.0 / max(self.transform().m11(), 1e-6)      # ~10 screen px, zoom-independent
+        edges = set()
+        if abs(px - x0) <= tol and y0 - tol <= py <= y1 + tol:
+            edges.add("l")
+        if abs(px - x1) <= tol and y0 - tol <= py <= y1 + tol:
+            edges.add("r")
+        if abs(py - y0) <= tol and x0 - tol <= px <= x1 + tol:
+            edges.add("t")
+        if abs(py - y1) <= tol and x0 - tol <= px <= x1 + tol:
+            edges.add("b")
+        if edges:
+            return "resize", edges
+        arr = self.current_array()
+        h, w = arr.shape[:2]
+        full = (self._rect["x0"] <= 1e-3 and self._rect["y0"] <= 1e-3
+                and self._rect["x1"] >= 1 - 1e-3 and self._rect["y1"] >= 1 - 1e-3)
+        if not full and x0 <= px <= x1 and y0 <= py <= y1:
+            return "move", set()
+        return "new", set()                                 # empty area (or full frame) → draw new
+
+    def _set_rect_px(self, x0, y0, x1, y1, w, h):
+        x0, x1 = sorted((x0, x1))
+        y0, y1 = sorted((y0, y1))
+        rect = {"x0": max(0.0, min(1.0, x0 / w)), "y0": max(0.0, min(1.0, y0 / h)),
+                "x1": max(0.0, min(1.0, x1 / w)), "y1": max(0.0, min(1.0, y1 / h))}
+        self.show_rect(rect)
+        self.rectSelected.emit(rect)
+
+    def _apply_resize(self, px, py, w, h):
+        x0, y0, x1, y1 = self._rect["x0"] * w, self._rect["y0"] * h, \
+            self._rect["x1"] * w, self._rect["y1"] * h
+        if "l" in self._drag_edges: x0 = px
+        if "r" in self._drag_edges: x1 = px
+        if "t" in self._drag_edges: y0 = py
+        if "b" in self._drag_edges: y1 = py
+        self._set_rect_px(x0, y0, x1, y1, w, h)
+
+    def _apply_move(self, px, py, w, h):
+        dx = px - self._move_anchor[0]
+        dy = py - self._move_anchor[1]
+        r0 = self._move_rect0
+        x0 = r0["x0"] * w + dx; x1 = r0["x1"] * w + dx
+        y0 = r0["y0"] * h + dy; y1 = r0["y1"] * h + dy
+        rw, rh = x1 - x0, y1 - y0                            # translate-clamp: keep the size
+        if x0 < 0: x0, x1 = 0, rw
+        if x1 > w: x0, x1 = w - rw, w
+        if y0 < 0: y0, y1 = 0, rh
+        if y1 > h: y0, y1 = h - rh, h
+        self._set_rect_px(x0, y0, x1, y1, w, h)
+
+    def _cursor_for(self, mode, edges):
+        if mode == "resize":
+            if edges in ({"l", "t"}, {"r", "b"}):
+                return Qt.SizeFDiagCursor
+            if edges in ({"r", "t"}, {"l", "b"}):
+                return Qt.SizeBDiagCursor
+            if edges & {"l", "r"}:
+                return Qt.SizeHorCursor
+            return Qt.SizeVerCursor
+        if mode == "move":
+            return Qt.SizeAllCursor
+        return Qt.CrossCursor
+
     def mousePressEvent(self, e):
         if self._rect_mode and e.button() == Qt.LeftButton and self.current_array() is not None:
-            self._rect_start = self.mapToScene(e.position().toPoint())
+            pt = self.mapToScene(e.position().toPoint())
+            mode, edges = self._hit_test(pt.x(), pt.y())
+            if mode == "resize":
+                self._drag_mode = "resize"; self._drag_edges = edges
+            elif mode == "move":
+                self._drag_mode = "move"
+                self._move_anchor = (pt.x(), pt.y()); self._move_rect0 = dict(self._rect)
+            else:
+                self._drag_mode = "new"; self._rect_start = pt
             e.accept()
             return
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
-        if self._rect_mode and self._rect_start is not None and (e.buttons() & Qt.LeftButton):
-            self._emit_rect(self.mapToScene(e.position().toPoint()))
-            e.accept()
-            return
+        if self._rect_mode and self.current_array() is not None:
+            pt = self.mapToScene(e.position().toPoint())
+            if self._drag_mode and (e.buttons() & Qt.LeftButton):
+                h, w = self.current_array().shape[:2]
+                if self._drag_mode == "new":
+                    self._set_rect_px(self._rect_start.x(), self._rect_start.y(),
+                                      pt.x(), pt.y(), w, h)
+                elif self._drag_mode == "resize":
+                    self._apply_resize(pt.x(), pt.y(), w, h)
+                else:
+                    self._apply_move(pt.x(), pt.y(), w, h)
+                e.accept()
+                return
+            if not (e.buttons() & Qt.LeftButton):           # hover: show the affordance
+                self.setCursor(self._cursor_for(*self._hit_test(pt.x(), pt.y())))
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
-        if self._rect_mode and self._rect_start is not None:
-            self._emit_rect(self.mapToScene(e.position().toPoint()))
-            self._rect_start = None
+        if self._rect_mode and self._drag_mode:
+            pt = self.mapToScene(e.position().toPoint())
+            h, w = self.current_array().shape[:2]
+            if self._drag_mode == "new":
+                self._set_rect_px(self._rect_start.x(), self._rect_start.y(),
+                                  pt.x(), pt.y(), w, h)
+            elif self._drag_mode == "resize":
+                self._apply_resize(pt.x(), pt.y(), w, h)
+            else:
+                self._apply_move(pt.x(), pt.y(), w, h)
+            self._drag_mode = None; self._rect_start = None
+            self._drag_edges = set(); self._move_anchor = None
             e.accept()
             return
         super().mouseReleaseEvent(e)
-
-    def _emit_rect(self, pt):
-        arr = self.current_array()
-        if arr is None:
-            return
-        h, w = arr.shape[:2]
-        x0 = min(self._rect_start.x(), pt.x()); x1 = max(self._rect_start.x(), pt.x())
-        y0 = min(self._rect_start.y(), pt.y()); y1 = max(self._rect_start.y(), pt.y())
-        rect = {"x0": max(0.0, min(1.0, x0 / w)), "y0": max(0.0, min(1.0, y0 / h)),
-                "x1": max(0.0, min(1.0, x1 / w)), "y1": max(0.0, min(1.0, y1 / h))}
-        self.show_rect(rect)
-        self.rectSelected.emit(rect)
 
 
 # =============================================================================

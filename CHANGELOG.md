@@ -32,6 +32,11 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
   whose kind isn't `lazyflight-v2` are refused.
 
 ### Changed
+- **LazyDevelop crop is now draggable to refine.** Once the crop rectangle is drawn you can
+  drag its edges/corners to resize, drag inside to reposition (clamped to the frame), or
+  drag on empty area to draw a fresh one — with matching hover cursors. The BlurX tooltip
+  now notes it sharpens in the nonlinear domain here (its ideal slot is the pipeline's
+  linear deconvolution step).
 - **NoiseXTerminator now runs in the linear NR slot** (pre-stretch, its native domain,
   PixInsight `js:3369`) instead of the post-stretch slot. The stretched-domain denoisers
   (DeepSNR → GraXpert → MMT) stay post-stretch and are skipped when NoiseX already ran;
