@@ -21,6 +21,7 @@ from .render import Cam, Flythrough3D
 from .camera import flythrough, flyby, orbit, pullback
 from .encode import write_video, ffmpeg_available
 from .clip import render_flythrough, PATHS
+from .parallel import auto_workers, parallel_frames
 
 __all__ = [
     "Cam",
@@ -33,4 +34,6 @@ __all__ = [
     "ffmpeg_available",
     "render_flythrough",
     "PATHS",
+    "auto_workers",
+    "parallel_frames",
 ]

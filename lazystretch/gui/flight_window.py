@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 from ..animate import render_flythrough
 from ..animate.clip import PATHS, _resize, build_cameras
 from ..animate.encode import ffmpeg_available
+from ..animate.parallel import auto_workers
 from ..animate.render import Flythrough3D
 from ..io.image_io import load_image
 from .preview import PreviewView
@@ -118,6 +119,9 @@ class LazyFlightPanel(QWidget):
         self.width_combo.addItems(["960", "1280", "1600", "1920"])
         self.width_combo.setCurrentText("1280")
         out.addWidget(self._row("Width", self.width_combo))
+        self.parallel = QCheckBox(f"Parallel render ({auto_workers()} cores)")
+        self.parallel.setChecked(True)
+        out.addWidget(self.parallel)
         self.render_btn = QPushButton("Render video…")
         self.render_btn.clicked.connect(self._render_video)
         out.addWidget(self.render_btn)
@@ -291,6 +295,7 @@ class LazyFlightPanel(QWidget):
         mode = self._mode()
         zoom_end = float(self.zoom.value())
         bloom = float(self.bloom.value())
+        workers = auto_workers() if self.parallel.isChecked() else 1
 
         def job(log, progress):
             if masks is not None:                       # match render res for depth
@@ -302,13 +307,15 @@ class LazyFlightPanel(QWidget):
                 progress(i + 1, n, "frame")
             return render_flythrough(
                 img, out, seconds=seconds, fps=fps, path=path, mode=mode,
-                render_width=width, masks=m, engine_kw={"bloom": bloom},
-                path_kw={"zoom_end": zoom_end}, on_frame=on_frame)
+                render_width=width, workers=workers, masks=m,
+                engine_kw={"bloom": bloom}, path_kw={"zoom_end": zoom_end},
+                on_frame=on_frame)
 
         self._set_busy(True)
         self.progress.setVisible(True)
         self.progress.setRange(0, 0)                    # indeterminate until first frame
-        self.status.setText(f"Rendering {mode} @ {width}px…")
+        w_note = f"  ·  {workers} cores" if workers > 1 else ""
+        self.status.setText(f"Rendering {mode} @ {width}px{w_note}…")
         self.worker = CallableWorker(job, mode="render")
         self.worker.progress.connect(self._on_progress)
         self.worker.finished_ok.connect(self._on_done)

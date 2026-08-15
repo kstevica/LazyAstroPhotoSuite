@@ -116,6 +116,21 @@ def test_camera_paths(name, fn):
     assert build_cameras(name, 10)                        # registered in PATHS
 
 
+def test_parallel_frames_match_sequential():
+    from lazystretch.animate.parallel import parallel_frames, auto_workers
+
+    rgb, _ = _scene()
+    eng = Flythrough3D(rgb, max_stars=60)
+    cams = flythrough(4, zoom_end=1.2)
+    seq = list(parallel_frames(eng, cams, workers=1))
+    par = list(parallel_frames(eng, cams, workers=2))     # spawns processes
+    assert len(seq) == len(par) == 4
+    assert all(f.dtype == np.uint8 for f in par)
+    for a, b in zip(seq, par):
+        assert np.array_equal(a, b)                        # deterministic → identical
+    assert auto_workers() >= 1
+
+
 def test_pullback_reveals_out():
     cams = pullback(24, zoom_end=1.4)
     assert build_cameras("pullback", 10)                  # registered in PATHS

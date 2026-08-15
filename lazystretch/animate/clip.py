@@ -43,6 +43,7 @@ def build_cameras(path: str, n_frames: int, **kw) -> List[Cam]:
 def render_flythrough(img: np.ndarray, out_path: str, *, seconds: float = 8.0,
                       fps: int = 24, path: str = "flythrough",
                       render_width: int = 1280, mode: str = "parallax",
+                      workers: int = 1,
                       masks: Optional[Dict[str, np.ndarray]] = None,
                       engine_kw: Optional[dict] = None,
                       path_kw: Optional[dict] = None,
@@ -51,8 +52,9 @@ def render_flythrough(img: np.ndarray, out_path: str, *, seconds: float = 8.0,
     """Render ``img`` (float [0,1] mono/RGB) to an mp4 at ``out_path``.
 
     ``mode`` is ``"parallax"`` (fast depth warp) or ``"volumetric"`` (slower
-    ray-marched glow). ``on_frame(i, n, frame)`` is called per frame for progress
-    / preview. Returns the written path.
+    ray-marched glow). ``workers`` > 1 renders frames across that many processes
+    (frames are independent). ``on_frame(i, n, frame)`` is called per frame for
+    progress / preview. Returns the written path.
     """
     ekw = dict(engine_kw or {})
     ekw.setdefault("mode", mode)
@@ -61,11 +63,6 @@ def render_flythrough(img: np.ndarray, out_path: str, *, seconds: float = 8.0,
     n = max(int(round(seconds * fps)), 2)
     cams = build_cameras(path, n, **(path_kw or {}))
 
-    def frames():
-        for i, cam in enumerate(cams):
-            fr = engine.render_frame(cam)
-            if on_frame is not None:
-                on_frame(i, n, fr)
-            yield fr
-
-    return write_video(frames(), out_path, fps=fps)
+    from .parallel import parallel_frames
+    frames = parallel_frames(engine, cams, int(workers), on_frame)
+    return write_video(frames, out_path, fps=fps)
