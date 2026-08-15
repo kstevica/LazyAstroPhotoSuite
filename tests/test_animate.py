@@ -148,8 +148,36 @@ def test_v2fly_bg_unchanged_and_moves():
     cams = fly_v2(24, zoom_end=1.5, rotate_deg=10.0, pan=0.04)
     assert len(cams) == 24
     assert cams[0].zoom == pytest.approx(1.0, abs=1e-6) and cams[0].roll == 0.0
-    assert cams[-1].zoom > 1.0 and cams[-1].roll == pytest.approx(10.0)
+    assert cams[-1].zoom > 1.0
+    # roll is periodic (0 → peak → 0) so the clip loops seamlessly
+    assert max(c.roll for c in cams) == pytest.approx(10.0, abs=0.1)
+    assert cams[-1].roll < 1.0
     assert cams[-1].c > 0.0                              # stars flew in
+
+
+def test_v2fly_star_field_wraps_seamlessly():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam
+
+    rgb, _ = _scene()
+    eng = V2Fly(rgb, star_count=300)
+    # the wrapping depth means c and c+1 (one full cycle) render identically →
+    # the star inflow loops with no jump
+    a = eng._render_stars(V2Cam(c=0.3))
+    b = eng._render_stars(V2Cam(c=1.3))
+    assert np.allclose(a, b, atol=1e-4)                   # one full cycle → identical
+
+
+def test_v2fly_zoom_clamped_to_border():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam
+
+    rgb, _ = _scene(h=80, w=160)                          # landscape source
+    eng = V2Fly(rgb, out_w=160, out_h=80, star_count=0)   # same aspect → tight fill
+    # zooming out past the fill point is clamped: all sub-fill zooms render the
+    # same frame (can't reveal a border), while a zoomed-in frame differs
+    a = eng.render_frame(V2Cam(zoom=0.3))
+    b = eng.render_frame(V2Cam(zoom=0.9))
+    c = eng.render_frame(V2Cam(zoom=1.6))
+    assert np.array_equal(a, b) and not np.array_equal(a, c)
 
 
 def test_v2fly_output_frame_and_pan_points():

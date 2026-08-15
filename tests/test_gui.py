@@ -142,7 +142,8 @@ def test_shell_opens_flight_panel(qapp):
     assert isinstance(panel._engine, V2Fly) and len(panel._cams) > 1
     panel.scrub.setValue(50)
     panel.rotate.set_value(12.0); panel.pan.set_value(0.05); panel._rebuild_cams()
-    assert panel._cams[-1].roll == pytest.approx(12.0)
+    assert max(c.roll for c in panel._cams) == pytest.approx(12.0, abs=0.2)  # peaks
+    assert panel._cams[-1].roll < 1.0                    # returns → seamless loop
     panel._render_preview()                              # must not raise
     # portrait output frame is taller than wide
     panel.orient_combo.setCurrentText("Portrait"); panel._reopen_engine()

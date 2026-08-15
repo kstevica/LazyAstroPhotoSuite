@@ -41,11 +41,13 @@ def _to_u8(frame: np.ndarray) -> np.ndarray:
 
 
 def write_video(frames: Iterable[np.ndarray], path: str, *, fps: int = 24,
-                crf: int = 17) -> str:
+                crf: int = 17, bitrate_mbps: Optional[float] = None) -> str:
     """Encode ``frames`` (float [0,1] or uint8, ``(H, W, 3)``) to ``path``.
 
-    Returns the output path. Raises ``RuntimeError`` if no ffmpeg is found.
-    Dimensions are cropped to even values (libx264 / yuv420p requirement).
+    Quality is CRF by default (lower = better); pass ``bitrate_mbps`` to target a
+    fixed bitrate instead (up to ~150 Mbps for near-lossless). Returns the output
+    path; raises ``RuntimeError`` if no ffmpeg is found. Dimensions are cropped to
+    even values (libx264 / yuv420p requirement).
     """
     it = iter(frames)
     try:
@@ -65,8 +67,14 @@ def write_video(frames: Iterable[np.ndarray], path: str, *, fps: int = 24,
     cmd = [exe, "-y", "-loglevel", "error",
            "-f", "rawvideo", "-pix_fmt", "rgb24", "-s", f"{w}x{h}",
            "-r", str(fps), "-i", "-", "-an",
-           "-c:v", "libx264", "-preset", "medium", "-crf", str(crf),
-           "-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path)]
+           "-c:v", "libx264", "-preset", "medium"]
+    if bitrate_mbps:                                     # fixed target bitrate
+        b = max(1.0, float(bitrate_mbps))
+        cmd += ["-b:v", f"{b:.3f}M", "-maxrate", f"{b:.3f}M",
+                "-bufsize", f"{2 * b:.3f}M"]
+    else:
+        cmd += ["-crf", str(crf)]
+    cmd += ["-pix_fmt", "yuv420p", "-movflags", "+faststart", str(path)]
     proc = subprocess.Popen(cmd, stdin=subprocess.PIPE,
                             stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)
 

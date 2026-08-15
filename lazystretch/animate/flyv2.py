@@ -90,8 +90,8 @@ class V2Fly:
     def __init__(self, img: np.ndarray, *, out_w: Optional[int] = None,
                  out_h: Optional[int] = None, star_count: int = 1400, seed: int = 7,
                  bloom: float = 0.25, overscan: float = 1.06,
-                 focal: float = 0.55, near: float = 0.35, star_z=(0.12, 2.6),
-                 star_min: float = 0.9, star_max: float = 3.6,
+                 focal: float = 0.6, near: float = 0.32, z_span: float = 2.6,
+                 star_min: float = 0.9, star_max: float = 3.6, star_gain: float = 5.0,
                  streaks: bool = False, streak_len: float = 60.0) -> None:
         self.bg = _as_rgb(img).astype(np.float32)        # ORIGINAL, unchanged
         self.bh, self.bw = self.bg.shape[:2]
@@ -99,25 +99,27 @@ class V2Fly:
         self.out_h = int(out_h) if out_h else self.bh
         self.overscan = float(overscan)
         self.bloom_strength = float(bloom)
-        self.focal, self.near = float(focal), float(near)
+        self.focal, self.near, self.z_span = float(focal), float(near), float(z_span)
         self.star_min, self.star_max = float(star_min), float(star_max)
+        self.star_gain = float(star_gain)
         self.streaks = bool(streaks)
         self.streak_len = float(streak_len)
-        self._build_stars(star_count, seed, star_z)
+        self._build_stars(star_count, seed)
 
-    def _build_stars(self, count, seed, zr):
+    def _build_stars(self, count, seed):
         rng = np.random.default_rng(seed)
         self.star_u = rng.uniform(-1.7, 1.7, count).astype(np.float32)
         self.star_v = rng.uniform(-1.3, 1.3, count).astype(np.float32)
-        self.star_z = rng.uniform(zr[0], zr[1], count).astype(np.float32)
-        flux = 0.1 + 0.9 * rng.power(0.4, count)
+        # depth phase in [0,1) — the field wraps, so the inflow loops seamlessly
+        self.star_z = rng.uniform(0.0, 1.0, count).astype(np.float32)
+        flux = 0.28 + 0.72 * rng.power(0.5, count)       # brighter floor → visible w/o bloom
         self.star_flux = flux.astype(np.float32)
         # size rank in [0,1] — mostly small, a few big; brighter stars trend bigger
         rank = np.clip(0.6 * rng.power(2.2, count) + 0.4 * flux, 0.0, 1.0)
         self.star_rank = rank.astype(np.float32)
         t = rng.uniform(0.0, 1.0, count)
-        col = np.stack([0.70 + 0.30 * t, 0.78 + 0.16 * (1 - np.abs(t - 0.5) * 2),
-                        1.0 - 0.28 * t], axis=1)
+        col = np.stack([0.72 + 0.28 * t, 0.80 + 0.14 * (1 - np.abs(t - 0.5) * 2),
+                        1.0 - 0.26 * t], axis=1)
         self.star_col = np.clip(col, 0.0, 1.0).astype(np.float32)
 
     # ---------------------------------------------------------------- bg warp
@@ -126,7 +128,11 @@ class V2Fly:
 
         ow, oh = self.out_w, self.out_h
         cover = max(ow / self.bw, oh / self.bh)          # fill the output frame
-        s = self.overscan * cover * cam.zoom
+        # clamp zoom-out so the frame can never leave the image (no border shows)
+        zmin = max((1.0 + abs(cam.pan_x)) * ow / self.bw,
+                   (1.0 + abs(cam.pan_y)) * oh / self.bh) / (self.overscan * cover)
+        zoom = max(cam.zoom, zmin)
+        s = self.overscan * cover * zoom
         th = np.deg2rad(cam.roll)
         cos, sin = np.cos(th), np.sin(th)
         m2 = (1.0 / s) * np.array([[cos, sin], [-sin, cos]])
@@ -175,32 +181,31 @@ class V2Fly:
 
         h, w = self.out_h, self.out_w
         buf = np.zeros((h, w, 3), np.float32)
-        dist = self.star_z - cam.c + self.near
-        vis = dist > 0.08
-        if not np.any(vis):
-            return buf
-        d = dist[vis]
-        m = self.focal / d
-        # star expansion centre tracks the pan (so stars change direction on a turn)
-        cx = (w - 1) / 2.0 + cam.focus_x * w / 2.0
+        # wrapping depth: each star's distance cycles as c advances, so the inflow
+        # is continuous AND loops seamlessly. frac 0 = right in front, 1 = far away.
+        frac = np.mod(self.star_z - cam.c, 1.0)
+        dist = self.near + frac * self.z_span
+        m = self.focal / dist
+        cx = (w - 1) / 2.0 + cam.focus_x * w / 2.0        # focus tracks the pan
         cy = (h - 1) / 2.0 + cam.focus_y * h / 2.0
         th = np.deg2rad(cam.roll)
         cos, sin = np.cos(th), np.sin(th)
-        uu = self.star_u[vis] * m
-        vv = self.star_v[vis] * m
+        uu = self.star_u * m
+        vv = self.star_v * m
         xx = cx + (cos * uu - sin * vv) * (w * 0.5)
         yy = cy + (sin * uu + cos * vv) * (w * 0.5)
         on = (xx >= 0) & (xx < w) & (yy >= 0) & (yy < h)
         if not np.any(on):
             return buf
         xx, yy = xx[on], yy[on]
-        near_gain = np.clip(m[on] / self.focal, 0.4, 3.2)
-        flux = self.star_flux[vis][on] * near_gain
+        near_gain = np.clip(m[on] / self.focal, 0.35, 4.0)      # closer = bigger/brighter
+        fade = np.clip(1.0 - frac[on], 0.0, 1.0) ** 1.3         # dim near the far wrap
+        flux = self.star_flux[on] * near_gain * (0.5 + 0.7 * fade)
         if cam.twinkle:
             idx = np.nonzero(on)[0]
             flux = flux * (1.0 + 0.18 * np.sin(cam.twinkle + idx * 1.7))
-        col = self.star_col[vis][on]
-        rank = self.star_rank[vis][on] * np.clip(0.7 + 0.5 * (near_gain - 0.4), 0.6, 2.0)
+        col = self.star_col[on]
+        rank = self.star_rank[on] * np.clip(0.7 + 0.5 * (near_gain - 0.4), 0.6, 2.2)
         sigmas = self._sigmas()
         bucket = np.clip((rank * len(sigmas)).astype(int), 0, len(sigmas) - 1)
         for b, sigma in enumerate(sigmas):
@@ -211,8 +216,8 @@ class V2Fly:
             self._deposit(layer, xx[sel], yy[sel], flux[sel], col[sel], cx, cy)
             for ch in range(3):
                 layer[..., ch] = gaussian_filter(layer[..., ch], sigma)
-            buf += layer
-        return np.clip(buf * 3.2, 0.0, 1.0)               # brighter → clearly visible
+            buf += layer * (0.6 + 0.9 * sigma)            # keep big (blurred) stars bright
+        return np.clip(buf * self.star_gain, 0.0, 1.0)
 
     # ---------------------------------------------------------------- render
     def render_frame(self, cam: V2Cam) -> np.ndarray:
@@ -234,23 +239,25 @@ class V2Fly:
 
 def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
            pan_points: Optional[List[Tuple[float, float]]] = None,
-           pan: float = 0.035, star_speed: float = 1.8,
+           pan: float = 0.035, star_speed: float = 2.0,
            base_pan: Tuple[float, float] = (0.0, 0.0)):
-    """Parametrised v2 path: eased zoom-in, steady roll, a smooth (elliptical)
-    pan through ``pan_points``, and a star inflow whose focus follows the pan.
-    ``base_pan`` is a static offset that frames the background in the output."""
+    """Parametrised v2 path: eased zoom, a smooth (elliptical) pan through
+    ``pan_points`` that CLOSES back to point 1, a gentle periodic roll, and a
+    wrapping star inflow — so the whole clip loops seamlessly. ``base_pan`` is a
+    static offset that frames the background in the output."""
     path, focus, zoom = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02),
                                   zoom_end=zoom_end)
     bx, by = base_pan
     cams = []
     for i in range(n):
-        u = i / max(n - 1, 1)
+        u = i / n                                        # periodic domain [0,1)
+        roll = rotate_deg * (1.0 - np.cos(2 * np.pi * u)) / 2.0   # 0 → peak → 0, seamless
         cams.append(V2Cam(
             zoom=float(zoom[i]),
-            roll=rotate_deg * u,
+            roll=float(roll),
             pan_x=float(path[i, 0]) + bx, pan_y=float(path[i, 1]) + by,
             focus_x=float(focus[i, 0]), focus_y=float(focus[i, 1]),
-            c=star_speed * u,
+            c=star_speed * u,                            # wraps in the renderer → loops
             twinkle=u * 2 * np.pi * 6.0,
         ))
     return cams
@@ -261,10 +268,11 @@ def render_v2(img, out_path: str, *, seconds: float = 8.0, fps: int = 24,
               render_width: int = 1280, workers: int = 1, star_count: int = 1400,
               bloom: float = 0.25, zoom_end: float = 1.4, rotate_deg: float = 8.0,
               pan_points: Optional[List[Tuple[float, float]]] = None,
-              pan: float = 0.035, star_speed: float = 1.8,
+              pan: float = 0.035, star_speed: float = 2.0,
               base_pan: Tuple[float, float] = (0.0, 0.0),
               star_min: float = 0.9, star_max: float = 3.6, streaks: bool = False,
-              streak_len: float = 60.0, engine_kw=None, on_frame=None) -> str:
+              streak_len: float = 60.0, crf: int = 17, bitrate_mbps=None,
+              engine_kw=None, on_frame=None) -> str:
     """Render a v2 fly-through of ``img`` to an mp4 at ``out_path``."""
     from .clip import _resize
     from .encode import write_video
@@ -291,4 +299,4 @@ def render_v2(img, out_path: str, *, seconds: float = 8.0, fps: int = 24,
                   pan_points=pan_points, pan=pan, star_speed=star_speed,
                   base_pan=base_pan)
     frames = parallel_frames(eng, cams, int(workers), on_frame)
-    return write_video(frames, out_path, fps=fps)
+    return write_video(frames, out_path, fps=fps, crf=crf, bitrate_mbps=bitrate_mbps)

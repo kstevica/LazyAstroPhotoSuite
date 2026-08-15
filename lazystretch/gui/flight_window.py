@@ -35,6 +35,7 @@ from .worker import CallableWorker
 _PREVIEW_W = 760          # live-preview render width (fast)
 _PREVIEW_FPS = 24         # frames the scrub bar addresses
 _RATIOS = ["16:9", "3:2", "4:3", "5:4", "1:1"]
+_QUALITY = {"High": 16, "Max": 12, "Good": 20, "Draft": 24}   # name → x264 CRF
 
 
 class FlightCanvas(PreviewView):
@@ -290,6 +291,13 @@ class LazyFlightPanel(QWidget):
         self.ratio_combo.addItems(_RATIOS)
         self.ratio_combo.currentIndexChanged.connect(self._reopen_engine)
         out.addWidget(self._row("Aspect", self.ratio_combo))
+        self.quality_combo = QComboBox()
+        self.quality_combo.addItems(list(_QUALITY.keys()) + ["Custom bitrate"])
+        self.quality_combo.setCurrentText("High")
+        self.quality_combo.currentIndexChanged.connect(self._sync_quality)
+        out.addWidget(self._row("Quality", self.quality_combo))
+        self.bitrate = FloatSlider("Bitrate (Mbps)", 5.0, 150.0, 60.0, decimals=0)
+        out.addWidget(self.bitrate)
         self.parallel = QCheckBox(f"Parallel render ({auto_workers()} cores)")
         self.parallel.setChecked(True)
         out.addWidget(self.parallel)
@@ -366,11 +374,15 @@ class LazyFlightPanel(QWidget):
                   self.star_min, self.star_max, self.streaks, self.streak_len,
                   self.mode_combo, self.semantic, self.show_depth, self.fps_combo,
                   self.width_combo, self.orient_combo, self.ratio_combo,
-                  self.render_btn, self.pick_btn, self.clear_pts_btn,
-                  self.play_btn, self.scrub):
+                  self.quality_combo, self.bitrate, self.render_btn, self.pick_btn,
+                  self.clear_pts_btn, self.play_btn, self.scrub):
             w.setEnabled(on)
         if on:
             self._sync_mode_controls()
+            self._sync_quality()
+
+    def _sync_quality(self, *_):
+        self.bitrate.setEnabled(self.quality_combo.currentText() == "Custom bitrate")
 
     def _sync_mode_controls(self):
         mode = self._mode()
@@ -709,6 +721,11 @@ class LazyFlightPanel(QWidget):
         pan_points = list(self._pan_points)
         base_pan = tuple(self._base_pan)
         out_w, out_h = self._frame_size(width)
+        qname = self.quality_combo.currentText()
+        if qname == "Custom bitrate":
+            crf, bitrate = 17, float(self.bitrate.value())
+        else:
+            crf, bitrate = _QUALITY[qname], None
         c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
         workers = auto_workers() if self.parallel.isChecked() else 1
 
@@ -725,7 +742,8 @@ class LazyFlightPanel(QWidget):
                     workers=workers, star_count=star_count, bloom=bloom,
                     zoom_end=zoom_end, rotate_deg=rotate_deg, pan_points=pan_points,
                     pan=pan, base_pan=base_pan, star_min=star_min, star_max=star_max,
-                    streaks=streaks, streak_len=streak_len, on_frame=on_frame)
+                    streaks=streaks, streak_len=streak_len, crf=crf,
+                    bitrate_mbps=bitrate, on_frame=on_frame)
             if mode == "space":
                 return render_space(
                     img, out, seconds=seconds, fps=fps, render_width=width,
