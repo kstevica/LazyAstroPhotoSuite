@@ -237,6 +237,7 @@ def _star_spikes(img, p):
         thickness=float(p.get("thickness", 1.0)), intensity=float(p.get("intensity", 1.0)),
         colored=bool(p.get("colored", True)), base_len=float(p.get("length", 0.06)),
         fringe=float(p.get("fringe", 0.0)), jitter=float(p.get("jitter", 0.0)),
+        asymmetry=float(p.get("asymmetry", 0.0)),
     )
 
 
@@ -254,6 +255,8 @@ register(Op(
                           "(refractor-style diffraction colour). 0 = off."),
         ParamSpec("jitter", "Arm-length jitter", "float", 0.0, 1.0, 0.0, 2,
                   tooltip="Vary each arm's length a little (0 = all arms equal)."),
+        ParamSpec("asymmetry", "Per-arm colour", "float", 0.0, 1.0, 0.0, 2,
+                  tooltip="Give each arm a slightly different hue (0 = all arms same colour)."),
         ParamSpec("colored", "Tint by star colour", "bool", default=True),
         ParamSpec("max_stars", "Auto-detect count", "int", 1, 200, 30, 0),
     ],

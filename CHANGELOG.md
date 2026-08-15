@@ -12,9 +12,11 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
   right-click to remove, with a live schematic overlay. Spike count (3–32), rotation,
   thickness and intensity are global; spike length is per-star (the Length slider sets the
   selected star). Spikes are tinted by each star's own colour and composited on Apply.
-  Two opt-in looks (dials, 0 = off): **Chromatic fringe** blends a warm→cool spectral
-  gradient into the outer arms (refractor-style diffraction colour), and **Arm-length
-  jitter** varies each arm's length deterministically. The live overlay reflects the jitter.
+  Three opt-in looks (dials, 0 = off): **Chromatic fringe** blends a warm→cool spectral
+  gradient into the outer arms (refractor-style diffraction colour), **Arm-length jitter**
+  varies each arm's length deterministically (the live overlay reflects it), and **Per-arm
+  colour** gives each arm a slightly different hue (with a saturation floor so it shows even
+  on near-white stars).
 - **BX / NX / SX tools in LazyDevelop.** A new "XTerminator" tool group adds
   BlurXTerminator, NoiseXTerminator and StarXTerminator (Reduce or Remove-to-starless).
   Each prefers the real RC-Astro product when the `rc-astro` CLI is installed and falls back

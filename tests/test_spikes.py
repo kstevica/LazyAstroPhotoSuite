@@ -88,6 +88,23 @@ def test_arm_length_jitter_is_optional_and_deterministic():
     assert np.array_equal(jit, render_spikes(img, [star], count=6, jitter=0.8))
 
 
+def test_per_arm_colour_asymmetry_optional_and_deterministic():
+    img, _ = _sky_with_stars(centers=())
+    star = {"x": 0.5, "y": 0.5, "len": 0.2, "flux": 1.0, "col": [1, 1, 1]}   # white star
+    plain = render_spikes(img, [star], count=4, asymmetry=0.0)
+    asym = render_spikes(img, [star], count=4, asymmetry=1.0)
+    assert not np.allclose(plain, asym)
+    h, w = img.shape[:2]
+    cy = int(round(0.5 * (h - 1)))
+    off = int(0.10 * np.hypot(h, w))
+    right = asym[cy, w // 2 + off]; left = asym[cy, w // 2 - off]
+    chroma = lambda px: float(px.max() - px.min())
+    assert chroma(right) > 0.02                          # a white star now gets a per-arm tint
+    assert float(np.max(np.abs(right - left))) > 0.005   # opposite arms differ in hue (subtly)
+    # deterministic across renders (stable preview↔apply)
+    assert np.array_equal(asym, render_spikes(img, [star], count=4, asymmetry=1.0))
+
+
 def test_render_spikes_does_not_mutate_input():
     img, _ = _sky_with_stars()
     before = img.copy()

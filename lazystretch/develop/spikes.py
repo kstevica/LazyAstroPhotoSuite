@@ -14,6 +14,7 @@ fraction of the image diagonal, plus ``"flux"`` and ``"col"`` (RGB) captured at 
 """
 from __future__ import annotations
 
+import colorsys
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -86,6 +87,17 @@ def _hash01(x, y, k):
     return float((np.sin(x * 127.1 + y * 311.7 + k * 74.7) * 43758.5453) % 1.0)
 
 
+def _rotate_hue(rgb, dh, sat_floor=0.0):
+    """Shift ``rgb``'s hue by ``dh`` (in [0,1) hue units), lifting saturation to
+    ``sat_floor`` first so the shift is visible even on a near-white star. Brightness kept."""
+    r, g, b = (float(np.clip(rgb[0], 0, 1)), float(np.clip(rgb[1], 0, 1)),
+               float(np.clip(rgb[2], 0, 1)))
+    hh, ss, vv = colorsys.rgb_to_hsv(r, g, b)
+    ss = max(ss, sat_floor)
+    hh = (hh + dh) % 1.0
+    return np.array(colorsys.hsv_to_rgb(hh, ss, vv), dtype=np.float64)
+
+
 def _spectrum(t):
     """A warm→cool visible-spectrum ramp over the array ``t`` in [0,1] (orange→violet),
     for chromatic diffraction fringes. Returns ``(len(t), 3)`` RGB in [0,1]."""
@@ -104,16 +116,17 @@ def _spectrum(t):
 def render_spikes(img: np.ndarray, stars: List[Dict], *, count: int = 4,
                   angle_deg: float = 0.0, thickness: float = 1.0, intensity: float = 1.0,
                   colored: bool = True, base_len: float = 0.06, fringe: float = 0.0,
-                  jitter: float = 0.0, core_boost: float = 0.6) -> np.ndarray:
+                  jitter: float = 0.0, asymmetry: float = 0.0,
+                  core_boost: float = 0.6) -> np.ndarray:
     """Composite diffraction spikes for ``stars`` onto ``img`` (screen blend).
 
     ``count`` spikes per star (3-32) at ``angle_deg`` + k·360/count; each tapers from the
     star out to ``star['len']`` (fraction of the diagonal, defaulting from brightness).
     ``thickness`` widens the core, ``intensity`` scales brightness, ``colored`` tints by the
-    star's colour (else white). Two opt-in looks: ``fringe`` (0-1) blends a warm→cool
-    spectral gradient into the outer part of each arm (chromatic diffraction fringes), and
-    ``jitter`` (0-1) varies each arm's length deterministically. A small glint is added at
-    each star centre.
+    star's colour (else white). Three opt-in looks (0-1, deterministic per star+arm):
+    ``fringe`` blends a warm→cool spectral gradient into the outer part of each arm
+    (chromatic diffraction fringes); ``jitter`` varies each arm's length; ``asymmetry``
+    gives each arm a slightly different hue. A small glint is added at each star centre.
     """
     base = np.asarray(img, dtype=np.float64)
     rgb = base if base.ndim == 3 else np.repeat(base[..., None], 3, axis=2)
@@ -125,6 +138,7 @@ def render_spikes(img: np.ndarray, stars: List[Dict], *, count: int = 4,
     n = int(np.clip(count, 3, 32))
     fringe = float(np.clip(fringe, 0.0, 1.0))
     jitter = float(np.clip(jitter, 0.0, 1.0))
+    asymmetry = float(np.clip(asymmetry, 0.0, 1.0))
 
     for star in stars:
         cx = float(star.get("x", 0.5)) * (w - 1)
@@ -146,6 +160,10 @@ def render_spikes(img: np.ndarray, stars: List[Dict], *, count: int = 4,
                 if jitter > 0 else length
             if Lk < 1.0:
                 continue
+            arm_col = col
+            if asymmetry > 0:                            # each arm a slightly different hue
+                dh = asymmetry * (2.0 * _hash01(sx, sy, k + 100) - 1.0) * 0.06
+                arm_col = _rotate_hue(col, dh, sat_floor=asymmetry * 0.25)
             steps = max(int(Lk), 8)
             t = np.linspace(0.0, 1.0, steps)
             taper = (1.0 - t) ** 1.6                      # bright at the star, fades to the tip
@@ -157,11 +175,11 @@ def render_spikes(img: np.ndarray, stars: List[Dict], *, count: int = 4,
                 continue
             if fringe > 0:                                # colour shifts toward the tip
                 fmask = fringe * _smoothstep(0.2, 0.9, t)
-                col_t = col[None, :] * (1.0 - fmask[:, None]) + _spectrum(t) * fmask[:, None]
+                col_t = arm_col[None, :] * (1.0 - fmask[:, None]) + _spectrum(t) * fmask[:, None]
                 cc = col_t[m]
             wgt = (amp * taper)[m]
             for c in range(3):
-                vals = wgt * (cc[:, c] if fringe > 0 else col[c])
+                vals = wgt * (cc[:, c] if fringe > 0 else arm_col[c])
                 np.add.at(buf[..., c], (yi[m], xi[m]), vals)
         # central glint
         if 0 <= int(round(cx)) < w and 0 <= int(round(cy)) < h:
