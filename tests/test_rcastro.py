@@ -164,6 +164,31 @@ def test_noisex_absent_keeps_poststretch_nr(fake_rcastro):
     assert "MMT fallback" in joined
 
 
+def _boom(*a, **k):
+    raise AssertionError("open-source fallback was used, expected RC-Astro")
+
+
+def test_develop_xterminator_ops_prefer_rcastro(fake_rcastro, monkeypatch):
+    # env makes the fake rc-astro discoverable; blow up the fallbacks so a green run
+    # proves the BX/NX/SX Develop ops routed through rc-astro, not the open-source path.
+    from lazystretch.develop import ops
+    from lazystretch.develop.ops import xterminator as xt
+
+    monkeypatch.setenv("LAZYSTRETCH_RCASTRO", fake_rcastro)
+    monkeypatch.setattr(xt, "richardson_lucy", _boom)
+    monkeypatch.setattr(xt, "noise_reduction_mmt", _boom)
+    monkeypatch.setattr(xt, "shrink_stars", _boom)
+
+    img = np.clip(np.random.default_rng(0).random((24, 32, 3)), 0.05, 0.95)
+    for name, params in (("blurx", None), ("noisex", None),
+                         ("starx", {"mode": 0, "amount": 0.5}),
+                         ("starx", {"mode": 1})):            # reduce and remove both via sxt
+        op = ops.get(name)
+        out = np.asarray(op.fn(img, op.merged(params)))
+        assert out.shape == img.shape and np.isfinite(out).all()
+        assert out.min() >= -1e-6 and out.max() <= 1 + 1e-6
+
+
 def test_tools_status_lists_rcastro(fake_rcastro):
     t = Tools.resolve(rcastro_path=fake_rcastro)
     s = t.status()

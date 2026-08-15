@@ -17,7 +17,8 @@ from typing import Callable, Dict, List, Optional
 import numpy as np
 
 # Category display order in the toolbox.
-CATEGORY_ORDER = ["Geometry", "Tone", "Color", "Detail", "Background", "Studio"]
+CATEGORY_ORDER = ["Geometry", "Tone", "Color", "Detail", "XTerminator", "Background",
+                  "Studio"]
 
 
 @dataclass
@@ -109,6 +110,7 @@ from . import geometry   # noqa: E402,F401
 from . import tone       # noqa: E402,F401
 from . import color      # noqa: E402,F401
 from . import detail     # noqa: E402,F401
+from . import xterminator  # noqa: E402,F401
 from . import background  # noqa: E402,F401
 from . import studio     # noqa: E402,F401
 

@@ -28,6 +28,15 @@ def test_registry_is_populated_and_well_formed():
         assert set(d) == {p.key for p in op.params}
 
 
+def test_xterminator_category_and_ops_registered():
+    xt = ops.by_category().get("XTerminator", [])
+    assert {o.name for o in xt} == {"blurx", "noisex", "starx"}
+    assert "XTerminator" in ops.CATEGORY_ORDER
+    # StarX exposes a Reduce/Remove choice
+    modes = next(p for p in ops.get("starx").params if p.key == "mode").choices
+    assert modes == ["Reduce", "Remove (starless)"]
+
+
 def test_every_op_runs_and_stays_in_gamut():
     img = _demo_rgb().astype(np.float64)
     for name, op in ops.REGISTRY.items():

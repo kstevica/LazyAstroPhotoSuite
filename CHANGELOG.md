@@ -7,6 +7,11 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
 ## [Unreleased]
 
 ### Added
+- **BX / NX / SX tools in LazyDevelop.** A new "XTerminator" tool group adds
+  BlurXTerminator, NoiseXTerminator and StarXTerminator (Reduce or Remove-to-starless).
+  Each prefers the real RC-Astro product when the `rc-astro` CLI is installed and falls back
+  to the open-source method otherwise (Richardson-Lucy, multiscale-median, StarNet or the
+  morphological star reducer), so the same tool works on any machine.
 - **Save / export logs.** Every run log can be written to a text file: a "Save log…" button
   in the Stretch, LazyMoonSun, and LazyDevelop windows, plus a right-click "Copy log" /
   "Save log…" menu on any log view (shared `LogExportMixin`). The CLI gains `--log-file
