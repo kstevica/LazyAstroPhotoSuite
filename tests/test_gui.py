@@ -70,7 +70,7 @@ def test_shell_launcher_and_lazy_panel(qapp):
     assert MainWindow is LazyStretchPanel                 # backward-compat alias
     s = AppShell()
     assert s.stack.currentWidget() is s.launcher          # starts on the launcher
-    assert s.windowTitle() == "LazyStretch Suite"
+    assert s.windowTitle() == "LazyAstroPhotoSuite"
     assert s._panels == {}                                # panels built lazily
     s.open_tool("stretch")
     assert isinstance(s._panels.get("stretch"), LazyStretchPanel)
