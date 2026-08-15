@@ -211,7 +211,8 @@ class LazyFlightPanel(QWidget):
         # paths (flyby/orbit) shear the gas and are intentionally not offered here
         self.path_combo.addItems(["flythrough", "pullback"])
         self.path_combo.currentIndexChanged.connect(self._rebuild_cams)
-        cam.addWidget(self._row("Path", self.path_combo))
+        self._path_row = self._row("Path", self.path_combo)
+        cam.addWidget(self._path_row)
         self.dur = FloatSlider("Duration (s)", 3.0, 30.0, 8.0, decimals=0)
         self.dur.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.dur)
@@ -231,8 +232,10 @@ class LazyFlightPanel(QWidget):
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["space 3D", "v2 (image + stars)",
                                   "parallax (fast)", "volumetric (glow)"])
+        self.mode_combo.setCurrentIndex(1)               # v2 is the only offered mode
         self.mode_combo.currentIndexChanged.connect(self._reopen_engine)
-        look.addWidget(self._row("Mode", self.mode_combo))
+        self._mode_row = self._row("Mode", self.mode_combo)
+        look.addWidget(self._mode_row)
         self.bloom = FloatSlider("Bloom", 0.0, 1.0, 0.32, decimals=2)
         self.bloom.valueChanged.connect(self._on_bloom)
         look.addWidget(self.bloom)
@@ -339,6 +342,12 @@ class LazyFlightPanel(QWidget):
         bar.addWidget(self.scrub, 1)
         right.addLayout(bar)
         root.addLayout(right, 1)
+
+        # v2 is the only offered mode → hide the mode switch and the controls that
+        # belong to the other (space/parallax/volumetric) engines
+        for w in (self._mode_row, self._path_row, self.style, self.saturation,
+                  self.haze, self.semantic, self.show_depth):
+            w.hide()
 
     def _row(self, label: str, widget: QWidget) -> QWidget:
         w = QWidget()
@@ -559,6 +568,7 @@ class LazyFlightPanel(QWidget):
                                 rotate_deg=float(self.rotate.value()),
                                 pan_points=list(self._pan_points),
                                 pan=float(self.pan.value()))
+            self._clamp_base_pan()                       # keep framing within borders
         else:
             try:
                 self._cams = build_cameras(self.path_combo.currentText(), n,
@@ -582,12 +592,35 @@ class LazyFlightPanel(QWidget):
             self._engine.streak_len = float(val)
         self._render_preview()
 
+    def _base_pan_limit(self):
+        """Max base pan (per axis) that keeps the output frame within the image —
+        so the drag can't reveal a border. Uses the tightest (min-zoom) frame and
+        leaves room for the animated pan path."""
+        e = self._engine
+        if not isinstance(e, V2Fly):
+            return 1.5, 1.5
+        zmin = min((c.zoom for c in self._cams), default=1.0)
+        cover = max(e.out_w / e.bw, e.out_h / e.bh)
+        s = e.overscan * cover * max(zmin, 1e-3)
+        px = max((abs(c.pan_x) for c in self._cams), default=0.0)   # path excursion
+        py = max((abs(c.pan_y) for c in self._cams), default=0.0)
+        mx = max(0.0, e.bw * s / e.out_w - 1.0 - px)
+        my = max(0.0, e.bh * s / e.out_h - 1.0 - py)
+        return mx, my
+
+    def _clamp_base_pan(self):
+        mx, my = self._base_pan_limit()
+        self._base_pan[0] = float(np.clip(self._base_pan[0], -mx, mx))
+        self._base_pan[1] = float(np.clip(self._base_pan[1], -my, my))
+
     def _on_bg_pan(self, dx: float, dy: float):
-        # drag the background within the output frame (v2 base framing offset)
+        # drag the background within the output frame (v2 base framing offset),
+        # clamped so it can't be dragged past the image borders
         if self._mode() != "v2":
             return
-        self._base_pan[0] = float(np.clip(self._base_pan[0] + dx, -1.5, 1.5))
-        self._base_pan[1] = float(np.clip(self._base_pan[1] + dy, -1.5, 1.5))
+        self._base_pan[0] += dx
+        self._base_pan[1] += dy
+        self._clamp_base_pan()
         if self.canvas.pick_mode:
             self._show_pick_frame()
         else:

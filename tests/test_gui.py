@@ -134,22 +134,13 @@ def test_shell_opens_flight_panel(qapp):
     panel.img = img
     panel._masks = None
 
-    # default mode is Space 3D → SpaceFly engine
-    assert panel._mode() == "space"
-    panel._reopen_engine()
-    assert isinstance(panel._engine, SpaceFly) and len(panel._cams) > 1
-    panel.scrub.setValue(50)
-    panel._render_preview()                              # must not raise
-    panel.show_depth.setChecked(True); panel._render_preview()   # depth view (via ._neb)
-    panel.show_depth.setChecked(False)
-    # stylize is user-definable and rebuilds the engine
-    panel.style.set_value(0.6); panel._reopen_engine()
-    assert isinstance(panel._engine, SpaceFly)
-
-    # v2 (index 1): original image as background + flying stars, no masks needed
-    panel.mode_combo.setCurrentIndex(1)
+    # v2 is the only offered mode (mode switch + non-v2 controls are hidden)
     assert panel._mode() == "v2"
-    assert isinstance(panel._engine, V2Fly)
+    assert panel._mode_row.isHidden() and panel._path_row.isHidden()
+    assert panel.style.isHidden() and panel.semantic.isHidden()
+    panel._reopen_engine()
+    assert isinstance(panel._engine, V2Fly) and len(panel._cams) > 1
+    panel.scrub.setValue(50)
     panel.rotate.set_value(12.0); panel.pan.set_value(0.05); panel._rebuild_cams()
     assert panel._cams[-1].roll == pytest.approx(12.0)
     panel._render_preview()                              # must not raise
@@ -174,15 +165,17 @@ def test_shell_opens_flight_panel(qapp):
     panel._toggle_pick(True); assert panel.canvas.pick_mode
     panel._toggle_pick(False)
 
-    # dragging the preview moves the BACKGROUND within the output frame (v2)
-    panel._base_pan = [0.0, 0.0]
-    panel._on_bg_pan(0.2, -0.1)
-    assert panel._base_pan == pytest.approx([0.2, -0.1])
-    panel._on_bg_pan(0.2, 0.0)                                 # accumulates
-    assert panel._base_pan[0] == pytest.approx(0.4)
-    panel._render_preview()                                    # applies base pan, no raise
+    # dragging moves the BACKGROUND within the frame, CLAMPED to the image borders
+    panel._pan_points = []; panel._base_pan = [0.0, 0.0]; panel._rebuild_cams()
+    mx, my = panel._base_pan_limit()
+    panel._on_bg_pan(0.05, 0.0); assert panel._base_pan[0] > 0.0   # moves
+    panel._on_bg_pan(9.0, 9.0)                                      # huge drag
+    assert panel._base_pan[0] <= mx + 1e-6 and panel._base_pan[1] <= my + 1e-6
+    panel._render_preview()                                        # applies base pan
 
-    # switching to volumetric (index 3) rebuilds a Flythrough3D engine
+    # the other engines still exist under the hood (mode combo is hidden but live)
+    panel.mode_combo.setCurrentIndex(0)
+    assert panel._mode() == "space" and isinstance(panel._engine, SpaceFly)
     panel.mode_combo.setCurrentIndex(3)
     assert panel._mode() == "volumetric"
     assert isinstance(panel._engine, Flythrough3D)
