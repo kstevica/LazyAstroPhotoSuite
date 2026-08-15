@@ -6,6 +6,17 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
 
 ## [Unreleased]
 
+### Packaging
+- **Standalone macOS app build** (`build/build_macos.sh`, Nuitka) — compiles the whole suite
+  into a self-contained `LazyAstroPhotoSuite.app` (~343 MB, arm64) that needs no Python. The
+  bundle's `CFBundleName` shows **LazyAstroPhotoSuite** in the app menu natively, carries a
+  themed icon (`build/make_icon.py`), and includes the launcher art, data JSON, DSO catalogs,
+  and an ffmpeg binary (via imageio-ffmpeg) so LazyFlight export works offline. External AI
+  tools (RC-Astro, StarNet, GraXpert, ASTAP) stay unbundled and feature-detected. Freeze
+  hardening: `multiprocessing.freeze_support()` at both entry points and an absolute import
+  in the GUI entry so it runs as frozen `__main__`. Requires a non-Apple CPython to build
+  (see `build/README.md`); a new `build` extra pins the tooling.
+
 ### Added
 - **Star diffraction spikes (LazyDevelop).** A new "Star spikes" Studio tool auto-detects
   the brightest stars and marks them; click to select, click empty to add, drag to move,

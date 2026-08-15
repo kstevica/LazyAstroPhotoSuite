@@ -2,7 +2,8 @@
 __pycache__/
 *.py[cod]
 *.egg-info/
-build/
+build/lib/
+build/bdist.*
 dist/
 .eggs/
 
@@ -34,3 +35,10 @@ history/
 *.lsrecipe
 *.ldrecipe
 *.lfrecipe
+
+# Nuitka build output
+build/dist/
+*.build/
+.venv-build/
+build/appicon.iconset/
+build/_icon_1024.png

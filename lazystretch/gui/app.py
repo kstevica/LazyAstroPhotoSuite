@@ -62,9 +62,15 @@ def _rename_macos_app(name: str) -> bool:
 
 
 def main() -> int:
+    # Frozen builds (Nuitka --standalone) re-launch this executable to start
+    # multiprocessing workers (LazyFlight's parallel frame render). freeze_support()
+    # makes a re-launched process run as a worker instead of a second app.
+    import multiprocessing
+    multiprocessing.freeze_support()
+
     from PySide6.QtWidgets import QApplication
 
-    from .shell import AppShell
+    from lazystretch.gui.shell import AppShell   # absolute: also works as frozen __main__
 
     _rename_macos_app(APP_NAME)               # before QApplication builds the menu bar
     app = QApplication.instance() or QApplication(sys.argv)

@@ -197,6 +197,8 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
 
 
 def main(argv: Optional[list] = None) -> int:
+    import multiprocessing
+    multiprocessing.freeze_support()          # safe no-op unless this is a frozen build
     args = build_parser().parse_args(argv)
 
     tools = Tools.resolve(graxpert_path=args.graxpert_path, starnet_path=args.starnet_path,
