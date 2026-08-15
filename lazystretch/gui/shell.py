@@ -262,7 +262,7 @@ class LauncherPage(QWidget):
 
         # --- pipeline grid so columns align:
         #   col:   0=Stack  1=→  2=Stretch  3=→  4=Develop  5=→  6=Fly
-        #   Sun & Moon sits in row 3, column 2 → directly under LazyStretch.
+        #   Sun & Moon sits in row 3, column 0 → directly under "Build the master".
         blue = _TOOLS_BY_KEY["stack"]["accent"]
         violet = _TOOLS_BY_KEY["stretch"]["accent"]
         amber = _TOOLS_BY_KEY["moonsun"]["accent"]
@@ -280,8 +280,8 @@ class LauncherPage(QWidget):
         grid.addLayout(self._arrow(), 1, 5)           # arrow between Finish and Animate
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["fly"], on_open), 1, 6)
         grid.setRowMinimumHeight(2, 26)               # gap before Sun & Moon
-        grid.addWidget(_section_label("Sun & Moon", amber), 3, 2, head)
-        grid.addWidget(ToolCard(_TOOLS_BY_KEY["moonsun"], on_open), 4, 2)
+        grid.addWidget(_section_label("Sun & Moon", amber), 3, 0, head)
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["moonsun"], on_open), 4, 0)
 
         center = QHBoxLayout()
         center.addStretch(1)
