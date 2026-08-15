@@ -65,24 +65,73 @@ def depth_field(img: np.ndarray, masks: Optional[Dict[str, np.ndarray]] = None,
     s = float(smooth) if smooth is not None else max(h, w) / 70.0
     s = max(s, 1.0)
 
-    base = gaussian_filter(lum, s)                       # broad shape → nearness
-    red = np.clip(rgb[..., 0] - np.maximum(rgb[..., 1], rgb[..., 2]), 0.0, None)
-    red = gaussian_filter(red, s * 0.8)                  # emission pulled forward
-    struct = np.clip(gaussian_filter(lum, s * 0.4)
-                     - gaussian_filter(lum, s * 1.8), 0.0, None)  # bright filaments
-
-    z = 0.70 * _norm(base) + 0.45 * _norm(red) + relief * _norm(struct)
-
-    if masks:
-        dust = masks.get("Dust")
-        if dust is not None and np.shape(dust) == lum.shape:
-            z = z - 0.35 * np.clip(np.asarray(dust, dtype=np.float64), 0.0, 1.0)
-        ha = masks.get("Hα (red)")
-        if ha is not None and np.shape(ha) == lum.shape:
-            z = z + 0.25 * np.clip(np.asarray(ha, dtype=np.float64), 0.0, 1.0)
+    if _has_semantic(masks, lum.shape):
+        # semantic ordering (sky far … cores near) blended with a smooth
+        # luminance relief so class boundaries don't terrace into facets
+        z_sem = _norm(_semantic_depth(masks, lum, s))
+        z_lum = _norm(gaussian_filter(lum, s * 0.8))
+        z = 0.62 * z_sem + 0.38 * z_lum
+    else:
+        base = gaussian_filter(lum, s)                   # broad shape → nearness
+        red = np.clip(rgb[..., 0] - np.maximum(rgb[..., 1], rgb[..., 2]), 0.0, None)
+        red = gaussian_filter(red, s * 0.8)              # emission pulled forward
+        struct = np.clip(gaussian_filter(lum, s * 0.4)
+                         - gaussian_filter(lum, s * 1.8), 0.0, None)  # filaments
+        z = 0.70 * _norm(base) + 0.45 * _norm(red) + relief * _norm(struct)
 
     z = gaussian_filter(z, max(1.0, s * 0.9))            # smooth → coherent bulk parallax
     return _norm(z, 0.5, 99.5).astype(np.float32)
+
+
+# depth of each semantic class, 0 = far background … 1 = nearest. The object is a
+# layered body: sky sits at the back, the nebula billows forward with brightness,
+# Hα emission and saturated cores are nearest, and dust lanes read as a foreground
+# veil occluding the gas behind them.
+_CLASS_DEPTH = [
+    ("Sky", 0.05),
+    ("Faint nebulosity", 0.34),
+    ("Nebulosity", 0.52),
+    ("Bright nebulosity", 0.74),
+    ("Hα (red)", 0.80),
+    ("Cores", 0.93),
+]
+_DUST_DEPTH = 0.64          # dust is a foreground occluder, nearer than its backdrop
+
+
+def _has_semantic(masks, shape) -> bool:
+    if not masks:
+        return False
+    keys = ("Nebulosity", "Sky", "Bright nebulosity", "Faint nebulosity")
+    return any(np.shape(masks.get(k)) == shape for k in keys)
+
+
+def _mask(masks, name, shape):
+    a = masks.get(name)
+    if a is None or np.shape(a) != shape:
+        return None
+    return np.clip(np.nan_to_num(np.asarray(a, dtype=np.float64)), 0.0, 1.0)
+
+
+def _semantic_depth(masks, lum, s):
+    """Compose a depth relief from the Develop semantic masks (see ``_CLASS_DEPTH``)."""
+    from scipy.ndimage import gaussian_filter
+
+    num = np.zeros_like(lum)
+    den = np.zeros_like(lum)
+    for name, d in _CLASS_DEPTH:
+        m = _mask(masks, name, lum.shape)
+        if m is not None:
+            num += m * d
+            den += m
+    dust = _mask(masks, "Dust", lum.shape)
+    if dust is not None:
+        num += dust * _DUST_DEPTH
+        den += dust
+    # membership-weighted class depth; unassigned pixels fall to a low back plane
+    z = np.where(den > 1e-3, num / np.maximum(den, 1e-6), 0.12)
+    # melt the hard class-depth steps so they don't terrace under the warp
+    z = gaussian_filter(z, max(1.0, s * 0.7))
+    return z
 
 
 def starless(img: np.ndarray, radius: int = 4,

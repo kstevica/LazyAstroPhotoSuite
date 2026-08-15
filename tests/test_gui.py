@@ -138,8 +138,17 @@ def test_shell_opens_flight_panel(qapp):
     panel.show_depth.setChecked(False)
     panel.mode_combo.setCurrentIndex(1)
     assert panel._mode() == "volumetric"
-    panel.path_combo.setCurrentText("orbit"); panel._rebuild_cams()
+    # only dolly paths are offered (flyby/orbit shear the gas)
+    assert {panel.path_combo.itemText(i) for i in range(panel.path_combo.count())} \
+        == {"flythrough", "pullback"}
+    panel.path_combo.setCurrentText("pullback"); panel._rebuild_cams()
     assert isinstance(panel._cams[0], Cam)
+    # playback advances the scrub and renders directly (no debounce starvation)
+    panel.play_btn.setChecked(True)
+    v0 = panel.scrub.value()
+    panel._advance_play()
+    assert panel.scrub.value() != v0
+    panel.play_btn.setChecked(False)
 
 
 def test_shell_opens_moonsun_panel(qapp):

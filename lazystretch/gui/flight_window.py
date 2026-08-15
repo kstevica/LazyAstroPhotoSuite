@@ -79,7 +79,9 @@ class LazyFlightPanel(QWidget):
         cam_box = QGroupBox("Camera move")
         cam = QVBoxLayout(cam_box)
         self.path_combo = QComboBox()
-        self.path_combo.addItems(list(PATHS.keys()))
+        # dolly moves only — they read cleanly through the depth warp; lateral
+        # paths (flyby/orbit) shear the gas and are intentionally not offered here
+        self.path_combo.addItems(["flythrough", "pullback"])
         self.path_combo.currentIndexChanged.connect(self._rebuild_cams)
         cam.addWidget(self._row("Path", self.path_combo))
         self.dur = FloatSlider("Duration (s)", 3.0, 30.0, 8.0, decimals=0)
@@ -98,7 +100,8 @@ class LazyFlightPanel(QWidget):
         self.mode_combo = QComboBox()
         self.mode_combo.addItems(["parallax (fast)", "volumetric (glow)"])
         look.addWidget(self._row("Render mode", self.mode_combo))
-        self.semantic = QCheckBox("Use semantic depth (slower open)")
+        self.semantic = QCheckBox("Mask-driven depth (recommended)")
+        self.semantic.setChecked(True)                   # the high-quality default
         self.semantic.toggled.connect(self._reopen_engine)
         look.addWidget(self.semantic)
         self.show_depth = QCheckBox("Show depth map")
@@ -141,7 +144,7 @@ class LazyFlightPanel(QWidget):
         bar.addWidget(self.play_btn)
         self.scrub = QSlider(Qt.Horizontal)
         self.scrub.setRange(0, 100)
-        self.scrub.valueChanged.connect(lambda _v: self._debounce.start())
+        self.scrub.valueChanged.connect(self._on_scrub)
         bar.addWidget(self.scrub, 1)
         right.addLayout(bar)
         root.addLayout(right, 1)
@@ -240,18 +243,30 @@ class LazyFlightPanel(QWidget):
         frame = self._engine.render_frame(self._cams[i])
         self.canvas.set_image(frame, keep_view=True)
 
+    def _on_scrub(self, _v: int):
+        # manual drags debounce; during playback frames are rendered directly
+        if not self._play.isActive():
+            self._debounce.start()
+
     def _toggle_play(self, on: bool):
         self.play_btn.setText("❚❚ Pause" if on else "▶ Play")
-        if on and not self._busy:
+        if on and not self._busy and self._engine is not None and self._cams:
             self._play.start()
         else:
             self._play.stop()
+            self.play_btn.setChecked(False)
 
     def _advance_play(self):
-        v = self.scrub.value() + 1
+        if self._engine is None or self._busy or not self._cams:
+            self._play.stop()
+            return
+        v = self.scrub.value() + 2
         if v > 100:
             v = 0
-        self.scrub.setValue(v)                          # triggers debounced preview
+        self.scrub.blockSignals(True)                   # don't route through debounce
+        self.scrub.setValue(v)
+        self.scrub.blockSignals(False)
+        self._render_preview()                          # render this frame now
 
     # ---------------------------------------------------------------- render
     def _render_video(self):

@@ -69,6 +69,10 @@ class Flythrough3D:
         self.emission = float(emission)
 
         self.depth = depth_field(rgb, masks=masks).astype(np.float64)
+        # NB: starless self-derives a TIGHT point-source mask; the semantic
+        # "Stars" mask over-covers the bright nebula, so feeding it here pulls the
+        # blocky grey-opening result into the core (facets). Masks drive DEPTH,
+        # not star removal.
         self.base = starless(rgb)                       # nebula without stars
         yy, xx = np.mgrid[0:self.h, 0:self.w].astype(np.float64)
         self._yy, self._xx = yy, xx                     # output coordinate grid
