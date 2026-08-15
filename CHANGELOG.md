@@ -13,6 +13,12 @@ LazyMoonSun, as native macOS and Windows apps.
   (Esc to close), matching LazyStretch.
 
 ### Docs & branding
+- **Product website** (`web/`, for kstevica.com/laps) — a one-page site with an animated
+  starfield (meteors included), real in-app screenshots shot from the shipping build
+  (`web/tools/shoot.py`), before/after comparison sliders, three LazyFlight demo clips,
+  a masks deep-dive, and an option-by-option reference of every window (232 options,
+  extracted from the source and audit-corrected; `web/tools/build_site.py`). Mobile
+  friendly, no external dependencies.
 - **README rewritten** as a standalone-product doc (LazyAstroPhotoSuite) and a new **USAGE.md**
   tutorial covering every tool. The website (**kstevica.com/laps**) and contact
   (**kstevica@gmail.com**) appear in the README, the tutorial, and the launcher footer.

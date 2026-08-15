@@ -46,3 +46,6 @@ build/pyi-work/
 build/pyi-spec/
 build/_pi*/
 build/_probe*.py
+
+# website: retina PNG originals are dev intermediates (shot-*.jpg are committed)
+web/img/shots/
