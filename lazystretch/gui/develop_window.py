@@ -22,7 +22,9 @@ from PySide6.QtWidgets import (
     QComboBox,
     QFileDialog,
     QFrame,
+    QGraphicsEllipseItem,
     QGraphicsItem,
+    QGraphicsLineItem,
     QGraphicsRectItem,
     QGraphicsSimpleTextItem,
     QGroupBox,
@@ -236,6 +238,14 @@ class DevelopCanvas(PreviewView):
         self._drag_edges: set = set()              # subset of {'l','r','t','b'} for resize
         self._move_anchor = None                   # (px, py) where a move drag began
         self._move_rect0: Optional[dict] = None    # the rect at move-drag start
+        self._stars_mode = False                   # star-spike marker editing
+        self._stars: list = []                     # marked stars (normalised dicts)
+        self._active = -1                          # active star (length slider edits it)
+        self._star_drag = -1                       # index being dragged, or -1
+        self._star_items: list = []                # QGraphics overlay items to clear/redraw
+        self._new_len = 0.06                       # length assigned to newly-added stars
+        self._preview_count = 4                    # schematic spike count/angle for the overlay
+        self._preview_angle = 0.0
         self.setMouseTracking(True)                # hover cursors without a pressed button
 
     def set_rect_mode(self, on: bool):
@@ -368,6 +378,9 @@ class DevelopCanvas(PreviewView):
         return Qt.CrossCursor
 
     def mousePressEvent(self, e):
+        if self._stars_mode and self.current_array() is not None:
+            if self._stars_press(e):
+                e.accept(); return
         if self._rect_mode and e.button() == Qt.LeftButton and self.current_array() is not None:
             pt = self.mapToScene(e.position().toPoint())
             mode, edges = self._hit_test(pt.x(), pt.y())
@@ -383,6 +396,10 @@ class DevelopCanvas(PreviewView):
         super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
+        if self._stars_mode and self.current_array() is not None:
+            if self._stars_move(e):
+                e.accept(); return
+            super().mouseMoveEvent(e); return
         if self._rect_mode and self.current_array() is not None:
             pt = self.mapToScene(e.position().toPoint())
             if self._drag_mode and (e.buttons() & Qt.LeftButton):
@@ -401,6 +418,9 @@ class DevelopCanvas(PreviewView):
         super().mouseMoveEvent(e)
 
     def mouseReleaseEvent(self, e):
+        if self._stars_mode:
+            if self._stars_release(e):
+                e.accept(); return
         if self._rect_mode and self._drag_mode:
             pt = self.mapToScene(e.position().toPoint())
             h, w = self.current_array().shape[:2]
@@ -417,6 +437,146 @@ class DevelopCanvas(PreviewView):
             return
         super().mouseReleaseEvent(e)
 
+    # --- star-spike markers: auto-marked stars the user can select/add/move/remove ----
+    starsChanged = Signal(list)                 # the star list changed (add/move/remove/len)
+    starActivated = Signal(int)                 # a star became active (-1 = none)
+
+    def set_stars_mode(self, on: bool):
+        self._stars_mode = bool(on)
+        if on:
+            self.setDragMode(PreviewView.NoDrag)
+        else:
+            self.setDragMode(PreviewView.ScrollHandDrag)
+            self._clear_star_items()
+            self._stars = []
+            self._active = -1
+            self._star_drag = -1
+            self.unsetCursor()
+
+    def _clear_star_items(self):
+        for it in getattr(self, "_star_items", []):
+            if it.scene() is not None:
+                self.scene().removeItem(it)
+        self._star_items = []
+
+    def set_stars(self, stars: list, active: int = -1):
+        self._stars = [dict(s) for s in stars]
+        self._active = active if -1 <= active < len(self._stars) else -1
+        self._redraw_stars()
+
+    def set_new_len(self, v: float):
+        self._new_len = float(v)
+
+    def set_preview(self, count: int, angle_deg: float):
+        self._preview_count = int(count)
+        self._preview_angle = float(angle_deg)
+        self._redraw_stars()
+
+    def set_active_len(self, v: float):
+        if 0 <= self._active < len(self._stars):
+            self._stars[self._active]["len"] = float(v)
+            self._redraw_stars()
+            self.starsChanged.emit([dict(s) for s in self._stars])
+        self._new_len = float(v)
+
+    def _redraw_stars(self):
+        self._clear_star_items()
+        arr = self.current_array()
+        if arr is None or not self._stars_mode:
+            return
+        h, w = arr.shape[:2]
+        diag = float(np.hypot(h, w))
+        r = 7.0 / max(self.transform().m11(), 1e-6)        # marker radius, zoom-independent
+        n = max(int(getattr(self, "_preview_count", 4)), 3)
+        a0 = np.radians(getattr(self, "_preview_angle", 0.0))
+        for i, s in enumerate(self._stars):
+            cx = s["x"] * (w - 1); cy = s["y"] * (h - 1)
+            active = (i == self._active)
+            col = QColor(255, 210, 90) if active else QColor(120, 200, 255)
+            length = float(s.get("len", getattr(self, "_new_len", 0.06))) * diag
+            for k in range(n):                             # schematic spike overlay (live)
+                ang = a0 + k * 2.0 * np.pi / n
+                line = self.scene().addLine(cx, cy, cx + np.cos(ang) * length,
+                                            cy + np.sin(ang) * length,
+                                            QPen(col, 0))
+                line.setOpacity(0.9 if active else 0.55)
+                line.setZValue(5)
+                self._star_items.append(line)
+            dot = self.scene().addEllipse(cx - r, cy - r, 2 * r, 2 * r, QPen(col, 0))
+            dot.setZValue(6)
+            self._star_items.append(dot)
+
+    def _nearest_star(self, px, py):
+        arr = self.current_array()
+        if arr is None or not self._stars:
+            return -1
+        h, w = arr.shape[:2]
+        tol = 12.0 / max(self.transform().m11(), 1e-6)
+        best, bd = -1, tol * tol
+        for i, s in enumerate(self._stars):
+            dx = s["x"] * (w - 1) - px; dy = s["y"] * (h - 1) - py
+            d = dx * dx + dy * dy
+            if d <= bd:
+                best, bd = i, d
+        return best
+
+    def _add_star(self, px, py, w, h):
+        arr = self.current_array()
+        col = arr[int(np.clip(py, 0, h - 1)), int(np.clip(px, 0, w - 1))]
+        col = [float(col[0]), float(col[1]), float(col[2])] if arr.ndim == 3 else [1.0, 1.0, 1.0]
+        star = {"x": float(np.clip(px / max(w - 1, 1), 0, 1)),
+                "y": float(np.clip(py / max(h - 1, 1), 0, 1)),
+                "len": float(getattr(self, "_new_len", 0.06)),
+                "flux": 0.8, "col": col}
+        self._stars.append(star)
+        self._active = len(self._stars) - 1
+        self._redraw_stars()
+        self.starsChanged.emit([dict(s) for s in self._stars])
+        self.starActivated.emit(self._active)
+
+    def _stars_press(self, e) -> bool:
+        pt = self.mapToScene(e.position().toPoint())
+        h, w = self.current_array().shape[:2]
+        i = self._nearest_star(pt.x(), pt.y())
+        if e.button() == Qt.RightButton:                   # right-click removes a star
+            if i >= 0:
+                del self._stars[i]
+                self._active = -1
+                self._redraw_stars()
+                self.starsChanged.emit([dict(s) for s in self._stars])
+                self.starActivated.emit(-1)
+            return True
+        if e.button() == Qt.LeftButton:
+            if i >= 0:                                     # select + start moving it
+                self._active = i; self._star_drag = i
+                self._redraw_stars()
+                self.starActivated.emit(i)
+            else:                                          # empty → add a star here
+                self._add_star(pt.x(), pt.y(), w, h)
+                self._star_drag = self._active
+            return True
+        return False
+
+    def _stars_move(self, e) -> bool:
+        pt = self.mapToScene(e.position().toPoint())
+        h, w = self.current_array().shape[:2]
+        if self._star_drag >= 0 and (e.buttons() & Qt.LeftButton):
+            self._stars[self._star_drag]["x"] = float(np.clip(pt.x() / max(w - 1, 1), 0, 1))
+            self._stars[self._star_drag]["y"] = float(np.clip(pt.y() / max(h - 1, 1), 0, 1))
+            self._redraw_stars()
+            self.starsChanged.emit([dict(s) for s in self._stars])
+            return True
+        if not (e.buttons() & Qt.LeftButton):              # hover cursor
+            over = self._nearest_star(pt.x(), pt.y()) >= 0
+            self.setCursor(Qt.PointingHandCursor if over else Qt.CrossCursor)
+        return False
+
+    def _stars_release(self, e) -> bool:
+        if self._star_drag >= 0:
+            self._star_drag = -1
+            return True
+        return False
+
 
 # =============================================================================
 # Generic tool parameter panel
@@ -429,6 +589,8 @@ class ToolPanel(QWidget):
     cancelled = Signal()
     deleted = Signal()                     # Delete step pressed (edit mode only)
     rectModeChanged = Signal(bool)
+    starsRedetect = Signal()               # "Auto-detect" pressed (star-spikes tool)
+    starsClear = Signal()                  # "Clear all" pressed (star-spikes tool)
 
     def __init__(self, op: "dev_ops.Op", mask_names: List[str], parent=None,
                  *, edit_index: Optional[int] = None, init: Optional[dict] = None):
@@ -456,6 +618,7 @@ class ToolPanel(QWidget):
                 v.addWidget(w)
 
         self._has_rect = any(s.kind == "rect" for s in op.params)
+        self._has_stars = any(s.kind == "stars" for s in op.params)
         self._gateable = op.category != "Geometry"
         if self._gateable:
             v.addWidget(self._build_gate(mask_names))
@@ -484,7 +647,8 @@ class ToolPanel(QWidget):
             if spec.key not in params:
                 continue
             val = params[spec.key]
-            self._values[spec.key] = spec.coerce(val) if spec.kind not in ("curve", "rect") else val
+            self._values[spec.key] = (spec.coerce(val)
+                                      if spec.kind not in ("curve", "rect", "stars") else val)
             w = self._widgets.get(spec.key)
             if w is None:
                 continue
@@ -578,6 +742,18 @@ class ToolPanel(QWidget):
             lbl = QLabel("Drag a rectangle on the image to set the crop.")
             lbl.setWordWrap(True); lbl.setStyleSheet("color: #d8b45a;")
             return lbl
+        if spec.kind == "stars":
+            box = QWidget(); bl = QVBoxLayout(box); bl.setContentsMargins(0, 0, 0, 0)
+            hint = QLabel("Click a star to select, click empty to add, drag to move, "
+                          "right-click to remove.")
+            hint.setWordWrap(True); hint.setStyleSheet("color: #d8b45a;")
+            bl.addWidget(hint)
+            r = QHBoxLayout()
+            b1 = QPushButton("Auto-detect"); b1.clicked.connect(self.starsRedetect.emit)
+            b2 = QPushButton("Clear all"); b2.clicked.connect(self.starsClear.emit)
+            r.addWidget(b1); r.addWidget(b2)
+            bl.addLayout(r)
+            return box
         return None
 
     def _set(self, key, val):
@@ -589,11 +765,21 @@ class ToolPanel(QWidget):
         self._values["rect"] = rect
         self.changed.emit()
 
+    def set_stars(self, stars: list):
+        """Store the star list without a re-preview (the canvas overlay is the preview)."""
+        self._values["stars"] = [dict(s) for s in stars]
+
+    def control(self, key: str):
+        return self._widgets.get(key)
+
     def params(self):
         return dict(self._values)
 
     def wants_rect(self):
         return self._has_rect
+
+    def wants_stars(self):
+        return self._has_stars
 
 
 # =============================================================================
@@ -1002,7 +1188,80 @@ class LazyDevelopPanel(QWidget):
             self._preview_kind = None
             self.canvas.set_rect_mode(True)
             self.canvas.show_rect(rect_default)
+        elif panel.wants_stars():
+            self._mount_star_editor(panel)
         self._schedule_preview()
+
+    def _mount_star_editor(self, panel: "ToolPanel"):
+        """Show the current image with editable star markers (auto-detected for a new tool)."""
+        from ..develop.spikes import detect_stars
+        base = (self.doc.input_before(panel.edit_index)
+                if panel.edit_index is not None else self.doc.result())
+        self.canvas.set_image(np.asarray(base, dtype=np.float32), keep_view=True)
+        self._preview_kind = None
+        self.canvas.set_stars_mode(True)
+        p = panel.params()
+        length = float(p.get("length", 0.06))
+        self.canvas.set_new_len(length)
+        self.canvas.set_preview(int(p.get("count", 4)), float(p.get("angle", 0.0)))
+        stars = list(p.get("stars") or [])
+        if not stars and panel.edit_index is None:          # new tool → auto-detect
+            stars = detect_stars(base, max_stars=int(p.get("max_stars", 30)))
+            for s in stars:
+                s["len"] = length * (0.6 + 0.8 * float(s.get("flux", 0.5)))
+        self.canvas.set_stars(stars)
+        panel.set_stars(stars)
+        lc = panel.control("length")
+        if lc is not None:
+            lc.valueChanged.connect(self._on_star_length)
+        panel.changed.connect(self._on_star_globals)
+        self.canvas.starsChanged.connect(self._on_stars_changed)
+        self.canvas.starActivated.connect(self._on_star_activated)
+        panel.starsRedetect.connect(self._redetect_stars)
+        panel.starsClear.connect(self._clear_stars)
+        self.status_label.setText(f"Star spikes: {len(stars)} stars — edit, then Apply.")
+
+    def _on_star_length(self, v):
+        if self.canvas._stars_mode:
+            self.canvas.set_active_len(float(v))
+
+    def _on_star_globals(self):
+        if self.tool_panel is not None and self.tool_panel.wants_stars():
+            p = self.tool_panel.params()
+            self.canvas.set_preview(int(p.get("count", 4)), float(p.get("angle", 0.0)))
+
+    def _on_stars_changed(self, stars):
+        if self.tool_panel is not None and self.tool_panel.wants_stars():
+            self.tool_panel.set_stars(stars)
+
+    def _on_star_activated(self, i):
+        if self.tool_panel is None or not self.tool_panel.wants_stars():
+            return
+        stars = self.tool_panel.params().get("stars") or []
+        lc = self.tool_panel.control("length")
+        if lc is not None and 0 <= i < len(stars):
+            lc.blockSignals(True)
+            lc.set_value(float(stars[i].get("len", 0.06)))
+            lc.blockSignals(False)
+
+    def _redetect_stars(self):
+        from ..develop.spikes import detect_stars
+        if self.doc is None or self.tool_panel is None:
+            return
+        base = self.canvas.current_array()
+        p = self.tool_panel.params()
+        length = float(p.get("length", 0.06))
+        stars = detect_stars(base, max_stars=int(p.get("max_stars", 30)))
+        for s in stars:
+            s["len"] = length * (0.6 + 0.8 * float(s.get("flux", 0.5)))
+        self.canvas.set_stars(stars)
+        self.tool_panel.set_stars(stars)
+        self.status_label.setText(f"Star spikes: {len(stars)} stars detected.")
+
+    def _clear_stars(self):
+        self.canvas.set_stars([])
+        if self.tool_panel is not None:
+            self.tool_panel.set_stars([])
 
     def _open_tool(self, op: "dev_ops.Op"):
         """Start a NEW adjustment (inserted at the current history position on Apply)."""
@@ -1028,6 +1287,7 @@ class LazyDevelopPanel(QWidget):
 
     def _cancel_tool(self, refresh=True):
         self.canvas.set_rect_mode(False)
+        self.canvas.set_stars_mode(False)
         self._edit_proxy = None
         for attr in ("tool_panel", "auto_panel"):
             panel = getattr(self, attr)
@@ -1066,6 +1326,13 @@ class LazyDevelopPanel(QWidget):
             # Crop: the canvas keeps showing the input + rubber-band overlay; the crop is
             # only applied on Apply/Update (previewing it would break the rect mapping).
             self.status_label.setText(f"{op.label}: drag a rectangle, then "
+                                      f"{'Update' if editing else 'Apply'}.")
+            return
+        if self.tool_panel.wants_stars():
+            # Star spikes: the canvas shows the image + editable markers with a live
+            # schematic spike overlay; the real spikes are composited on Apply/Update.
+            n = len(params.get("stars") or [])
+            self.status_label.setText(f"{op.label}: {n} stars — edit, then "
                                       f"{'Update' if editing else 'Apply'}.")
             return
         try:
@@ -1140,6 +1407,8 @@ class LazyDevelopPanel(QWidget):
                 w = int(round((r.get("x1", 1) - r.get("x0", 0)) * 100))
                 h = int(round((r.get("y1", 1) - r.get("y0", 0)) * 100))
                 parts.append(f"{w}%×{h}%")
+            elif spec.kind == "stars":
+                parts.append(f"{len(v or [])} stars")
             else:                                        # float / int
                 try:
                     fv = float(v)

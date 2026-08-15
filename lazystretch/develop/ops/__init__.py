@@ -26,7 +26,7 @@ class ParamSpec:
     """One tunable of a tool. ``kind`` tells the GUI which widget to build."""
     key: str
     label: str
-    kind: str = "float"            # float | int | bool | choice | curve | rect
+    kind: str = "float"            # float | int | bool | choice | curve | rect | stars
     lo: float = 0.0
     hi: float = 1.0
     default: object = 0.0
@@ -41,7 +41,7 @@ class ParamSpec:
             return int(round(float(v)))
         if self.kind == "choice":
             return int(v)
-        if self.kind in ("curve", "rect"):
+        if self.kind in ("curve", "rect", "stars"):
             return v
         return float(v)
 

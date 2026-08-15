@@ -7,6 +7,11 @@ the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` un
 ## [Unreleased]
 
 ### Added
+- **Star diffraction spikes (LazyDevelop).** A new "Star spikes" Studio tool auto-detects
+  the brightest stars and marks them; click to select, click empty to add, drag to move,
+  right-click to remove, with a live schematic overlay. Spike count (3–32), rotation,
+  thickness and intensity are global; spike length is per-star (the Length slider sets the
+  selected star). Spikes are tinted by each star's own colour and composited on Apply.
 - **BX / NX / SX tools in LazyDevelop.** A new "XTerminator" tool group adds
   BlurXTerminator, NoiseXTerminator and StarXTerminator (Reduce or Remove-to-starless).
   Each prefers the real RC-Astro product when the `rc-astro` CLI is installed and falls back

@@ -17,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from ...processes.multiscale import _atrous_planes
+from ..spikes import render_spikes
 from . import Op, ParamSpec, register
 
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
@@ -224,6 +225,36 @@ register(Op(
         ParamSpec("lum_protect", "Preserve luminance", "bool", default=True),
     ],
     tooltip="Photoshop-style per-colour-group CMYK correction (OKLab selection).",
+))
+
+# ============================================================================
+# Star diffraction spikes
+# ============================================================================
+def _star_spikes(img, p):
+    return render_spikes(
+        img, list(p.get("stars") or []),
+        count=int(p.get("count", 4)), angle_deg=float(p.get("angle", 0.0)),
+        thickness=float(p.get("thickness", 1.0)), intensity=float(p.get("intensity", 1.0)),
+        colored=bool(p.get("colored", True)), base_len=float(p.get("length", 0.06)),
+    )
+
+
+register(Op(
+    "star_spikes", "Star spikes", "Studio", _star_spikes, heavy=True,
+    params=[
+        ParamSpec("stars", "Stars", "stars", default=[]),
+        ParamSpec("count", "Spikes (3–32)", "int", 3, 32, 4, 0),
+        ParamSpec("length", "Length (default / selected star)", "float", 0.01, 0.35, 0.06, 2),
+        ParamSpec("angle", "Rotation°", "float", 0.0, 90.0, 0.0, 0),
+        ParamSpec("thickness", "Thickness", "float", 0.3, 4.0, 1.0, 1),
+        ParamSpec("intensity", "Intensity", "float", 0.0, 2.0, 1.0, 2),
+        ParamSpec("colored", "Tint by star colour", "bool", default=True),
+        ParamSpec("max_stars", "Auto-detect count", "int", 1, 200, 30, 0),
+    ],
+    tooltip="Diffraction spikes on stars. Auto-detects the brightest stars; click one to "
+            "select, click empty to add, drag to move, right-click to remove. Spike count "
+            "(3–32), rotation, thickness and intensity are global; Length applies to the "
+            "selected star (and sets new stars).",
 ))
 
 register(Op(

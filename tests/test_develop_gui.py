@@ -228,6 +228,60 @@ def test_crop_rect_shows_live_pixel_size(qapp):
     assert c._rect_label is None
 
 
+def _starry(h=80, w=100, centers=((0.3, 0.4), (0.7, 0.6), (0.5, 0.25))):
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    img = np.full((h, w, 3), 0.03, np.float32)
+    for (fx, fy) in centers:
+        img += (0.9 * np.exp(-(((xx - fx * w) / 1.6) ** 2
+                               + ((yy - fy * h) / 1.6) ** 2)))[..., None].astype(np.float32)
+    return np.clip(img, 0, 1)
+
+
+def test_star_spikes_editor_autodetect_add_select_length(qapp):
+    from lazystretch.gui.develop_window import LazyDevelopPanel
+    p = LazyDevelopPanel()
+    p.doc = DevelopDocument(_starry(), path="stars.tif")
+    p._set_enabled_tools(True); p._refresh_canvas(fit=True); p._refresh_history()
+    p.canvas.resetTransform()
+
+    p._open_tool(dev_ops.get("star_spikes"))
+    assert p.tool_panel is not None and p.tool_panel.wants_stars()
+    assert p.canvas._stars_mode
+    stars = p.tool_panel.params()["stars"]
+    assert len(stars) >= 3                               # auto-detected the three blobs
+    assert p.canvas._star_items                          # markers + schematic spikes drawn
+
+    # add a star on empty canvas → panel stays in sync via starsChanged
+    n0 = len(p.canvas._stars)
+    p.canvas._add_star(8, 8, 100, 80)
+    assert len(p.tool_panel.params()["stars"]) == n0 + 1
+    assert p.canvas._active == n0                        # the new star is active
+
+    # the Length slider edits the ACTIVE star (per-star length)
+    p._on_star_length(0.22)
+    assert p.tool_panel.params()["stars"][p.canvas._active]["len"] == pytest.approx(0.22)
+    # activating a star loads its length back onto the slider
+    p._on_star_activated(0)
+    assert abs(p.tool_panel.control("length").value()
+               - p.tool_panel.params()["stars"][0]["len"]) < 0.02
+
+    # Clear / Auto-detect buttons round-trip through the panel value
+    p._clear_stars()
+    assert p.tool_panel.params()["stars"] == []
+    p._redetect_stars()
+    assert len(p.tool_panel.params()["stars"]) >= 3
+
+    # right-click removal path (via the press helper's classification)
+    before = len(p.canvas._stars)
+    idx = p.canvas._nearest_star(p.canvas._stars[0]["x"] * 99, p.canvas._stars[0]["y"] * 79)
+    assert idx == 0
+    del p.canvas._stars[0]; p.canvas.starsChanged.emit(p.canvas._stars)
+    assert len(p.tool_panel.params()["stars"]) == before - 1
+
+    p._cancel_tool()
+    assert p.canvas._stars == [] and not p.canvas._stars_mode
+
+
 def test_crop_rect_drag_to_refine(qapp):
     from lazystretch.gui.develop_window import DevelopCanvas
     c = DevelopCanvas()

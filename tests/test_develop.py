@@ -28,6 +28,21 @@ def test_registry_is_populated_and_well_formed():
         assert set(d) == {p.key for p in op.params}
 
 
+def test_star_spikes_op_applies_through_document():
+    img = _demo_rgb().astype(np.float64)
+    doc = DevelopDocument(img)
+    stars = [{"x": 0.5, "y": 0.5, "len": 0.2, "flux": 1.0, "col": [1, 1, 1]}]
+    doc.apply_op("star_spikes", {"stars": stars, "count": 6, "intensity": 1.0})
+    assert doc.ops[-1].name == "star_spikes"
+    out = np.asarray(doc.result())
+    assert out.shape == img.shape and np.isfinite(out).all()
+    assert not np.array_equal(out, np.clip(img, 0, 1))       # spikes composited
+    # no stars → the op is a no-op
+    doc2 = DevelopDocument(img)
+    doc2.apply_op("star_spikes", {"stars": [], "count": 4})
+    assert np.allclose(np.asarray(doc2.result()), np.clip(img, 0, 1))
+
+
 def test_xterminator_category_and_ops_registered():
     xt = ops.by_category().get("XTerminator", [])
     assert {o.name for o in xt} == {"blurx", "noisex", "starx"}
