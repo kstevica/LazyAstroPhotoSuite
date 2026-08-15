@@ -214,7 +214,7 @@ class LazyFlightPanel(QWidget):
         self.path_combo.currentIndexChanged.connect(self._rebuild_cams)
         self._path_row = self._row("Path", self.path_combo)
         cam.addWidget(self._path_row)
-        self.dur = FloatSlider("Duration (s)", 3.0, 30.0, 8.0, decimals=0)
+        self.dur = FloatSlider("Duration (s)", 3.0, 120.0, 8.0, decimals=0)
         self.dur.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.dur)
         self.zoom = FloatSlider("Zoom", 1.0, 3.0, 1.4, decimals=2)
@@ -286,7 +286,7 @@ class LazyFlightPanel(QWidget):
         self.fps_combo.addItems(["24", "30"])
         out.addWidget(self._row("FPS", self.fps_combo))
         self.width_combo = QComboBox()
-        self.width_combo.addItems(["960", "1280", "1600", "1920"])
+        self.width_combo.addItems(["960", "1280", "1600", "1920", "2560", "3840"])
         self.width_combo.setCurrentText("1280")
         out.addWidget(self._row("Long edge", self.width_combo))
         self.orient_combo = QComboBox()                  # v2 output framing
