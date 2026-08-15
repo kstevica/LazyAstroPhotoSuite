@@ -27,14 +27,11 @@ from .depth import _as_rgb
 @dataclass
 class V2Cam:
     """One frame's pose. ``zoom``/``roll``/``pan`` transform the background;
-    ``focus`` shifts the star expansion centre (so stars follow the pan turn);
-    ``c`` advances the star inflow."""
+    ``c`` advances the star inflow (the starfield stays centred on the viewport)."""
     zoom: float = 1.0
     roll: float = 0.0
     pan_x: float = 0.0
     pan_y: float = 0.0
-    focus_x: float = 0.0
-    focus_y: float = 0.0
     c: float = 0.0
     twinkle: float = 0.0
 
@@ -52,9 +49,8 @@ def _smoother(u):
 
 def _pan_path(points, n, ellipse_r=0.03, zoom_end=1.4):
     """Smooth closed path through ``points`` (frame-normalised [-1,1], each with a
-    zoom) sampled at ``n`` frames. Returns (pan[n,2], focus[n,2], zoom[n]). The
-    first point's zoom is the starting zoom; the star focus leads the pan
-    velocity so the stars change direction on a turn."""
+    zoom) sampled at ``n`` frames. Returns (pan[n,2], zoom[n]). The first point's
+    zoom is the starting zoom."""
     src = points if points else [(0.0, 0.0, zoom_end)]
     xy = np.array([(p[0], p[1]) for p in src], dtype=float)
     zs = np.array([p[2] if len(p) > 2 else zoom_end for p in src], dtype=float)
@@ -78,10 +74,7 @@ def _pan_path(points, n, ellipse_r=0.03, zoom_end=1.4):
         er = ellipse_r
     wob = np.stack([er * np.cos(2 * np.pi * u), er * 0.6 * np.sin(2 * np.pi * u)], 1)
     pan = base + wob
-    vel = np.gradient(pan, axis=0) * n
-    focus = np.clip(vel * 0.28, -0.6, 0.6)
-    return (pan.astype(np.float32), focus.astype(np.float32),
-            np.clip(zoom, 0.2, 8.0).astype(np.float32))
+    return pan.astype(np.float32), np.clip(zoom, 0.2, 8.0).astype(np.float32)
 
 
 class V2Fly:
@@ -186,8 +179,10 @@ class V2Fly:
         frac = np.mod(self.star_z - cam.c, 1.0)
         dist = self.near + frac * self.z_span
         m = self.focal / dist
-        cx = (w - 1) / 2.0 + cam.focus_x * w / 2.0        # focus tracks the pan
-        cy = (h - 1) / 2.0 + cam.focus_y * h / 2.0
+        # the starfield is centred on the viewport (stars fly straight at the
+        # camera); it does NOT follow the background pan
+        cx = (w - 1) / 2.0
+        cy = (h - 1) / 2.0
         th = np.deg2rad(cam.roll)
         cos, sin = np.cos(th), np.sin(th)
         uu = self.star_u * m
@@ -245,8 +240,7 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
     ``pan_points`` that CLOSES back to point 1, a gentle periodic roll, and a
     wrapping star inflow — so the whole clip loops seamlessly. ``base_pan`` is a
     static offset that frames the background in the output."""
-    path, focus, zoom = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02),
-                                  zoom_end=zoom_end)
+    path, zoom = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02), zoom_end=zoom_end)
     bx, by = base_pan
     cams = []
     for i in range(n):
@@ -256,7 +250,6 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
             zoom=float(zoom[i]),
             roll=float(roll),
             pan_x=float(path[i, 0]) + bx, pan_y=float(path[i, 1]) + by,
-            focus_x=float(focus[i, 0]), focus_y=float(focus[i, 1]),
             c=star_speed * u,                            # wraps in the renderer → loops
             twinkle=u * 2 * np.pi * 6.0,
         ))

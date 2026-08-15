@@ -189,12 +189,11 @@ def test_v2fly_output_frame_and_pan_points():
     fr = eng.render_frame(V2Cam(zoom=1.0))
     assert fr.shape == (160, 90, 3)                       # portrait, cover-fit
     assert np.isfinite(fr).all()
-    # multi-point pan: smooth path (no abrupt jumps) + star focus follows velocity
+    # multi-point pan: smooth path (no abrupt jumps between frames)
     cams = fly_v2(48, pan_points=[(-0.5, -0.3), (0.4, 0.1), (0.0, 0.45)])
     steps = np.array([[c.pan_x, c.pan_y] for c in cams])
     hops = np.linalg.norm(np.diff(steps, axis=0), axis=1)
     assert float(hops.max()) < 0.25                      # smooth, no abrupt corners
-    assert any(abs(c.focus_x) > 1e-3 or abs(c.focus_y) > 1e-3 for c in cams)
 
 
 def test_v2fly_streaks_and_size_change_output():
