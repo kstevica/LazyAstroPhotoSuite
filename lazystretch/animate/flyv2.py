@@ -51,34 +51,43 @@ def _smoother(u):
     return u * u * u * (u * (u * 6 - 15) + 10)
 
 
-def _pan_path(points, n, ellipse_r=0.03, zoom_end=1.4):
-    """Smooth closed path through ``points`` (frame-normalised [-1,1], each with a
-    zoom) sampled at ``n`` frames. Returns (pan[n,2], zoom[n]). The first point's
-    zoom is the starting zoom."""
-    src = points if points else [(0.0, 0.0, zoom_end)]
+def _pan_path(points, n, ellipse_r=0.03, defaults=(1.4, 0.0, 0.0, 0.0)):
+    """Smooth closed path through ``points`` — each ``[x, y, zoom, roll, rot_x,
+    rot_y]`` (frame-normalised [-1,1]; channels default to ``defaults``). Returns
+    (pan[n,2], chan[n,4]) with chan = zoom, roll, rot_x, rot_y interpolated the
+    same way. Point 1's channels are the starting values; with ≥2 points every
+    channel loops back to point 1 (closed Catmull → seamless)."""
+    dz, dr, dx, dy = defaults
+    src = points if points else [[0.0, 0.0, dz, dr, dx, dy]]
     xy = np.array([(p[0], p[1]) for p in src], dtype=float)
-    zs = np.array([p[2] if len(p) > 2 else zoom_end for p in src], dtype=float)
+
+    def ch(p, idx, d):
+        return p[idx] if len(p) > idx else d
+    C = np.array([[ch(p, 2, dz), ch(p, 3, dr), ch(p, 4, dx), ch(p, 5, dy)]
+                  for p in src], dtype=float)             # (k, 4) zoom/roll/rx/ry
     k = len(xy)
     u = np.linspace(0.0, 1.0, n, endpoint=False)
-    if k == 1:                                           # zoom in toward the point
+    if k == 1:                                            # one-shot: zoom in, hold tilt
         base = np.repeat(xy, n, axis=0)
-        zoom = 1.0 + (zs[0] - 1.0) * _smoother(u)
+        chan = np.repeat(C, n, axis=0)
+        chan[:, 0] = 1.0 + (C[0, 0] - 1.0) * _smoother(u)   # zoom eases in from 1
         er = max(ellipse_r, 0.06)
-    else:                                                # keyframe path + zoom
+    else:                                                 # keyframe every channel
         base = np.zeros((n, 2))
-        zoom = np.zeros(n)
+        chan = np.zeros((n, 4))
         for j in range(n):
             s = (j / n) * k                              # closed loop over k segments
             i = int(s) % k
             tt = s - int(s)
             base[j] = _catmull(xy[(i - 1) % k], xy[i], xy[(i + 1) % k],
                                xy[(i + 2) % k], tt)
-            zoom[j] = _catmull(zs[(i - 1) % k], zs[i], zs[(i + 1) % k],
-                               zs[(i + 2) % k], tt)
+            chan[j] = _catmull(C[(i - 1) % k], C[i], C[(i + 1) % k],
+                               C[(i + 2) % k], tt)
         er = ellipse_r
     wob = np.stack([er * np.cos(2 * np.pi * u), er * 0.6 * np.sin(2 * np.pi * u)], 1)
     pan = base + wob
-    return pan.astype(np.float32), np.clip(zoom, 0.2, 8.0).astype(np.float32)
+    chan[:, 0] = np.clip(chan[:, 0], 0.2, 8.0)           # zoom bounds
+    return pan.astype(np.float32), chan.astype(np.float32)
 
 
 class V2Fly:
@@ -274,16 +283,16 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
     ``pan_points`` that CLOSES back to point 1, a gentle periodic roll, and a
     wrapping star inflow — so the whole clip loops seamlessly. ``base_pan`` is a
     static offset that frames the background in the output."""
-    path, zoom = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02), zoom_end=zoom_end)
+    path, chan = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02),
+                           defaults=(zoom_end, rotate_deg, rot_x, rot_y))
     bx, by = base_pan
     cams = []
     for i in range(n):
-        u = i / n                                        # periodic domain [0,1)
-        roll = rotate_deg * (1.0 - np.cos(2 * np.pi * u)) / 2.0   # 0 → peak → 0, seamless
+        u = i / n
         cams.append(V2Cam(
-            zoom=float(zoom[i]),
-            roll=float(roll),
-            rot_x=float(rot_x), rot_y=float(rot_y),      # static 3D tilt
+            zoom=float(chan[i, 0]),
+            roll=float(chan[i, 1]),                      # all rotations are keyframed
+            rot_x=float(chan[i, 2]), rot_y=float(chan[i, 3]),
             pan_x=float(path[i, 0]) + bx, pan_y=float(path[i, 1]) + by,
             c=star_speed * u,                            # wraps in the renderer → loops
             twinkle=u * 2 * np.pi * 6.0,

@@ -218,16 +218,16 @@ class LazyFlightPanel(QWidget):
         self.dur.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.dur)
         self.zoom = FloatSlider("Zoom", 1.0, 3.0, 1.4, decimals=2)
-        self.zoom.valueChanged.connect(self._on_zoom)
+        self.zoom.valueChanged.connect(lambda v: self._on_point_channel(2, v))
         cam.addWidget(self.zoom)
         self.rotate = FloatSlider("Rotate Z (°)", -12.0, 12.0, 0.0, decimals=0)
-        self.rotate.valueChanged.connect(self._rebuild_cams)
+        self.rotate.valueChanged.connect(lambda v: self._on_point_channel(3, v))
         cam.addWidget(self.rotate)
         self.tilt_x = FloatSlider("Tilt X (°)", -4.0, 4.0, 0.0, decimals=1)
-        self.tilt_x.valueChanged.connect(self._rebuild_cams)
+        self.tilt_x.valueChanged.connect(lambda v: self._on_point_channel(4, v))
         cam.addWidget(self.tilt_x)
         self.tilt_y = FloatSlider("Tilt Y (°)", -4.0, 4.0, 0.0, decimals=1)
-        self.tilt_y.valueChanged.connect(self._rebuild_cams)
+        self.tilt_y.valueChanged.connect(lambda v: self._on_point_channel(5, v))
         cam.addWidget(self.tilt_y)
         self.pan = FloatSlider("Pan", 0.0, 0.12, 0.035, decimals=3)
         self.pan.valueChanged.connect(self._rebuild_cams)
@@ -429,16 +429,18 @@ class LazyFlightPanel(QWidget):
             self._engine.star_max = max(lo, hi)
         self._render_preview()
 
-    def _on_zoom(self, val: float):
-        # in v2, the Zoom slider edits the selected pan point's zoom (point 1 =
-        # starting zoom); otherwise it's the plain zoom target
+    def _on_point_channel(self, idx: int, val: float):
+        # in v2 the Zoom/Rotate/Tilt sliders edit the selected pan point's channel
+        # (point 1 = starting value); with no point/selection they are the defaults
         if self._mode() == "v2" and 0 <= self._sel_point < len(self._pan_points):
-            self._pan_points[self._sel_point][2] = float(val)
+            self._pan_points[self._sel_point][idx] = float(val)
             if self.canvas.pick_mode:
                 self._draw_points()
         self._rebuild_cams()
 
     # ------------------------------------------------------------ pan points
+    _POINT_SLIDERS = ((2, "zoom"), (3, "rotate"), (4, "tilt_x"), (5, "tilt_y"))
+
     def _draw_points(self):
         self.canvas.set_points([(p[0], p[1]) for p in self._pan_points],
                                self._sel_point)
@@ -446,12 +448,13 @@ class LazyFlightPanel(QWidget):
     def _select_point(self, i: int):
         self._sel_point = i
         if 0 <= i < len(self._pan_points):
-            self.zoom.blockSignals(True)                 # reflect this point's zoom
-            self.zoom.set_value(self._pan_points[i][2])
-            self.zoom.blockSignals(False)
+            p = self._pan_points[i]
+            for idx, name in self._POINT_SLIDERS:        # reflect this point's channels
+                sl = getattr(self, name)
+                sl.blockSignals(True); sl.set_value(p[idx]); sl.blockSignals(False)
         self.pts_label.setText(f"{len(self._pan_points)} pts"
-                               + (f" · #{i + 1} z{self._pan_points[i][2]:.2f}"
-                                  if 0 <= i < len(self._pan_points) else ""))
+                               + (f" · #{i + 1}" if 0 <= i < len(self._pan_points)
+                                  else ""))
 
     def _toggle_pick(self, on: bool):
         self.canvas.pick_mode = bool(on) and self._mode() == "v2"
@@ -474,7 +477,9 @@ class LazyFlightPanel(QWidget):
     def _on_point_added(self, nx: float, ny: float):
         if len(self._pan_points) >= 5:
             return
-        self._pan_points.append([nx, ny, float(self.zoom.value())])
+        self._pan_points.append([nx, ny, float(self.zoom.value()),
+                                 float(self.rotate.value()),
+                                 float(self.tilt_x.value()), float(self.tilt_y.value())])
         self._select_point(len(self._pan_points) - 1)
         self._draw_points()
 

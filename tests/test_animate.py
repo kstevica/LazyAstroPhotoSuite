@@ -147,12 +147,28 @@ def test_v2fly_bg_unchanged_and_moves():
     assert float(np.mean(np.abs(a - b))) > 1e-3          # zoom/rotate/stars change it
     cams = fly_v2(24, zoom_end=1.5, rotate_deg=10.0, pan=0.04)
     assert len(cams) == 24
-    assert cams[0].zoom == pytest.approx(1.0, abs=1e-6) and cams[0].roll == 0.0
+    assert cams[0].zoom == pytest.approx(1.0, abs=1e-6)  # zoom eases in from 1
     assert cams[-1].zoom > 1.0
-    # roll is periodic (0 → peak → 0) so the clip loops seamlessly
-    assert max(c.roll for c in cams) == pytest.approx(10.0, abs=0.1)
-    assert cams[-1].roll < 1.0
+    # with no pan points, roll is a constant orientation from rotate_deg
+    assert all(c.roll == pytest.approx(10.0) for c in cams)
     assert cams[-1].c > 0.0                              # stars flew in
+
+
+def test_v2fly_rotations_keyframed_and_loop():
+    from lazystretch.animate.flyv2 import fly_v2
+
+    # each point carries its own roll / tilt-x / tilt-y; the camera interpolates
+    # them (like zoom) and loops back to point 1
+    pts = [[-0.4, -0.2, 1.1, 0.0, 0.0, 0.0],
+           [0.3, 0.1, 1.6, 10.0, 3.0, -2.0],
+           [0.0, 0.4, 2.0, -6.0, -3.0, 1.0]]
+    cams = fly_v2(60, pan_points=pts)
+    rolls = [c.roll for c in cams]
+    assert cams[0].roll == pytest.approx(0.0, abs=0.3)   # start = point 1 roll
+    assert max(rolls) > 5.0 and min(rolls) < -3.0        # sweeps the keyframes
+    assert cams[-1].roll < 2.0                           # loops back toward point 1
+    assert any(abs(c.rot_x) > 1.0 for c in cams)
+    assert any(abs(c.rot_y) > 1.0 for c in cams)
 
 
 def test_v2fly_3d_tilt_perspective():

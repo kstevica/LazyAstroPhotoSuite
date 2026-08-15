@@ -141,32 +141,36 @@ def test_shell_opens_flight_panel(qapp):
     panel._reopen_engine()
     assert isinstance(panel._engine, V2Fly) and len(panel._cams) > 1
     panel.scrub.setValue(50)
-    panel.rotate.set_value(12.0); panel.pan.set_value(0.05); panel._rebuild_cams()
-    assert max(c.roll for c in panel._cams) == pytest.approx(12.0, abs=0.2)  # peaks
-    assert panel._cams[-1].roll < 1.0                    # returns → seamless loop
-    # 3D tilt (X/Y perspective) is a static per-clip orientation
-    panel.tilt_x.set_value(3.0); panel.tilt_y.set_value(-2.0); panel._rebuild_cams()
+    # with no pan points, Rotate/Tilt are a constant orientation from the sliders
+    panel.rotate.set_value(12.0); panel.tilt_x.set_value(3.0); panel.tilt_y.set_value(-2.0)
+    panel.pan.set_value(0.05); panel._rebuild_cams()
+    assert all(c.roll == pytest.approx(12.0) for c in panel._cams)
     assert panel._cams[0].rot_x == pytest.approx(3.0, abs=0.1)
     assert panel._cams[0].rot_y == pytest.approx(-2.0, abs=0.1)
     panel._render_preview()                              # must not raise
     # portrait output frame is taller than wide
     panel.orient_combo.setCurrentText("Portrait"); panel._reopen_engine()
     assert panel._engine.out_h > panel._engine.out_w
-    # live star-size + pan points (keyframes: x, y, per-point zoom)
     panel.star_min.set_value(1.5); panel.star_max.set_value(6.0); panel._on_star_size()
     assert panel._engine.star_max == pytest.approx(6.0, abs=0.02)   # slider quantises
+    # pan points are keyframes: x, y, zoom, roll, rot_x, rot_y (all interpolated)
     panel.zoom.set_value(1.1); panel._on_point_added(-0.4, -0.2)
     panel.zoom.set_value(2.0); panel._on_point_added(0.3, 0.4)
-    assert len(panel._pan_points) == 2 and len(panel._pan_points[0]) == 3
+    assert len(panel._pan_points) == 2 and len(panel._pan_points[0]) == 6
     assert panel._pan_points[0][2] == pytest.approx(1.1, abs=0.02)  # point 1 zoom
-    # selecting point 1 reflects its zoom onto the slider (= starting zoom)
+    # selecting point 1 reflects its channels onto the sliders
     panel._on_point_selected(0)
     assert panel.zoom.value() == pytest.approx(1.1, abs=0.02)
-    # dragging a point moves it
+    # Rotate/Tilt sliders now keyframe the SELECTED point (like zoom)
+    panel._on_point_channel(3, 9.0)                      # roll of point 1
+    panel._on_point_channel(4, 2.0)                      # tilt X of point 1
+    assert panel._pan_points[0][3] == pytest.approx(9.0)
+    assert panel._pan_points[0][4] == pytest.approx(2.0)
     panel._on_point_moved(1, -0.1, 0.2)
     assert panel._pan_points[1][0] == pytest.approx(-0.1, abs=1e-6)
     panel._rebuild_cams()
     assert panel._cams[0].zoom == pytest.approx(1.1, abs=0.05)      # start = point 1
+    assert panel._cams[0].roll == pytest.approx(9.0, abs=0.2)       # start roll = point 1
     panel._toggle_pick(True); assert panel.canvas.pick_mode
     panel._toggle_pick(False)
 
