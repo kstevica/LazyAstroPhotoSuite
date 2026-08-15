@@ -154,6 +154,48 @@ def test_v2fly_bg_unchanged_and_moves():
     assert cams[-1].c > 0.0                              # stars flew in
 
 
+def test_v2fly_star_flow_follows_zoom_direction():
+    from lazystretch.animate.flyv2 import fly_v2
+
+    # zoom IN → stars stream toward the camera (c advances, flow +1)
+    cin = fly_v2(40, zoom_end=1.8)
+    assert cin[0].c == pytest.approx(0.0, abs=1e-6)
+    assert cin[-1].c > 0.2                                # flew in
+    assert np.median([c.flow for c in cin]) > 0.5
+
+    # zoom OUT → stars recede the OTHER way (c retreats, flow -1)
+    cout = fly_v2(40, zoom_end=0.5)
+    assert cout[-1].c < -0.2                              # receded
+    assert np.median([c.flow for c in cout]) < -0.5
+
+    # a two-point clip that dollies in then back out reverses the flow
+    pts = [[-0.3, -0.1, 1.0, 0.0, 0.0, 0.0],
+           [0.3, 0.1, 2.2, 0.0, 0.0, 0.0]]               # loops back to 1.0 → in, then out
+    mid = fly_v2(60, pan_points=pts)
+    flows = np.array([c.flow for c in mid])
+    cpos = np.array([c.c for c in mid])
+    assert flows.max() > 0.3 and flows.min() < -0.3      # both directions occur
+    assert float(np.abs(np.diff(flows)).max()) < 1.2     # no hard +1→-1 snap
+    # what must be smooth is the star POSITION c: it eases through the turn-around
+    # (velocity passes through zero over several frames), so per-frame
+    # acceleration stays well under a hard one-frame reversal (~2*pace = 0.066)
+    assert float(np.abs(np.diff(cpos, 2)).max()) < 0.04
+
+
+def test_v2fly_receding_stars_render_and_streaks_flip():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam
+
+    rgb, _ = _scene()
+    eng = V2Fly(rgb, star_count=250, streaks=True, streak_len=90.0)
+    # negative c (receding) must render cleanly (mod-wrap handles the sign)
+    a = eng._render_stars(V2Cam(c=-0.4, flow=-1.0))
+    assert np.isfinite(a).all() and float(a.max()) > 0.0
+    # streak direction is tied to flow: inflow vs receding trails differ
+    fin = eng._render_stars(V2Cam(c=0.4, flow=1.0))
+    frec = eng._render_stars(V2Cam(c=0.4, flow=-1.0))     # same positions, opposite trail
+    assert float(np.mean(np.abs(fin - frec))) > 1e-4
+
+
 def test_v2fly_rotations_keyframed_and_loop():
     from lazystretch.animate.flyv2 import fly_v2
 

@@ -3,8 +3,9 @@
 The original image is left completely unchanged and used as a moving background:
 each frame it is *zoomed*, *rotated* and *panned* about the centre, so it reads as
 the view from a slowly turning "spaceship" drifting toward the object. On top, a
-synthetic star field flies *toward* the camera — stars rush outward from the
-travel direction and stream past. Everything is a knob:
+synthetic star field flies with the dolly: when the frame zooms *in* the stars
+rush *toward* the camera (outward, streaming past); when it zooms *out* they
+*recede* — the opposite way. Everything is a knob:
 
 * **star_min / star_max** — the smallest and largest rendered star size.
 * **streaks** — radial motion trails on the fast incoming stars.
@@ -38,6 +39,7 @@ class V2Cam:
     rot_y: float = 0.0
     c: float = 0.0
     twinkle: float = 0.0
+    flow: float = 1.0            # instantaneous star-flow sign: +1 in, -1 receding
 
 
 def _catmull(p0, p1, p2, p3, t):
@@ -186,7 +188,7 @@ class V2Fly:
     def _sigmas(self):
         return np.linspace(self.star_min, self.star_max, 4)
 
-    def _deposit(self, buf, xx, yy, flux, col, cx, cy):
+    def _deposit(self, buf, xx, yy, flux, col, cx, cy, flow=1.0):
         h, w = self.out_h, self.out_w
         if not self.streaks:
             xi = xx.astype(np.intp); yi = yy.astype(np.intp)
@@ -196,14 +198,17 @@ class V2Fly:
         rx, ry = xx - cx, yy - cy                         # radial from travel focus
         rr = np.hypot(rx, ry) + 1e-6
         dx, dy = rx / rr, ry / rr
+        # inflow: stars stream radially outward, so the trail lags toward centre;
+        # receding (flow < 0): they move inward, so the trail lags outward instead
+        s = -1.0 if flow < 0 else 1.0
         length = np.clip(self.streak_len * (flux ** 0.4 - 0.15), 0.0, self.streak_len)
         steps = 10
         tapers = 0.35 + 0.65 * np.linspace(0.0, 1.0, steps)
         tnorm = float(tapers.sum())
         for k in range(steps):
             f = k / (steps - 1)
-            px = xx - dx * length * (1.0 - f)
-            py = yy - dy * length * (1.0 - f)
+            px = xx - s * dx * length * (1.0 - f)
+            py = yy - s * dy * length * (1.0 - f)
             m = (px >= 0) & (px < w) & (py >= 0) & (py < h)
             if not np.any(m):
                 continue
@@ -251,7 +256,8 @@ class V2Fly:
             if not np.any(sel):
                 continue
             layer = np.zeros((h, w, 3), np.float32)
-            self._deposit(layer, xx[sel], yy[sel], flux[sel], col[sel], cx, cy)
+            self._deposit(layer, xx[sel], yy[sel], flux[sel], col[sel], cx, cy,
+                          cam.flow)
             for ch in range(3):
                 layer[..., ch] = gaussian_filter(layer[..., ch], sigma)
             buf += layer * (0.6 + 0.9 * sigma)            # keep big (blurred) stars bright
@@ -287,6 +293,21 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
     path, chan = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02),
                            defaults=(zoom_end, rotate_deg, rot_x, rot_y))
     bx, by = base_pan
+
+    # The star inflow follows the dolly (zoom): zooming IN streams the stars
+    # toward the camera, zooming OUT makes them recede — the opposite way. We
+    # read the per-frame zoom velocity and integrate a signed pace, smoothing
+    # the sign with tanh so a dolly turn-around eases through zero (no snap).
+    zoomch = chan[:, 0].astype(np.float64)
+    dz = np.zeros(n)
+    if n > 1:
+        dz[1:] = np.diff(zoomch)
+        dz[0] = dz[1]
+    scale = 0.25 * float(np.mean(np.abs(dz))) + 1e-6
+    direction = np.tanh(dz / scale)                      # smooth ±1
+    cc = np.cumsum(direction * (star_speed / max(n, 1)))
+    cc -= cc[0]                                          # inflow starts at c = 0
+
     cams = []
     for i in range(n):
         u = i / n
@@ -295,7 +316,8 @@ def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
             roll=float(chan[i, 1]),                      # all rotations are keyframed
             rot_x=float(chan[i, 2]), rot_y=float(chan[i, 3]),
             pan_x=float(path[i, 0]) + bx, pan_y=float(path[i, 1]) + by,
-            c=star_speed * u,                            # wraps in the renderer → loops
+            c=float(cc[i]),                              # wraps in the renderer → loops
+            flow=float(direction[i]),                    # +1 inflow, -1 receding
             twinkle=u * 2 * np.pi * 6.0,
         ))
     return cams
