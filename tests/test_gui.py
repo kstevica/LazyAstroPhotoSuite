@@ -117,6 +117,7 @@ def test_shell_opens_flight_panel(qapp):
     from lazystretch.animate.render import Cam
     from lazystretch.animate.render import Flythrough3D
     from lazystretch.animate.volume3d import SpaceFly
+    from lazystretch.animate.flyv2 import V2Fly
 
     s = AppShell()
     s.open_tool("fly")
@@ -145,8 +146,16 @@ def test_shell_opens_flight_panel(qapp):
     panel.style.set_value(0.6); panel._reopen_engine()
     assert isinstance(panel._engine, SpaceFly)
 
-    # switching to volumetric (index 2) rebuilds a Flythrough3D engine
-    panel.mode_combo.setCurrentIndex(2)
+    # v2 (index 1): original image as background + flying stars, no masks needed
+    panel.mode_combo.setCurrentIndex(1)
+    assert panel._mode() == "v2"
+    assert isinstance(panel._engine, V2Fly)
+    panel.rotate.set_value(12.0); panel.pan.set_value(0.05); panel._rebuild_cams()
+    assert panel._cams[-1].roll == pytest.approx(12.0)
+    panel._render_preview()                              # must not raise
+
+    # switching to volumetric (index 3) rebuilds a Flythrough3D engine
+    panel.mode_combo.setCurrentIndex(3)
     assert panel._mode() == "volumetric"
     assert isinstance(panel._engine, Flythrough3D)
     # only dolly paths are offered (flyby/orbit shear the gas)

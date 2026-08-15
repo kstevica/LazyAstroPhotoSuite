@@ -23,6 +23,7 @@ from ..animate.encode import ffmpeg_available
 from ..animate.parallel import auto_workers
 from ..animate.render import Flythrough3D
 from ..animate.volume3d import SpaceFly, fly_volume, render_space
+from ..animate.flyv2 import V2Fly, fly_v2, render_v2
 from ..io.image_io import load_image
 from .preview import PreviewView
 from .widgets import FloatSlider
@@ -93,15 +94,22 @@ class LazyFlightPanel(QWidget):
         self.dur = FloatSlider("Duration (s)", 3.0, 30.0, 8.0, decimals=0)
         self.dur.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.dur)
-        self.zoom = FloatSlider("Zoom / 3D", 1.05, 1.8, 1.35, decimals=2)
+        self.zoom = FloatSlider("Zoom", 1.05, 2.0, 1.4, decimals=2)
         self.zoom.valueChanged.connect(self._rebuild_cams)
         cam.addWidget(self.zoom)
+        self.rotate = FloatSlider("Rotate (°)", 0.0, 30.0, 8.0, decimals=0)
+        self.rotate.valueChanged.connect(self._rebuild_cams)
+        cam.addWidget(self.rotate)
+        self.pan = FloatSlider("Pan", 0.0, 0.12, 0.035, decimals=3)
+        self.pan.valueChanged.connect(self._rebuild_cams)
+        cam.addWidget(self.pan)
         side.addWidget(cam_box)
 
         look_box = QGroupBox("Look")
         look = QVBoxLayout(look_box)
         self.mode_combo = QComboBox()
-        self.mode_combo.addItems(["space 3D", "parallax (fast)", "volumetric (glow)"])
+        self.mode_combo.addItems(["space 3D", "v2 (image + stars)",
+                                  "parallax (fast)", "volumetric (glow)"])
         self.mode_combo.currentIndexChanged.connect(self._reopen_engine)
         look.addWidget(self._row("Mode", self.mode_combo))
         self.bloom = FloatSlider("Bloom", 0.0, 1.0, 0.32, decimals=2)
@@ -184,8 +192,8 @@ class LazyFlightPanel(QWidget):
 
     # --------------------------------------------------------------- helpers
     def _set_controls_enabled(self, on: bool):
-        for w in (self.path_combo, self.dur, self.zoom, self.bloom, self.style,
-                  self.saturation, self.haze, self.stars,
+        for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.pan,
+                  self.bloom, self.style, self.saturation, self.haze, self.stars,
                   self.mode_combo, self.semantic, self.show_depth,
                   self.fps_combo, self.width_combo, self.render_btn,
                   self.play_btn, self.scrub):
@@ -194,10 +202,14 @@ class LazyFlightPanel(QWidget):
             self._sync_mode_controls()
 
     def _sync_mode_controls(self):
-        space = self._mode() == "space"
-        for w in (self.style, self.saturation, self.haze, self.stars):
-            w.setEnabled(space)                          # space-only look controls
-        self.path_combo.setEnabled(not space)            # space uses its own dolly
+        mode = self._mode()
+        for w in (self.style, self.saturation, self.haze):
+            w.setEnabled(mode == "space")                # space-only look controls
+        self.stars.setEnabled(mode in ("space", "v2"))   # both synth star fields
+        for w in (self.rotate, self.pan):
+            w.setEnabled(mode == "v2")                    # v2-only bg transform
+        self.semantic.setEnabled(mode in ("space", "parallax", "volumetric"))
+        self.path_combo.setEnabled(mode in ("parallax", "volumetric"))
 
     def _rebuild_soon(self, *_):
         """A space-look control changed → rebuild the engine, debounced."""
@@ -210,7 +222,7 @@ class LazyFlightPanel(QWidget):
         self._set_controls_enabled(not busy and self.img is not None)
 
     def _mode(self) -> str:
-        return {0: "space", 1: "parallax", 2: "volumetric"}.get(
+        return {0: "space", 1: "v2", 2: "parallax", 3: "volumetric"}.get(
             self.mode_combo.currentIndex(), "space")
 
     # ------------------------------------------------------------------ open
@@ -241,19 +253,24 @@ class LazyFlightPanel(QWidget):
         self.status.setText("Preparing preview…")
         QWidget.repaint(self)
         small = _resize(self.img, _PREVIEW_W)
-        if self.semantic.isChecked():
+        mode = self._mode()
+        need_masks = mode != "v2" and self.semantic.isChecked()   # v2 needs no masks
+        if need_masks:
             if self._masks is None:                      # cached per image (slow)
                 from ..develop.semantic import segment
                 self._masks = segment(small)
-        else:
+        elif mode != "v2":
             self._masks = None
-        if self._mode() == "space":
+        if mode == "space":
             self._engine = SpaceFly(small, masks=self._masks,
                                     saturation=float(self.saturation.value()),
                                     stylize=float(self.style.value()),
                                     haze=float(self.haze.value()),
                                     star_count=int(self.stars.value()),
                                     haze_slabs=5, bloom=float(self.bloom.value()))
+        elif mode == "v2":
+            self._engine = V2Fly(small, star_count=int(self.stars.value()),
+                                 bloom=float(self.bloom.value()))
         else:
             self._engine = Flythrough3D(small, masks=self._masks,
                                         bloom=float(self.bloom.value()), mode="parallax")
@@ -266,9 +283,14 @@ class LazyFlightPanel(QWidget):
             return
         n = max(int(round(self.dur.value() * _PREVIEW_FPS)), 2)
         zoom_end = float(self.zoom.value())
-        if self._mode() == "space":
+        mode = self._mode()
+        if mode == "space":
             c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
             self._cams = fly_volume(n, c_end=c_end, zoom_end=zoom_end)
+        elif mode == "v2":
+            self._cams = fly_v2(n, zoom_end=zoom_end,
+                                rotate_deg=float(self.rotate.value()),
+                                pan=float(self.pan.value()))
         else:
             try:
                 self._cams = build_cameras(self.path_combo.currentText(), n,
@@ -352,16 +374,24 @@ class LazyFlightPanel(QWidget):
         stylize = float(self.style.value())
         haze = float(self.haze.value())
         star_count = int(self.stars.value())
+        rotate_deg = float(self.rotate.value())
+        pan = float(self.pan.value())
         c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
         workers = auto_workers() if self.parallel.isChecked() else 1
 
         def job(log, progress):
             m = None
-            if use_masks:                               # match render res for depth
+            if use_masks and mode != "v2":              # match render res for depth
                 from ..develop.semantic import segment
                 m = segment(_resize(img, width))
             def on_frame(i, n, _fr):
                 progress(i + 1, n, "frame")
+            if mode == "v2":
+                return render_v2(
+                    img, out, seconds=seconds, fps=fps, render_width=width,
+                    workers=workers, star_count=star_count, bloom=bloom,
+                    zoom_end=zoom_end, rotate_deg=rotate_deg, pan=pan,
+                    on_frame=on_frame)
             if mode == "space":
                 return render_space(
                     img, out, seconds=seconds, fps=fps, render_width=width,

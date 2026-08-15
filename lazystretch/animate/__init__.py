@@ -23,6 +23,7 @@ from .encode import write_video, ffmpeg_available
 from .clip import render_flythrough, PATHS
 from .parallel import auto_workers, parallel_frames
 from .volume3d import SpaceFly, VolCam, fly_volume, render_space, color_grade
+from .flyv2 import V2Fly, V2Cam, fly_v2, render_v2
 
 __all__ = [
     "Cam",
@@ -42,4 +43,8 @@ __all__ = [
     "fly_volume",
     "render_space",
     "color_grade",
+    "V2Fly",
+    "V2Cam",
+    "fly_v2",
+    "render_v2",
 ]

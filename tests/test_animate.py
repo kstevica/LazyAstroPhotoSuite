@@ -133,6 +133,25 @@ def test_spacefly_renders_and_moves():
     assert cams[-1].c > 0.0                               # flew forward
 
 
+def test_v2fly_bg_unchanged_and_moves():
+    from lazystretch.animate.flyv2 import V2Fly, V2Cam, fly_v2
+
+    rgb, _ = _scene()
+    eng = V2Fly(rgb, star_count=200)
+    # the background is the ORIGINAL image, untouched
+    assert np.array_equal(eng.bg, rgb.astype(np.float32))
+    a = eng.render_frame(V2Cam(zoom=1.0, roll=0.0))
+    b = eng.render_frame(V2Cam(zoom=1.4, roll=8.0, pan_x=0.03, c=1.2))
+    assert a.shape == rgb.shape and a.dtype == np.float32
+    assert np.isfinite(a).all() and float(a.max()) > 0.05
+    assert float(np.mean(np.abs(a - b))) > 1e-3          # zoom/rotate/stars change it
+    cams = fly_v2(24, zoom_end=1.5, rotate_deg=10.0, pan=0.04)
+    assert len(cams) == 24
+    assert cams[0].zoom == pytest.approx(1.0, abs=1e-6) and cams[0].roll == 0.0
+    assert cams[-1].zoom > 1.0 and cams[-1].roll == pytest.approx(10.0)
+    assert cams[-1].c > 0.0                              # stars flew in
+
+
 def test_color_grade_black_stays_black():
     from lazystretch.animate.volume3d import color_grade
 
