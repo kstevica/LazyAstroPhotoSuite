@@ -128,6 +128,9 @@ class LazyFlightPanel(QWidget):
         self.stars = FloatSlider("Stars", 300, 2500, 1300, decimals=0)
         self.stars.valueChanged.connect(self._rebuild_soon)
         look.addWidget(self.stars)
+        self.streaks = QCheckBox("Radial star streaks (v2)")
+        self.streaks.toggled.connect(self._on_streaks)
+        look.addWidget(self.streaks)
         self.semantic = QCheckBox("Mask-driven depth (recommended)")
         self.semantic.setChecked(True)                   # the high-quality default
         self.semantic.toggled.connect(self._reopen_engine)
@@ -194,7 +197,7 @@ class LazyFlightPanel(QWidget):
     def _set_controls_enabled(self, on: bool):
         for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.pan,
                   self.bloom, self.style, self.saturation, self.haze, self.stars,
-                  self.mode_combo, self.semantic, self.show_depth,
+                  self.streaks, self.mode_combo, self.semantic, self.show_depth,
                   self.fps_combo, self.width_combo, self.render_btn,
                   self.play_btn, self.scrub):
             w.setEnabled(on)
@@ -206,8 +209,8 @@ class LazyFlightPanel(QWidget):
         for w in (self.style, self.saturation, self.haze):
             w.setEnabled(mode == "space")                # space-only look controls
         self.stars.setEnabled(mode in ("space", "v2"))   # both synth star fields
-        for w in (self.rotate, self.pan):
-            w.setEnabled(mode == "v2")                    # v2-only bg transform
+        for w in (self.rotate, self.pan, self.streaks):
+            w.setEnabled(mode == "v2")                    # v2-only
         self.semantic.setEnabled(mode in ("space", "parallax", "volumetric"))
         self.path_combo.setEnabled(mode in ("parallax", "volumetric"))
 
@@ -270,7 +273,8 @@ class LazyFlightPanel(QWidget):
                                     haze_slabs=5, bloom=float(self.bloom.value()))
         elif mode == "v2":
             self._engine = V2Fly(small, star_count=int(self.stars.value()),
-                                 bloom=float(self.bloom.value()))
+                                 bloom=float(self.bloom.value()),
+                                 streaks=self.streaks.isChecked())
         else:
             self._engine = Flythrough3D(small, masks=self._masks,
                                         bloom=float(self.bloom.value()), mode="parallax")
@@ -302,6 +306,11 @@ class LazyFlightPanel(QWidget):
     def _on_bloom(self, val: float):
         if self._engine is not None:
             self._engine.bloom_strength = float(val)
+        self._render_preview()
+
+    def _on_streaks(self, on: bool):
+        if isinstance(self._engine, V2Fly):              # read at render-time, no rebuild
+            self._engine.streaks = bool(on)
         self._render_preview()
 
     # --------------------------------------------------------------- preview
@@ -376,6 +385,7 @@ class LazyFlightPanel(QWidget):
         star_count = int(self.stars.value())
         rotate_deg = float(self.rotate.value())
         pan = float(self.pan.value())
+        streaks = self.streaks.isChecked()
         c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
         workers = auto_workers() if self.parallel.isChecked() else 1
 
@@ -391,7 +401,7 @@ class LazyFlightPanel(QWidget):
                     img, out, seconds=seconds, fps=fps, render_width=width,
                     workers=workers, star_count=star_count, bloom=bloom,
                     zoom_end=zoom_end, rotate_deg=rotate_deg, pan=pan,
-                    on_frame=on_frame)
+                    streaks=streaks, on_frame=on_frame)
             if mode == "space":
                 return render_space(
                     img, out, seconds=seconds, fps=fps, render_width=width,
