@@ -178,6 +178,9 @@ class LazyFlightPanel(QWidget):
         self.streaks = QCheckBox("Radial star streaks (v2)")
         self.streaks.toggled.connect(self._on_streaks)
         look.addWidget(self.streaks)
+        self.streak_len = FloatSlider("Streak strength", 0.0, 160.0, 60.0, decimals=0)
+        self.streak_len.valueChanged.connect(self._on_streak_len)
+        look.addWidget(self.streak_len)
         self.semantic = QCheckBox("Mask-driven depth (recommended)")
         self.semantic.setChecked(True)                   # the high-quality default
         self.semantic.toggled.connect(self._reopen_engine)
@@ -266,10 +269,11 @@ class LazyFlightPanel(QWidget):
     def _set_controls_enabled(self, on: bool):
         for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.pan,
                   self.bloom, self.style, self.saturation, self.haze, self.stars,
-                  self.star_min, self.star_max, self.streaks, self.mode_combo,
-                  self.semantic, self.show_depth, self.fps_combo, self.width_combo,
-                  self.orient_combo, self.ratio_combo, self.render_btn,
-                  self.pick_btn, self.clear_pts_btn, self.play_btn, self.scrub):
+                  self.star_min, self.star_max, self.streaks, self.streak_len,
+                  self.mode_combo, self.semantic, self.show_depth, self.fps_combo,
+                  self.width_combo, self.orient_combo, self.ratio_combo,
+                  self.render_btn, self.pick_btn, self.clear_pts_btn,
+                  self.play_btn, self.scrub):
             w.setEnabled(on)
         if on:
             self._sync_mode_controls()
@@ -280,9 +284,9 @@ class LazyFlightPanel(QWidget):
         for w in (self.style, self.saturation, self.haze):
             w.setEnabled(mode == "space")                # space-only look controls
         self.stars.setEnabled(mode in ("space", "v2"))   # both synth star fields
-        for w in (self.rotate, self.pan, self.streaks, self.star_min, self.star_max,
-                  self.orient_combo, self.ratio_combo, self.pick_btn,
-                  self.clear_pts_btn):
+        for w in (self.rotate, self.pan, self.streaks, self.streak_len,
+                  self.star_min, self.star_max, self.orient_combo, self.ratio_combo,
+                  self.pick_btn, self.clear_pts_btn):
             w.setEnabled(v2)                              # v2-only
         self.semantic.setEnabled(mode in ("space", "parallax", "volumetric"))
         self.path_combo.setEnabled(mode in ("parallax", "volumetric"))
@@ -410,7 +414,8 @@ class LazyFlightPanel(QWidget):
                                  bloom=float(self.bloom.value()),
                                  star_min=float(self.star_min.value()),
                                  star_max=float(self.star_max.value()),
-                                 streaks=self.streaks.isChecked())
+                                 streaks=self.streaks.isChecked(),
+                                 streak_len=float(self.streak_len.value()))
         else:
             self._engine = Flythrough3D(small, masks=self._masks,
                                         bloom=float(self.bloom.value()), mode="parallax")
@@ -448,6 +453,11 @@ class LazyFlightPanel(QWidget):
     def _on_streaks(self, on: bool):
         if isinstance(self._engine, V2Fly):              # read at render-time, no rebuild
             self._engine.streaks = bool(on)
+        self._render_preview()
+
+    def _on_streak_len(self, val: float):
+        if isinstance(self._engine, V2Fly):              # live, no rebuild
+            self._engine.streak_len = float(val)
         self._render_preview()
 
     # --------------------------------------------------------------- preview
@@ -523,6 +533,7 @@ class LazyFlightPanel(QWidget):
         rotate_deg = float(self.rotate.value())
         pan = float(self.pan.value())
         streaks = self.streaks.isChecked()
+        streak_len = float(self.streak_len.value())
         lo, hi = float(self.star_min.value()), float(self.star_max.value())
         star_min, star_max = min(lo, hi), max(lo, hi)
         pan_points = list(self._pan_points)
@@ -543,7 +554,7 @@ class LazyFlightPanel(QWidget):
                     workers=workers, star_count=star_count, bloom=bloom,
                     zoom_end=zoom_end, rotate_deg=rotate_deg, pan_points=pan_points,
                     pan=pan, star_min=star_min, star_max=star_max,
-                    streaks=streaks, on_frame=on_frame)
+                    streaks=streaks, streak_len=streak_len, on_frame=on_frame)
             if mode == "space":
                 return render_space(
                     img, out, seconds=seconds, fps=fps, render_width=width,
