@@ -234,18 +234,21 @@ class V2Fly:
 
 def fly_v2(n: int, *, zoom_end: float = 1.4, rotate_deg: float = 8.0,
            pan_points: Optional[List[Tuple[float, float]]] = None,
-           pan: float = 0.035, star_speed: float = 1.8):
+           pan: float = 0.035, star_speed: float = 1.8,
+           base_pan: Tuple[float, float] = (0.0, 0.0)):
     """Parametrised v2 path: eased zoom-in, steady roll, a smooth (elliptical)
-    pan through ``pan_points``, and a star inflow whose focus follows the pan."""
+    pan through ``pan_points``, and a star inflow whose focus follows the pan.
+    ``base_pan`` is a static offset that frames the background in the output."""
     path, focus, zoom = _pan_path(pan_points, n, ellipse_r=max(pan, 0.02),
                                   zoom_end=zoom_end)
+    bx, by = base_pan
     cams = []
     for i in range(n):
         u = i / max(n - 1, 1)
         cams.append(V2Cam(
             zoom=float(zoom[i]),
             roll=rotate_deg * u,
-            pan_x=float(path[i, 0]), pan_y=float(path[i, 1]),
+            pan_x=float(path[i, 0]) + bx, pan_y=float(path[i, 1]) + by,
             focus_x=float(focus[i, 0]), focus_y=float(focus[i, 1]),
             c=star_speed * u,
             twinkle=u * 2 * np.pi * 6.0,
@@ -259,6 +262,7 @@ def render_v2(img, out_path: str, *, seconds: float = 8.0, fps: int = 24,
               bloom: float = 0.25, zoom_end: float = 1.4, rotate_deg: float = 8.0,
               pan_points: Optional[List[Tuple[float, float]]] = None,
               pan: float = 0.035, star_speed: float = 1.8,
+              base_pan: Tuple[float, float] = (0.0, 0.0),
               star_min: float = 0.9, star_max: float = 3.6, streaks: bool = False,
               streak_len: float = 60.0, engine_kw=None, on_frame=None) -> str:
     """Render a v2 fly-through of ``img`` to an mp4 at ``out_path``."""
@@ -284,6 +288,7 @@ def render_v2(img, out_path: str, *, seconds: float = 8.0, fps: int = 24,
                 streak_len=streak_len, **(engine_kw or {}))
     n = max(int(round(seconds * fps)), 2)
     cams = fly_v2(n, zoom_end=zoom_end, rotate_deg=rotate_deg,
-                  pan_points=pan_points, pan=pan, star_speed=star_speed)
+                  pan_points=pan_points, pan=pan, star_speed=star_speed,
+                  base_pan=base_pan)
     frames = parallel_frames(eng, cams, int(workers), on_frame)
     return write_video(frames, out_path, fps=fps)

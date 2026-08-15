@@ -174,19 +174,13 @@ def test_shell_opens_flight_panel(qapp):
     panel._toggle_pick(True); assert panel.canvas.pick_mode
     panel._toggle_pick(False)
 
-    # the preview image can be dragged around: padded scene + hand-drag + the pan
-    # survives preview updates
-    from PySide6.QtWidgets import QGraphicsView
-    c = panel.canvas
-    frame = np.zeros((120, 200, 3), np.float32)
-    c.set_image(frame, keep_view=False)
-    sr = c._scene.sceneRect()
-    assert sr.width() > 200 * 2 and sr.height() > 120 * 2      # room to drag at fit
-    assert c.dragMode() == QGraphicsView.DragMode.ScrollHandDrag
-    c.horizontalScrollBar().setValue(c.horizontalScrollBar().value() + 25)
-    hv = c.horizontalScrollBar().value()
-    c.set_image(frame * 0.5, keep_view=True)                   # a preview update
-    assert c.horizontalScrollBar().value() == hv              # pan preserved
+    # dragging the preview moves the BACKGROUND within the output frame (v2)
+    panel._base_pan = [0.0, 0.0]
+    panel._on_bg_pan(0.2, -0.1)
+    assert panel._base_pan == pytest.approx([0.2, -0.1])
+    panel._on_bg_pan(0.2, 0.0)                                 # accumulates
+    assert panel._base_pan[0] == pytest.approx(0.4)
+    panel._render_preview()                                    # applies base pan, no raise
 
     # switching to volumetric (index 3) rebuilds a Flythrough3D engine
     panel.mode_combo.setCurrentIndex(3)

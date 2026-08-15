@@ -7,6 +7,7 @@ user-definable colour), ``parallax`` (fast depth warp), ``volumetric`` (glow).
 """
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 from typing import Optional
 
@@ -15,8 +16,8 @@ from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QFont, QPen
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QGraphicsEllipseItem,
-    QGraphicsSimpleTextItem, QGroupBox, QHBoxLayout, QLabel, QProgressBar,
-    QPushButton, QSlider, QVBoxLayout, QWidget,
+    QGraphicsSimpleTextItem, QGraphicsView, QGroupBox, QHBoxLayout, QLabel,
+    QProgressBar, QPushButton, QSlider, QVBoxLayout, QWidget,
 )
 
 from ..animate import render_flythrough
@@ -37,37 +38,36 @@ _RATIOS = ["16:9", "3:2", "4:3", "5:4", "1:1"]
 
 
 class FlightCanvas(PreviewView):
-    """Preview that also edits v2 pan points: click empty space to add, click a
-    point to select, drag to move. Points are numbered 1..N."""
+    """Preview that (a) drags the BACKGROUND within the output frame, and (b) in
+    pan-point edit mode adds/selects/moves numbered pan points."""
 
     pointAdded = Signal(float, float)                    # normalised [-1, 1]
     pointMoved = Signal(int, float, float)
     pointSelected = Signal(int)
+    backgroundPanned = Signal(float, float)              # incremental pan delta
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setDragMode(QGraphicsView.NoDrag)           # we move the background, not the view
         self.pick_mode = False
         self._pts = []                                   # [(x, y), …] normalised
         self._sel = -1
         self._drag = -1
         self._markers = []
+        self._bg_last = None                             # last drag pos (scene coords)
 
     def set_image(self, a, keep_view=None):
-        """Show ``a`` but keep the user's drag-pan/zoom across preview updates,
-        and pad the scene so the image can be dragged around even at fit."""
+        """Fast-path preview updates: on a same-size frame just swap the pixmap so
+        the view (and any zoom) is untouched; a new size fits to window."""
         a = np.asarray(a)
-        same = self._has_image and self._img_size == (a.shape[1], a.shape[0])
-        if same and keep_view is not False:              # fast path: swap pixmap only
+        if (self._has_image and self._img_size == (a.shape[1], a.shape[0])
+                and keep_view is not False):
             from PySide6.QtGui import QPixmap
             from .preview import ndarray_to_qimage
             self._array = a
             self._item.setPixmap(QPixmap.fromImage(ndarray_to_qimage(a)))
             return
         super().set_image(a, keep_view=keep_view)
-        r = self._item.boundingRect()                    # room to pan the image around
-        self._scene.setSceneRect(r.adjusted(-r.width(), -r.height(),
-                                            r.width(), r.height()))
-        self.centerOn(self._item)
 
     def _norm(self, ev):
         sp = self.mapToScene(ev.position().toPoint())
@@ -82,7 +82,9 @@ class FlightCanvas(PreviewView):
         return -1
 
     def mousePressEvent(self, ev):
-        if self.pick_mode and self._img_size:
+        if not self._img_size:
+            return super().mousePressEvent(ev)
+        if self.pick_mode:
             nx, ny = self._norm(ev)
             i = self._hit(nx, ny)
             if i >= 0:
@@ -91,6 +93,9 @@ class FlightCanvas(PreviewView):
             else:
                 self.pointAdded.emit(nx, ny)
             return
+        if ev.button() == Qt.LeftButton:                 # start dragging the background
+            self._bg_last = self.mapToScene(ev.position().toPoint())
+            return
         super().mousePressEvent(ev)
 
     def mouseMoveEvent(self, ev):
@@ -98,13 +103,22 @@ class FlightCanvas(PreviewView):
             nx, ny = self._norm(ev)
             self.pointMoved.emit(self._drag, nx, ny)
             return
-        if ev.buttons() & Qt.LeftButton and self._has_image:
-            self._user_zoomed = True                     # panning → don't auto-refit
+        if self._bg_last is not None and (ev.buttons() & Qt.LeftButton):
+            cur = self.mapToScene(ev.position().toPoint())
+            w, h = self._img_size
+            # move the background under the cursor (content follows the drag)
+            self.backgroundPanned.emit(-2.0 * (cur.x() - self._bg_last.x()) / w,
+                                       -2.0 * (cur.y() - self._bg_last.y()) / h)
+            self._bg_last = cur
+            return
         super().mouseMoveEvent(ev)
 
     def mouseReleaseEvent(self, ev):
         if self.pick_mode and self._drag >= 0:
             self._drag = -1
+            return
+        if self._bg_last is not None:
+            self._bg_last = None
             return
         super().mouseReleaseEvent(ev)
 
@@ -148,6 +162,7 @@ class LazyFlightPanel(QWidget):
         self._masks = None                             # semantic masks (optional)
         self._pan_points = []                          # v2 keyframes [x, y, zoom]
         self._sel_point = -1                           # selected pan point index
+        self._base_pan = [0.0, 0.0]                     # v2 background framing offset
         self.worker: Optional[CallableWorker] = None
         self._busy = False
         self._play = QTimer(self)
@@ -293,11 +308,12 @@ class LazyFlightPanel(QWidget):
         # --- right: canvas + scrub -------------------------------------------
         right = QVBoxLayout()
         self.canvas = FlightCanvas()
-        self.canvas.setToolTip("Drag to move the image · scroll to zoom · "
-                               "double-click to reset")
+        self.canvas.setToolTip("Drag to move the background in the frame · "
+                               "scroll to zoom the view")
         self.canvas.pointAdded.connect(self._on_point_added)
         self.canvas.pointMoved.connect(self._on_point_moved)
         self.canvas.pointSelected.connect(self._on_point_selected)
+        self.canvas.backgroundPanned.connect(self._on_bg_pan)
         right.addWidget(self.canvas, 1)
         pp = QHBoxLayout()
         self.pick_btn = QPushButton("Edit pan points (v2)")
@@ -423,7 +439,8 @@ class LazyFlightPanel(QWidget):
 
     def _show_pick_frame(self):
         if isinstance(self._engine, V2Fly):
-            self.canvas.set_image(self._engine._warp_bg(V2Cam()), keep_view=True)
+            cam = V2Cam(pan_x=self._base_pan[0], pan_y=self._base_pan[1])
+            self.canvas.set_image(self._engine._warp_bg(cam), keep_view=True)
             self._draw_points()
 
     def _on_point_added(self, nx: float, ny: float):
@@ -486,6 +503,7 @@ class LazyFlightPanel(QWidget):
         h, w = self.img.shape[:2]
         self.info.setText(f"{Path(path).name}\n{w} × {h}")
         self._masks = None
+        self._base_pan = [0.0, 0.0]
         self._reopen_engine()
         self._set_controls_enabled(True)
 
@@ -564,6 +582,17 @@ class LazyFlightPanel(QWidget):
             self._engine.streak_len = float(val)
         self._render_preview()
 
+    def _on_bg_pan(self, dx: float, dy: float):
+        # drag the background within the output frame (v2 base framing offset)
+        if self._mode() != "v2":
+            return
+        self._base_pan[0] = float(np.clip(self._base_pan[0] + dx, -1.5, 1.5))
+        self._base_pan[1] = float(np.clip(self._base_pan[1] + dy, -1.5, 1.5))
+        if self.canvas.pick_mode:
+            self._show_pick_frame()
+        else:
+            self._render_preview()
+
     # --------------------------------------------------------------- preview
     def _render_preview(self):
         if self._engine is None or self._busy or self.canvas.pick_mode:
@@ -579,7 +608,11 @@ class LazyFlightPanel(QWidget):
         if not self._cams:
             return
         i = int(round(self.scrub.value() / 100.0 * (len(self._cams) - 1)))
-        frame = self._engine.render_frame(self._cams[i])
+        cam = self._cams[i]
+        if self._mode() == "v2" and (self._base_pan[0] or self._base_pan[1]):
+            cam = replace(cam, pan_x=cam.pan_x + self._base_pan[0],
+                          pan_y=cam.pan_y + self._base_pan[1])
+        frame = self._engine.render_frame(cam)
         self.canvas.set_image(frame, keep_view=True)
 
     def _on_scrub(self, _v: int):
@@ -641,6 +674,7 @@ class LazyFlightPanel(QWidget):
         lo, hi = float(self.star_min.value()), float(self.star_max.value())
         star_min, star_max = min(lo, hi), max(lo, hi)
         pan_points = list(self._pan_points)
+        base_pan = tuple(self._base_pan)
         out_w, out_h = self._frame_size(width)
         c_end = float(np.clip((zoom_end - 1.0) * 2.2, 0.1, 0.9))
         workers = auto_workers() if self.parallel.isChecked() else 1
@@ -657,7 +691,7 @@ class LazyFlightPanel(QWidget):
                     img, out, seconds=seconds, fps=fps, out_w=out_w, out_h=out_h,
                     workers=workers, star_count=star_count, bloom=bloom,
                     zoom_end=zoom_end, rotate_deg=rotate_deg, pan_points=pan_points,
-                    pan=pan, star_min=star_min, star_max=star_max,
+                    pan=pan, base_pan=base_pan, star_min=star_min, star_max=star_max,
                     streaks=streaks, streak_len=streak_len, on_frame=on_frame)
             if mode == "space":
                 return render_space(
