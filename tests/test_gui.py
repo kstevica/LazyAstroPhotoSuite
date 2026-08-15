@@ -201,6 +201,75 @@ def test_shell_opens_flight_panel(qapp):
     panel.play_btn.setChecked(False)
 
 
+def test_flight_recipe_save_load_roundtrip(qapp, tmp_path, monkeypatch):
+    """v2 fly-through settings + pan keyframes survive a save/load cycle."""
+    from PySide6.QtWidgets import QFileDialog
+    from lazystretch.gui.flight_window import LazyFlightPanel
+    from lazystretch.gui.shell import AppShell
+
+    s = AppShell()
+    s.open_tool("fly")
+    panel = s._panels.get("fly")
+    h, w = 100, 160
+    panel.img = np.zeros((h, w, 3), np.float32)
+    panel._masks = None
+    panel._reopen_engine()
+
+    # set a distinctive configuration
+    panel.dur.set_value(20.0)
+    panel.zoom.set_value(1.6)
+    panel.rotate.set_value(-5.0)
+    panel.tilt_x.set_value(2.0)
+    panel.tilt_y.set_value(-1.0)
+    panel.bloom.set_value(0.4)
+    panel.streaks.setChecked(True)
+    panel.streak_len.set_value(80.0)
+    panel.star_min.set_value(1.2); panel.star_max.set_value(5.0)
+    panel.orient_combo.setCurrentText("Portrait")
+    panel.ratio_combo.setCurrentText("4:3")
+    panel.quality_combo.setCurrentText("Max")
+    panel.zoom.set_value(1.1); panel._on_point_added(-0.3, -0.1)
+    panel.zoom.set_value(1.9); panel._on_point_added(0.2, 0.3)
+    panel._base_pan = [0.04, -0.02]
+
+    path = tmp_path / "fly.lfrecipe"
+    monkeypatch.setattr(QFileDialog, "getSaveFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    panel._save_recipe()
+    assert path.exists()
+
+    # fresh panel, load it back
+    s2 = AppShell(); s2.open_tool("fly")
+    p2 = s2._panels.get("fly")
+    p2.img = np.zeros((h, w, 3), np.float32); p2._masks = None; p2._reopen_engine()
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(path), "")))
+    p2._load_recipe()
+
+    assert p2.dur.value() == pytest.approx(20.0, abs=0.1)
+    assert p2.zoom.value() == pytest.approx(1.9, abs=0.05)   # last set = point 2 slider
+    assert p2.tilt_x.value() == pytest.approx(2.0, abs=0.05)
+    assert p2.streaks.isChecked()
+    assert p2.streak_len.value() == pytest.approx(80.0, abs=0.5)
+    assert p2.orient_combo.currentText() == "Portrait"
+    assert p2.ratio_combo.currentText() == "4:3"
+    assert p2.quality_combo.currentText() == "Max"
+    assert len(p2._pan_points) == 2 and len(p2._pan_points[0]) == 6
+    assert p2._pan_points[0][2] == pytest.approx(1.1, abs=0.02)
+    assert p2._pan_points[1][0] == pytest.approx(0.2, abs=1e-6)
+    assert p2._base_pan[0] == pytest.approx(0.04, abs=1e-6)
+    assert p2._engine.out_h > p2._engine.out_w                # portrait applied
+
+    # a non-recipe file is rejected without touching state
+    bad = tmp_path / "bad.json"
+    bad.write_text('{"kind": "something-else"}')
+    monkeypatch.setattr(QFileDialog, "getOpenFileName",
+                        staticmethod(lambda *a, **k: (str(bad), "")))
+    p2._load_recipe()
+    assert "Not a LazyFlight recipe" in p2.status.text()
+    assert len(p2._pan_points) == 2                           # unchanged
+
+
 def test_shell_opens_moonsun_panel(qapp):
     from lazystretch.gui.moonsun_window import LazyMoonSunPanel
     from lazystretch.gui.shell import AppShell

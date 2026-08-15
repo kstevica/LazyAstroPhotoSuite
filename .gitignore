@@ -32,3 +32,5 @@ tests/golden/masters/
 # Per-master run history (GUI) + saved recipes are runtime data
 history/
 *.lsrecipe
+*.ldrecipe
+*.lfrecipe

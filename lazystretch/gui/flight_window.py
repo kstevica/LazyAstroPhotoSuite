@@ -7,6 +7,7 @@ user-definable colour), ``parallax`` (fast depth warp), ``volumetric`` (glow).
 """
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from typing import Optional
@@ -321,6 +322,14 @@ class LazyFlightPanel(QWidget):
         self.parallel = QCheckBox(f"Parallel render ({auto_workers()} cores)")
         self.parallel.setChecked(True)
         out.addWidget(self.parallel)
+        rec = QHBoxLayout()
+        self.save_recipe_btn = QPushButton("Save recipe…")
+        self.save_recipe_btn.clicked.connect(self._save_recipe)
+        rec.addWidget(self.save_recipe_btn)
+        self.load_recipe_btn = QPushButton("Load recipe…")
+        self.load_recipe_btn.clicked.connect(self._load_recipe)
+        rec.addWidget(self.load_recipe_btn)
+        out.addLayout(rec)
         self.render_btn = QPushButton("Render video…")
         self.render_btn.clicked.connect(self._render_video)
         out.addWidget(self.render_btn)
@@ -396,7 +405,8 @@ class LazyFlightPanel(QWidget):
                   self.mode_combo, self.semantic, self.show_depth, self.fps_combo,
                   self.width_combo, self.orient_combo, self.ratio_combo,
                   self.quality_combo, self.bitrate, self.render_btn, self.pick_btn,
-                  self.clear_pts_btn, self.play_btn, self.scrub):
+                  self.clear_pts_btn, self.save_recipe_btn, self.load_recipe_btn,
+                  self.play_btn, self.scrub):
             w.setEnabled(on)
         if on:
             self._sync_mode_controls()
@@ -810,3 +820,86 @@ class LazyFlightPanel(QWidget):
         self._set_busy(False)
         self.progress.setVisible(False)
         self.status.setText(f"Render failed: {msg}")
+
+    # ---------------------------------------------------------------- recipe
+    def _collect_recipe(self) -> dict:
+        """All v2 settings + pan-point keyframes, for save/load."""
+        return {
+            "kind": "lazyflight-v2", "version": 1,
+            "duration": float(self.dur.value()),
+            "zoom": float(self.zoom.value()),
+            "rotate_z": float(self.rotate.value()),
+            "tilt_x": float(self.tilt_x.value()),
+            "tilt_y": float(self.tilt_y.value()),
+            "bloom": float(self.bloom.value()),
+            "stars": int(self.stars.value()),
+            "star_min": float(self.star_min.value()),
+            "star_max": float(self.star_max.value()),
+            "streaks": bool(self.streaks.isChecked()),
+            "streak_len": float(self.streak_len.value()),
+            "fps": self.fps_combo.currentText(),
+            "long_edge": self.width_combo.currentText(),
+            "orientation": self.orient_combo.currentText(),
+            "aspect": self.ratio_combo.currentText(),
+            "quality": self.quality_combo.currentText(),
+            "bitrate": float(self.bitrate.value()),
+            "pan_points": [[float(v) for v in p] for p in self._pan_points],
+            "base_pan": [float(self._base_pan[0]), float(self._base_pan[1])],
+        }
+
+    def _apply_recipe(self, r: dict):
+        sliders = {"duration": self.dur, "zoom": self.zoom, "rotate_z": self.rotate,
+                   "tilt_x": self.tilt_x, "tilt_y": self.tilt_y, "bloom": self.bloom,
+                   "stars": self.stars, "star_min": self.star_min,
+                   "star_max": self.star_max, "streak_len": self.streak_len,
+                   "bitrate": self.bitrate}
+        for key, sl in sliders.items():
+            if key in r:
+                sl.blockSignals(True); sl.set_value(float(r[key])); sl.blockSignals(False)
+        self.streaks.blockSignals(True)
+        self.streaks.setChecked(bool(r.get("streaks", False)))
+        self.streaks.blockSignals(False)
+        for key, combo in (("fps", self.fps_combo), ("long_edge", self.width_combo),
+                           ("orientation", self.orient_combo), ("aspect", self.ratio_combo),
+                           ("quality", self.quality_combo)):
+            if r.get(key) is not None:
+                combo.blockSignals(True); combo.setCurrentText(str(r[key]))
+                combo.blockSignals(False)
+        self._pan_points = [list(map(float, p)) for p in r.get("pan_points", [])]
+        self._sel_point = -1
+        bp = r.get("base_pan", [0.0, 0.0])
+        self._base_pan = [float(bp[0]), float(bp[1])]
+        self.pts_label.setText(f"{len(self._pan_points)} pts")
+        self._sync_quality()
+        self._reopen_engine()                            # stars/size/output frame changed
+        if self.canvas.pick_mode:
+            self._show_pick_frame()
+
+    def _save_recipe(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save fly-through recipe",
+                                              "flythrough.lfrecipe",
+                                              "LazyFlight recipe (*.lfrecipe);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path, "w") as f:
+                json.dump(self._collect_recipe(), f, indent=2)
+            self.status.setText(f"Saved recipe {Path(path).name}")
+        except Exception as exc:                          # non-modal per GUI rule
+            self.status.setText(f"Save recipe failed: {exc}")
+
+    def _load_recipe(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Load fly-through recipe", "",
+                                              "LazyFlight recipe (*.lfrecipe);;All files (*)")
+        if not path:
+            return
+        try:
+            with open(path) as f:
+                r = json.load(f)
+            if not isinstance(r, dict) or r.get("kind") != "lazyflight-v2":
+                self.status.setText("Not a LazyFlight recipe.")
+                return
+            self._apply_recipe(r)
+            self.status.setText(f"Loaded recipe {Path(path).name}")
+        except Exception as exc:
+            self.status.setText(f"Load recipe failed: {exc}")
