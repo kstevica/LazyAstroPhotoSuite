@@ -143,7 +143,7 @@ def test_shell_opens_flight_panel(qapp):
     panel.scrub.setValue(50)
     # with no pan points, Rotate/Tilt are a constant orientation from the sliders
     panel.rotate.set_value(12.0); panel.tilt_x.set_value(3.0); panel.tilt_y.set_value(-2.0)
-    panel.pan.set_value(0.05); panel._rebuild_cams()
+    panel._rebuild_cams()
     assert all(c.roll == pytest.approx(12.0) for c in panel._cams)
     assert panel._cams[0].rot_x == pytest.approx(3.0, abs=0.1)
     assert panel._cams[0].rot_y == pytest.approx(-2.0, abs=0.1)

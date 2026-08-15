@@ -229,9 +229,6 @@ class LazyFlightPanel(QWidget):
         self.tilt_y = FloatSlider("Tilt Y (°)", -4.0, 4.0, 0.0, decimals=1)
         self.tilt_y.valueChanged.connect(lambda v: self._on_point_channel(5, v))
         cam.addWidget(self.tilt_y)
-        self.pan = FloatSlider("Pan", 0.0, 0.12, 0.035, decimals=3)
-        self.pan.valueChanged.connect(self._rebuild_cams)
-        cam.addWidget(self.pan)
         side.addWidget(cam_box)
 
         look_box = QGroupBox("Look")
@@ -376,7 +373,7 @@ class LazyFlightPanel(QWidget):
     # --------------------------------------------------------------- helpers
     def _set_controls_enabled(self, on: bool):
         for w in (self.path_combo, self.dur, self.zoom, self.rotate, self.tilt_x,
-                  self.tilt_y, self.pan, self.bloom, self.style, self.saturation,
+                  self.tilt_y, self.bloom, self.style, self.saturation,
                   self.haze, self.stars,
                   self.star_min, self.star_max, self.streaks, self.streak_len,
                   self.mode_combo, self.semantic, self.show_depth, self.fps_combo,
@@ -397,7 +394,7 @@ class LazyFlightPanel(QWidget):
         for w in (self.style, self.saturation, self.haze):
             w.setEnabled(mode == "space")                # space-only look controls
         self.stars.setEnabled(mode in ("space", "v2"))   # both synth star fields
-        for w in (self.rotate, self.tilt_x, self.tilt_y, self.pan, self.streaks,
+        for w in (self.rotate, self.tilt_x, self.tilt_y, self.streaks,
                   self.streak_len, self.star_min, self.star_max, self.orient_combo,
                   self.ratio_combo, self.pick_btn, self.clear_pts_btn):
             w.setEnabled(v2)                              # v2-only
@@ -592,8 +589,7 @@ class LazyFlightPanel(QWidget):
                                 rotate_deg=float(self.rotate.value()),
                                 rot_x=float(self.tilt_x.value()),
                                 rot_y=float(self.tilt_y.value()),
-                                pan_points=list(self._pan_points),
-                                pan=float(self.pan.value()))
+                                pan_points=list(self._pan_points))
             self._clamp_base_pan()                       # keep framing within borders
         else:
             try:
@@ -729,7 +725,6 @@ class LazyFlightPanel(QWidget):
         haze = float(self.haze.value())
         star_count = int(self.stars.value())
         rotate_deg = float(self.rotate.value())
-        pan = float(self.pan.value())
         streaks = self.streaks.isChecked()
         streak_len = float(self.streak_len.value())
         lo, hi = float(self.star_min.value()), float(self.star_max.value())
@@ -757,7 +752,7 @@ class LazyFlightPanel(QWidget):
                     img, out, seconds=seconds, fps=fps, out_w=out_w, out_h=out_h,
                     workers=workers, star_count=star_count, bloom=bloom,
                     zoom_end=zoom_end, rotate_deg=rotate_deg, rot_x=rot_x,
-                    rot_y=rot_y, pan_points=pan_points, pan=pan, base_pan=base_pan,
+                    rot_y=rot_y, pan_points=pan_points, base_pan=base_pan,
                     star_min=star_min, star_max=star_max, streaks=streaks,
                     streak_len=streak_len, crf=crf, bitrate_mbps=bitrate,
                     on_frame=on_frame)

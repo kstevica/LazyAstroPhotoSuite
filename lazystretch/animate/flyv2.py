@@ -66,15 +66,11 @@ def _pan_path(points, n, ellipse_r=0.03, defaults=(1.4, 0.0, 0.0, 0.0)):
     C = np.array([[ch(p, 2, dz), ch(p, 3, dr), ch(p, 4, dx), ch(p, 5, dy)]
                   for p in src], dtype=float)             # (k, 4) zoom/roll/rx/ry
     k = len(xy)
-    if k == 1:                                            # one-shot: zoom in, hold tilt
+    if k == 1:                                            # one-shot: zoom into the point
         u = np.linspace(0.0, 1.0, n, endpoint=False)
-        base = np.repeat(xy, n, axis=0)
+        pan = np.repeat(xy, n, axis=0)                   # stay EXACTLY on the point
         chan = np.repeat(C, n, axis=0)
         chan[:, 0] = 1.0 + (C[0, 0] - 1.0) * _smoother(u)   # zoom eases in from 1
-        # a gentle elliptical orbit so a single point is never locked-off
-        er = max(ellipse_r, 0.06)
-        pan = base + np.stack([er * np.cos(2 * np.pi * u),
-                               er * 0.6 * np.sin(2 * np.pi * u)], 1)
     else:                                                 # keyframe every channel
         base = np.zeros((n, 2))
         chan = np.zeros((n, 4))
