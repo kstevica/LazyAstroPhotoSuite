@@ -8,10 +8,12 @@ try/except, continuing on error — PI's per-step fault isolation.
 External "wall" tools (``Tools``) are feature-detected and used when installed, else the
 pipeline degrades. When RC-Astro's stand-alone CLI is present it wins at every slot it
 covers — the real products beat the substitutes: BlurXTerminator -> classical
-Richardson-Lucy (off by default) -> skip; StarXTerminator -> StarNet -> skipped/global;
-NoiseXTerminator -> DeepSNR -> GraXpert -> MMT. Background: GraXpert -> ABE polynomial;
-SPCC -> BN+CC. Each RC-Astro slot falls back in-step if its run fails (e.g. inactive
-licence). Preview forces the wall OFF (the deterministic, no-plugin subset).
+Richardson-Lucy (off by default) -> skip; StarXTerminator -> StarNet -> skipped/global.
+Noise reduction has two slots: NoiseXTerminator runs LINEAR (pre-stretch, its native
+domain); the stretched-domain denoisers DeepSNR -> GraXpert -> MMT run post-stretch and
+are skipped when NoiseX already ran. Background: GraXpert -> ABE polynomial; SPCC ->
+BN+CC. Each RC-Astro slot falls back in-step if its run fails (e.g. inactive licence).
+Preview forces the wall OFF (the deterministic, no-plugin subset).
 """
 from __future__ import annotations
 
@@ -350,8 +352,36 @@ def run_pipeline(
     elif params.doColorCal and not is_color:
         _log("-- Color calibration skipped (mono image)")
 
-    # --- noise reduction is applied POST-stretch (after Deepen, below): the NN denoisers
-    #     (DeepSNR / GraXpert) are trained on stretched data, unlike NoiseX's linear slot. ---
+    # --- noise reduction, LINEAR slot (js:3369): NoiseXTerminator runs HERE, in its native
+    #     linear domain (before the stretch). The stretched-domain denoisers (DeepSNR /
+    #     GraXpert) stay post-stretch, below. A shared helper applies the SNR-protect /
+    #     background masking to whichever slot runs. ---
+    def _finish_nr(orig, processed, via):
+        sr = ctx["snr_raw"]
+        if sr is not None:
+            # Protect high-SNR signal/stars from over-smoothing; low-SNR background is denoised
+            # in full. w_sig high where SNR is high (raw is low there).
+            w_sig = snr_protect * (1.0 - sr)
+            a = np.asarray(orig, dtype=np.float64)
+            if a.ndim == 3:
+                w_sig = w_sig[..., None]
+            ctx["img"] = processed * (1.0 - w_sig) + a * w_sig
+            _log(f"   via {via} (SNR-protected: high-SNR signal preserved)")
+        else:
+            ctx["img"] = masks.background_masked(orig, processed) if params.useNRMask else processed
+            _log(f"   via {via}{' (background-masked)' if params.useNRMask else ''}")
+
+    linear_nxt = do_nr and not params.inputStretched and tools.noisex.is_available()
+    if linear_nxt:
+        def _nr_linear():
+            orig = ctx["img"]
+            try:
+                processed = tools.noisex.denoise(orig); via = "NoiseXTerminator (linear)"
+            except Exception as e:                          # domain-agnostic fallback, still linear
+                _log(f"   NoiseXTerminator failed ({e}); MMT fallback")
+                processed = multiscale.noise_reduction_mmt(orig); via = "MMT fallback"
+            _finish_nr(orig, processed, via)
+        add("Noise reduction (linear — NoiseXTerminator)", _nr_linear)
 
     # --- auto-stretch (js:3376-3384) ---
     if params.inputStretched:
@@ -375,41 +405,23 @@ def run_pipeline(
             ctx["img"] = deepen_mod.deepen_stretch(ctx["img"], params.deepen)
         add(f"Deepen ({100 * params.deepen:.0f}% additional stretch, highlights protected)", _deepen)
 
-    # --- noise reduction (post-stretch): DeepSNR > GraXpert > MMT. Relocated from PI's
-    #     linear slot (js:3369) because the NN denoisers operate on stretched images. ---
+    # --- noise reduction, POST-STRETCH slot: DeepSNR > GraXpert > MMT (the NN denoisers
+    #     trained on stretched data). Skipped when NoiseX already denoised in the linear
+    #     slot above; NoiseX is deliberately NOT in this chain — its slot is linear. ---
     if preview and params.doNR:
         _log("-- Noise reduction skipped (preview: off)")
+    elif do_nr and linear_nxt:
+        _log("-- Noise reduction (post-stretch) skipped (NoiseX ran in the linear slot)")
     elif do_nr:
-        masked = params.useNRMask
         def _nr():
             orig = ctx["img"]
-            processed = None; via = ""
-            if tools.noisex.is_available():                 # the real NoiseXTerminator
-                try:
-                    processed = tools.noisex.denoise(orig); via = "NoiseXTerminator"
-                except Exception as e:
-                    _log(f"   NoiseXTerminator failed ({e}); falling back")
-                    processed = None
-            if processed is None:
-                if tools.deepsnr.is_available():
-                    processed = tools.deepsnr.denoise(orig); via = "DeepSNR"
-                elif tools.graxpert.is_available():
-                    processed = tools.graxpert.denoise(orig); via = "GraXpert"
-                else:
-                    processed = multiscale.noise_reduction_mmt(orig); via = "MMT fallback"
-            sr = ctx["snr_raw"]
-            if sr is not None:
-                # Protect high-SNR signal/stars from over-smoothing; low-SNR background is denoised
-                # in full. w_sig high where SNR is high (raw is low there).
-                w_sig = snr_protect * (1.0 - sr)
-                a = np.asarray(orig, dtype=np.float64)
-                if a.ndim == 3:
-                    w_sig = w_sig[..., None]
-                ctx["img"] = processed * (1.0 - w_sig) + a * w_sig
-                _log(f"   via {via} (SNR-protected: high-SNR signal preserved)")
+            if tools.deepsnr.is_available():
+                processed = tools.deepsnr.denoise(orig); via = "DeepSNR"
+            elif tools.graxpert.is_available():
+                processed = tools.graxpert.denoise(orig); via = "GraXpert"
             else:
-                ctx["img"] = masks.background_masked(orig, processed) if masked else processed
-                _log(f"   via {via}{' (background-masked)' if masked else ''}")
+                processed = multiscale.noise_reduction_mmt(orig); via = "MMT fallback"
+            _finish_nr(orig, processed, via)
         add("Noise reduction", _nr)
 
     # --- nonlinear stage ---

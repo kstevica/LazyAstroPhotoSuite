@@ -13,8 +13,11 @@ import textwrap
 import numpy as np
 import pytest
 
-from lazystretch.external import BlurX, NoiseX, RCStarX, Tools
+from lazystretch.external import (SPCC, BlurX, DeepSNR, GraXpert, NoiseX, RCStarX, StarX,
+                                   Tools)
 from lazystretch.external.rcastro import resolve_rcastro
+from lazystretch.objects.model import Parameters
+from lazystretch.pipeline.runcore import run_pipeline
 
 
 def _make_fake_rcastro(dirpath) -> str:
@@ -119,6 +122,46 @@ def test_tools_star_tool_prefers_rcastro(tmp_path, fake_rcastro):
     # neither -> None
     t3 = Tools.resolve(starnet_path="/no/such", rcastro_path="/no/such")
     assert t3.star_tool() is None
+
+
+def _linear_scene(h=90, w=130):
+    yy, xx = np.mgrid[0:h, 0:w].astype(float)
+    neb = 0.06 + 0.05 * np.exp(-(((xx - w / 2) / 40) ** 2 + ((yy - h / 2) / 26) ** 2))
+    img = np.stack([neb, neb * 0.85, neb * 1.05], -1)
+    rng = np.random.default_rng(4)
+    return np.clip(img + rng.normal(0, 0.006, img.shape), 0, 1).astype(np.float64)
+
+
+def test_noisex_runs_in_linear_slot_before_stretch(fake_rcastro):
+    # only NoiseX present (others absent); NR must run in the LINEAR slot, before the stretch
+    tools = Tools(GraXpert("/nope"), StarX("/nope"), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX(fake_rcastro))
+    p = Parameters.for_object("galaxy")
+    p.doNR = True; p.inputStretched = False
+    r = run_pipeline(_linear_scene(), p, preview=False, tools=tools)
+    assert r.steps_skipped == []
+    joined = " ".join(r.log)
+    assert "via NoiseXTerminator (linear)" in joined
+    assert "Noise reduction (post-stretch) skipped (NoiseX ran in the linear slot)" in joined
+    # ordering: the linear NR step lands BEFORE the auto-stretch step
+    nr = next(i for i, s in enumerate(r.steps_run) if "linear — NoiseXTerminator" in s)
+    st = next(i for i, s in enumerate(r.steps_run) if s.startswith("Auto-stretch"))
+    assert nr < st
+    # and there is no separate post-stretch "Noise reduction" step
+    assert not any(s == "Noise reduction" for s in r.steps_run)
+
+
+def test_noisex_absent_keeps_poststretch_nr(fake_rcastro):
+    # NoiseX absent -> the post-stretch chain still runs (here: MMT, since no DeepSNR/GraXpert)
+    tools = Tools(GraXpert("/nope"), StarX("/nope"), DeepSNR("/nope"), SPCC(),
+                  BlurX("/nope"), RCStarX("/nope"), NoiseX("/nope"))
+    p = Parameters.for_object("galaxy")
+    p.doNR = True; p.inputStretched = False
+    r = run_pipeline(_linear_scene(), p, preview=False, tools=tools)
+    joined = " ".join(r.log)
+    assert "linear — NoiseXTerminator" not in joined
+    assert any(s == "Noise reduction" for s in r.steps_run)   # post-stretch slot ran
+    assert "MMT fallback" in joined
 
 
 def test_tools_status_lists_rcastro(fake_rcastro):
