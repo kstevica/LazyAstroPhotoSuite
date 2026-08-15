@@ -48,7 +48,7 @@ from PySide6.QtWidgets import (
 from ..develop import DevelopDocument, ops as dev_ops
 from ..develop import masks as dev_masks
 from ..io.image_io import load_image, save_image
-from .preview import PreviewView
+from .preview import FullScreenViewer, PreviewView
 from .widgets import FloatSlider, LogExportMixin
 from .worker import CallableWorker
 
@@ -856,6 +856,7 @@ class LazyDevelopPanel(QWidget):
         self._edit_proxy: Optional[np.ndarray] = None  # proxy of an edited step's input
         self._auto_mask_map: dict = {}                # canonical semantic name → installed name
         self._preview_kind: Optional[str] = None      # None | "full" | "proxy"
+        self._fs_viewer: Optional[FullScreenViewer] = None  # kept alive while full-screen
 
         self._preview_timer = QTimer(self)
         self._preview_timer.setSingleShot(True)
@@ -1062,7 +1063,11 @@ class LazyDevelopPanel(QWidget):
         self.fit_btn.clicked.connect(lambda: self.canvas.fit())
         self.before_btn = QPushButton("Show original"); self.before_btn.setCheckable(True)
         self.before_btn.toggled.connect(self._toggle_before)
+        self.fullscreen_btn = QPushButton("⛶ Full screen")
+        self.fullscreen_btn.setToolTip("Show the current image full-screen (Esc to close).")
+        self.fullscreen_btn.clicked.connect(self._show_fullscreen)
         bar.addWidget(self.fit_btn); bar.addWidget(self.before_btn)
+        bar.addWidget(self.fullscreen_btn)
         bar.addStretch(1)
         self.status_label = QLabel("")
         bar.addWidget(self.status_label)
@@ -1853,6 +1858,19 @@ class LazyDevelopPanel(QWidget):
             self.canvas.set_image(np.asarray(self.doc.base, dtype=np.float32), keep_view=True)
         else:
             self._refresh_canvas()
+
+    def _show_fullscreen(self):
+        """Open the image currently on the canvas in a full-screen viewer (Esc to close)."""
+        arr = self.canvas.current_array()
+        if arr is None:
+            self.status_label.setText("Nothing to show full-screen yet — open an image first.")
+            return
+        self._fs_viewer = FullScreenViewer()   # kept on self so it isn't GC'd while open
+        self._fs_viewer.setWindowTitle("LazyDevelop — full screen (Esc to close)")
+        self._fs_viewer.set_image(arr, keep_view=False)
+        self._fs_viewer.showFullScreen()
+        self._fs_viewer.raise_()
+        self._fs_viewer.activateWindow()
 
     # ------------------------------------------------------------------ enable
     def _set_enabled_tools(self, on):

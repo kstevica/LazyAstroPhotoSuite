@@ -55,6 +55,25 @@ def test_tree_click_opens_tool(qapp):
     assert p.tool_panel.op.name == "curves"
 
 
+def test_develop_fullscreen_button(qapp):
+    from lazystretch.gui.develop_window import LazyDevelopPanel
+    from lazystretch.gui.preview import FullScreenViewer
+
+    p = LazyDevelopPanel()
+    assert hasattr(p, "fullscreen_btn")
+    assert p.canvas.current_array() is None
+    p._show_fullscreen()                       # nothing loaded -> no viewer, just a message
+    assert p._fs_viewer is None
+
+    p.doc = DevelopDocument(_demo())
+    p._set_enabled_tools(True); p._refresh_canvas(fit=True)
+    assert p.canvas.current_array() is not None
+    p._show_fullscreen()
+    assert isinstance(p._fs_viewer, FullScreenViewer)
+    assert p._fs_viewer.current_array() is not None
+    p._fs_viewer.close()
+
+
 def test_shell_registers_develop_tool(qapp):
     from lazystretch.gui import shell
     keys = [t["key"] for t in shell._TOOLS]

@@ -1,10 +1,16 @@
 # Changelog
 
-All notable changes to **LazyStretchPy** (the standalone Python port of the LazyStretch
-suite) are recorded here. The format follows [Keep a Changelog](https://keepachangelog.com/);
-the project is pre-1.0 (`0.1.0`), so everything below is under `[Unreleased]` until tagged.
+All notable changes to **LazyAstroPhotoSuite** are recorded here. The format follows
+[Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.0.0] — 2026-08-15
+
+First public release of the suite: LazyStack, LazyStretch, LazyDevelop, LazyFlight and
+LazyMoonSun, as native macOS and Windows apps.
+
+### Added
+- **Full-screen button in LazyDevelop** — shows the current canvas image full-screen
+  (Esc to close), matching LazyStretch.
 
 ### Docs & branding
 - **README rewritten** as a standalone-product doc (LazyAstroPhotoSuite) and a new **USAGE.md**
