@@ -14,6 +14,7 @@ PATHS: Dict[str, Callable[..., List[Cam]]] = {
     "flythrough": _camera.flythrough,
     "flyby": _camera.flyby,
     "orbit": _camera.orbit,
+    "pullback": _camera.pullback,
 }
 
 
@@ -41,7 +42,7 @@ def build_cameras(path: str, n_frames: int, **kw) -> List[Cam]:
 
 def render_flythrough(img: np.ndarray, out_path: str, *, seconds: float = 8.0,
                       fps: int = 24, path: str = "flythrough",
-                      render_width: int = 1280,
+                      render_width: int = 1280, mode: str = "parallax",
                       masks: Optional[Dict[str, np.ndarray]] = None,
                       engine_kw: Optional[dict] = None,
                       path_kw: Optional[dict] = None,
@@ -49,11 +50,14 @@ def render_flythrough(img: np.ndarray, out_path: str, *, seconds: float = 8.0,
                       ) -> str:
     """Render ``img`` (float [0,1] mono/RGB) to an mp4 at ``out_path``.
 
-    ``on_frame(i, n, frame)`` is called per frame for progress / preview. Returns
-    the written path.
+    ``mode`` is ``"parallax"`` (fast depth warp) or ``"volumetric"`` (slower
+    ray-marched glow). ``on_frame(i, n, frame)`` is called per frame for progress
+    / preview. Returns the written path.
     """
+    ekw = dict(engine_kw or {})
+    ekw.setdefault("mode", mode)
     rgb = _resize(_as_rgb(img), int(render_width))
-    engine = Flythrough3D(rgb, masks=masks, **(engine_kw or {}))
+    engine = Flythrough3D(rgb, masks=masks, **ekw)
     n = max(int(round(seconds * fps)), 2)
     cams = build_cameras(path, n, **(path_kw or {}))
 

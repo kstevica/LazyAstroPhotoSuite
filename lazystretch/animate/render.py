@@ -54,16 +54,25 @@ class Flythrough3D:
                  masks: Optional[Dict[str, np.ndarray]] = None,
                  overscan: float = 1.16, max_stars: int = 1200,
                  star_depth: Tuple[float, float] = (0.62, 1.0),
-                 bloom: float = 0.45) -> None:
+                 bloom: float = 0.45, mode: str = "parallax",
+                 vol_slabs: int = 18, absorb: float = 2.4,
+                 emission: float = 1.0) -> None:
         rgb = _as_rgb(img)
         self.h, self.w = rgb.shape[:2]
         self.overscan = float(overscan)
         self.bloom_strength = float(bloom)
+        if mode not in ("parallax", "volumetric"):
+            raise ValueError(f"mode must be 'parallax' or 'volumetric', got {mode!r}")
+        self.mode = mode
+        self.vol_slabs = int(vol_slabs)
+        self.absorb = float(absorb)
+        self.emission = float(emission)
 
         self.depth = depth_field(rgb, masks=masks).astype(np.float64)
         self.base = starless(rgb)                       # nebula without stars
         yy, xx = np.mgrid[0:self.h, 0:self.w].astype(np.float64)
         self._yy, self._xx = yy, xx                     # output coordinate grid
+        self._volume = None                             # built lazily for volumetric
 
         # --- star point cloud (parallaxed independently) ----------------------
         st = detect_stars(rgb, max_stars=max_stars)
@@ -103,6 +112,75 @@ class Flythrough3D:
             out[..., ch] = map_coordinates(self.base[..., ch], coords, order=1,
                                            mode="nearest", prefilter=False)
         return np.clip(out, 0.0, 1.0)
+
+    # ----------------------------------------------------------- volumetric
+    def _ensure_volume(self) -> None:
+        """Slice ONLY the bright emission (gas) into soft depth slabs. The faint
+        background is intentionally excluded — it is drawn once by the continuous
+        warp, so it can never replicate into radial streaks. Each slab carries
+        emission + absorption; a ray marches front-to-back through them for the
+        fly-through-glow and self-occlusion."""
+        if self._volume is not None:
+            return
+        from scipy.ndimage import gaussian_filter
+
+        base = np.stack([gaussian_filter(self.base[..., c], 1.0)
+                         for c in range(3)], axis=-1).astype(np.float64)
+        lum = base[..., 0] * 0.2126 + base[..., 1] * 0.7152 + base[..., 2] * 0.0722
+        # membership in "this is bright gas" — the background contributes ~0
+        lo, hi = np.percentile(lum, [55.0, 96.0])
+        t = np.clip((lum - lo) / max(hi - lo, 1e-6), 0.0, 1.0)
+        gas = (t * t * (3.0 - 2.0 * t))                  # smoothstep
+
+        k = max(self.vol_slabs, 2)
+        centers = np.linspace(0.0, 1.0, k)               # 0 far … 1 near
+        sigma = 1.1 / (k - 1)
+        z = self.depth
+        bands = [np.exp(-0.5 * ((z - c) / sigma) ** 2) for c in centers]
+        norm = np.sum(bands, axis=0) + 1e-6              # partition of unity
+        emis, absb = [], []
+        for m in bands:
+            w = (m / norm) * gas                         # gate to bright gas only
+            emis.append((base * w[..., None]).astype(np.float32))
+            absb.append(np.clip(lum * w * self.absorb, 0.0, 0.9).astype(np.float32))
+        order = np.argsort(centers)[::-1]                # near → far
+        self._volume = ([float(centers[i]) for i in order],
+                        [emis[i] for i in order],
+                        [absb[i] for i in order])
+
+    def _march_volume(self, cam: Cam) -> np.ndarray:
+        """Continuous-warp background + front-to-back emission/absorption march of
+        the gas slabs on top — glow and depth without background streaking."""
+        from scipy.ndimage import affine_transform
+
+        self._ensure_volume()
+        centers, emis, absb = self._volume
+        h, w = self.h, self.w
+        cy, cx = (h - 1) / 2.0, (w - 1) / 2.0
+        th = np.deg2rad(cam.roll)
+        cos, sin = np.cos(th), np.sin(th)
+        rot_inv = np.array([[cos, sin], [-sin, cos]])
+        cvec = np.array([cy, cx])
+
+        glow = np.zeros((h, w, 3), np.float32)
+        trans = np.ones((h, w), np.float32)              # remaining transmittance
+        for c, e, a in zip(centers, emis, absb):         # near → far
+            s = _depth_scale(cam.zoom, c, self.overscan)
+            pan_gain = _FAR_PAN + (_NEAR_PAN - _FAR_PAN) * c
+            off_t = np.array([cam.pan_y * h * pan_gain, cam.pan_x * w * pan_gain])
+            m2 = (1.0 / s) * rot_inv
+            off2 = cvec - m2 @ (cvec + off_t)
+            m3 = np.eye(3)
+            m3[:2, :2] = m2
+            we = affine_transform(e, m3, offset=[off2[0], off2[1], 0.0], order=1,
+                                  mode="constant", cval=0.0, prefilter=False)
+            wa = affine_transform(a, m2, offset=off2, order=1,
+                                  mode="constant", cval=0.0, prefilter=False)
+            glow += trans[..., None] * (self.emission * we)
+            trans *= (1.0 - wa)
+
+        bg = self._warp_nebula(cam)                      # clean, no replication
+        return np.clip(1.0 - (1.0 - bg) * (1.0 - glow), 0.0, 1.0)   # screen glow on
 
     # ---------------------------------------------------------------- stars
     def _render_stars(self, cam: Cam) -> np.ndarray:
@@ -154,7 +232,8 @@ class Flythrough3D:
     # --------------------------------------------------------------- render
     def render_frame(self, cam: Cam) -> np.ndarray:
         """Render one frame → float32 ``(H, W, 3)`` in ``[0, 1]``."""
-        neb = self._warp_nebula(cam)
+        neb = (self._march_volume(cam) if self.mode == "volumetric"
+               else self._warp_nebula(cam))
         stars = self._render_stars(cam)
         out = 1.0 - (1.0 - neb) * (1.0 - stars)         # screen (additive light)
         return np.clip(self._bloom(out), 0.0, 1.0)

@@ -63,6 +63,9 @@ _TOOLS = [
     {"key": "develop", "brand": "LazyDevelop", "role": "Finish", "group": "process",
      "tagline": "Hand-finish a stretched master — curves, colour, detail, masks, semantic auto.",
      "thumb": "card_develop.jpg", "accent": (150, 128, 232)},
+    {"key": "fly", "brand": "LazyFlight", "role": "Animate", "group": "process",
+     "tagline": "Turn a finished still into a faithful 3D fly-through video — nothing invented.",
+     "thumb": "card_fly.jpg", "accent": (96, 206, 200)},
     {"key": "moonsun", "brand": "LazyMoonSun", "role": "Sun & Moon", "group": "solar",
      "tagline": "Lucky-imaging burst stacking and finishing for the Sun and Moon.",
      "thumb": "card_moonsun.jpg", "accent": (232, 176, 92)},
@@ -75,6 +78,7 @@ _TITLES = {
     "stack": "LazyStack",
     "moonsun": "LazyMoonSun",
     "develop": "LazyDevelop",
+    "fly": "LazyFlight",
 }
 
 
@@ -257,7 +261,7 @@ class LauncherPage(QWidget):
         root.addSpacing(34)
 
         # --- pipeline grid so columns align:
-        #   col:   0=Stack   1=→   2=Stretch   3=→   4=Develop
+        #   col:   0=Stack  1=→  2=Stretch  3=→  4=Develop  5=→  6=Fly
         #   Sun & Moon sits in row 3, column 2 → directly under LazyStretch.
         blue = _TOOLS_BY_KEY["stack"]["accent"]
         violet = _TOOLS_BY_KEY["stretch"]["accent"]
@@ -267,12 +271,14 @@ class LauncherPage(QWidget):
         grid.setHorizontalSpacing(20)
         grid.setVerticalSpacing(12)
         grid.addWidget(_section_label("Build the master", blue), 0, 0, head)
-        grid.addWidget(_section_label("Process the image", violet), 0, 2, 1, 3, head)
+        grid.addWidget(_section_label("Process the image", violet), 0, 2, 1, 5, head)
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["stack"], on_open), 1, 0)
         grid.addLayout(self._arrow(), 1, 1)
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["stretch"], on_open), 1, 2)
         grid.addLayout(self._arrow(), 1, 3)           # arrow between Stretch and Finish
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["develop"], on_open), 1, 4)
+        grid.addLayout(self._arrow(), 1, 5)           # arrow between Finish and Animate
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["fly"], on_open), 1, 6)
         grid.setRowMinimumHeight(2, 26)               # gap before Sun & Moon
         grid.addWidget(_section_label("Sun & Moon", amber), 3, 2, head)
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["moonsun"], on_open), 4, 2)
@@ -426,6 +432,9 @@ class AppShell(QMainWindow):
         if key == "develop":
             from .develop_window import LazyDevelopPanel
             return LazyDevelopPanel()
+        if key == "fly":
+            from .flight_window import LazyFlightPanel
+            return LazyFlightPanel()
         return None
 
     def open_tool(self, key: str):

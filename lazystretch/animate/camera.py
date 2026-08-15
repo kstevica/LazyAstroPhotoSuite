@@ -50,6 +50,24 @@ def flyby(n: int, *, span: float = 0.16, zoom_end: float = 1.14,
     return out
 
 
+def pullback(n: int, *, zoom_end: float = 1.4, roll_deg: float = 1.0,
+             sway: float = 0.01) -> List[Cam]:
+    """Reveal: begin pushed into the object, ease back out to the full field.
+    ``zoom_end`` is read as the *starting* zoom (the deepest point)."""
+    out: List[Cam] = []
+    z0 = zoom_end
+    for i in range(n):
+        u = i / max(n - 1, 1)
+        e = _ease(u)
+        zoom = z0 + (1.0 - z0) * e
+        px = sway * np.sin(u * 2.0 * np.pi)
+        py = sway * 0.7 * np.sin(u * 2.0 * np.pi + 1.1)
+        roll = roll_deg * np.sin(u * np.pi) * 0.6
+        out.append(Cam(zoom=zoom, pan_x=px, pan_y=py, roll=roll,
+                       twinkle=_twinkle(u)))
+    return out
+
+
 def orbit(n: int, *, radius: float = 0.05, zoom_end: float = 1.28,
           roll_deg: float = 1.2) -> List[Cam]:
     """Sweep the camera around a small circle while pushing in — a reveal."""

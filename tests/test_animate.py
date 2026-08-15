@@ -2,7 +2,8 @@
 import numpy as np
 import pytest
 
-from lazystretch.animate import Flythrough3D, Cam, flythrough, flyby, orbit
+from lazystretch.animate import (Flythrough3D, Cam, flythrough, flyby, orbit,
+                                 pullback)
 from lazystretch.animate.depth import depth_field, starless, detect_stars
 from lazystretch.animate.clip import build_cameras
 
@@ -88,6 +89,23 @@ def test_no_nan_from_nan_input():
     assert np.isfinite(fr).all()
 
 
+def test_volumetric_mode_renders():
+    rgb, _ = _scene()
+    eng = Flythrough3D(rgb, max_stars=80, mode="volumetric", vol_slabs=8)
+    a = eng.render_frame(Cam(zoom=1.0))
+    b = eng.render_frame(Cam(zoom=1.3, pan_x=0.02))
+    assert a.shape == rgb.shape and a.dtype == np.float32
+    assert np.isfinite(a).all()
+    assert 0.0 <= float(a.min()) and float(a.max()) <= 1.0
+    assert float(np.mean(np.abs(a - b))) > 1e-3           # camera move changes it
+
+
+def test_invalid_mode_rejected():
+    rgb, _ = _scene()
+    with pytest.raises(ValueError):
+        Flythrough3D(rgb, mode="hyperdrive")
+
+
 @pytest.mark.parametrize("name,fn", [("flythrough", flythrough),
                                      ("flyby", flyby), ("orbit", orbit)])
 def test_camera_paths(name, fn):
@@ -96,6 +114,13 @@ def test_camera_paths(name, fn):
     assert cams[0].zoom == pytest.approx(1.0, abs=1e-6)   # starts at rest
     assert cams[-1].zoom > 1.0                            # ends pushed in
     assert build_cameras(name, 10)                        # registered in PATHS
+
+
+def test_pullback_reveals_out():
+    cams = pullback(24, zoom_end=1.4)
+    assert build_cameras("pullback", 10)                  # registered in PATHS
+    assert cams[0].zoom == pytest.approx(1.4, abs=1e-6)   # starts pushed in
+    assert cams[-1].zoom == pytest.approx(1.0, abs=1e-6)  # ends at the full field
 
 
 def test_build_cameras_rejects_unknown_path():

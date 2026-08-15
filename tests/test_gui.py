@@ -111,6 +111,37 @@ def test_shell_opens_stack_panel(qapp):
     assert isinstance(p, LazyStackParams)
 
 
+def test_shell_opens_flight_panel(qapp):
+    from lazystretch.gui.flight_window import LazyFlightPanel
+    from lazystretch.gui.shell import AppShell
+    from lazystretch.animate.render import Cam
+
+    s = AppShell()
+    s.open_tool("fly")
+    panel = s._panels.get("fly")
+    assert isinstance(panel, LazyFlightPanel)
+    assert s.windowTitle() == "LazyFlight"
+
+    # feed a synthetic image (bypass the file dialog) and drive the preview
+    h, w = 120, 180
+    yy, xx = np.mgrid[0:h, 0:w]
+    blob = np.exp(-(((yy - h / 2) / 30.0) ** 2 + ((xx - w / 2) / 45.0) ** 2))
+    img = np.stack([blob * 0.9, blob * 0.5, blob * 0.35], axis=-1).astype(np.float32)
+    img[40, 60] = 1.0
+    panel.img = img
+    panel._reopen_engine()
+    assert panel._engine is not None and len(panel._cams) > 1
+    panel.scrub.setValue(50)
+    panel._render_preview()                              # must not raise
+    # depth view toggles, mode switch, and a fresh camera path all work
+    panel.show_depth.setChecked(True); panel._render_preview()
+    panel.show_depth.setChecked(False)
+    panel.mode_combo.setCurrentIndex(1)
+    assert panel._mode() == "volumetric"
+    panel.path_combo.setCurrentText("orbit"); panel._rebuild_cams()
+    assert isinstance(panel._cams[0], Cam)
+
+
 def test_shell_opens_moonsun_panel(qapp):
     from lazystretch.gui.moonsun_window import LazyMoonSunPanel
     from lazystretch.gui.shell import AppShell

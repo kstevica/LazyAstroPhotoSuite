@@ -18,7 +18,7 @@ encoded by :func:`encode.write_video`.
 from __future__ import annotations
 
 from .render import Cam, Flythrough3D
-from .camera import flythrough, flyby, orbit
+from .camera import flythrough, flyby, orbit, pullback
 from .encode import write_video, ffmpeg_available
 from .clip import render_flythrough, PATHS
 
@@ -28,6 +28,7 @@ __all__ = [
     "flythrough",
     "flyby",
     "orbit",
+    "pullback",
     "write_video",
     "ffmpeg_available",
     "render_flythrough",
