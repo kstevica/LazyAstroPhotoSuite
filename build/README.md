@@ -51,6 +51,28 @@ bundle's `CFBundleName` = **LazyAstroPhotoSuite**, with a themed icon (`build/ma
 the app degrades gracefully without them. Install separately if wanted: the RC-Astro CLI
 (`rc-astro` — BlurX/StarX/NoiseX), StarNet, GraXpert, DeepSNR, ASTAP.
 
+## Windows build
+
+PyInstaller **cannot cross-compile** a Windows `.exe` from macOS — it must run on Windows.
+Two ways:
+
+- **GitHub Actions (recommended)** — `.github/workflows/build-windows.yml` builds on a
+  `windows-latest` runner and uploads `LazyAstroPhotoSuite-windows-x64.zip` as an artifact.
+  Trigger it from the repo's **Actions** tab → *Build Windows app* → *Run workflow*, or push a
+  `v*` tag. No Windows machine needed. (A Wine wrapper like Sikarugir runs Windows apps *on*
+  a Mac — it does **not** produce a Windows build.)
+- **A Windows VM / PC** — install Python 3.11 (x64), then:
+  ```powershell
+  py -3.11 -m venv .venv-build
+  .\.venv-build\Scripts\pip install -e ".[gui,video,bg,tools,build]"
+  powershell -ExecutionPolicy Bypass -File build\build_windows.ps1
+  ```
+  Output: `build\dist\LazyAstroPhotoSuite\LazyAstroPhotoSuite.exe` (self-contained folder).
+
+The Windows icon is `build/appicon.ico`. Same design as macOS; `imageio-ffmpeg` ships a
+Windows ffmpeg binary, so LazyFlight export works there too. For distribution, sign the exe
+with an Authenticode certificate (`signtool`) to avoid SmartScreen warnings.
+
 ## Distributing to other Macs (signing + notarization)
 
 Unsigned, the `.app` runs locally but other users hit Gatekeeper. To distribute:

@@ -1,0 +1,37 @@
+name: Build Windows app
+
+# Builds LazyAstroPhotoSuite.exe on a Windows runner (PyInstaller can't cross-compile from
+# macOS). Runs on manual dispatch and on version tags; download the .zip from the run's
+# "Artifacts". To also build on every push to main, add `push: branches: [main]` below.
+on:
+  workflow_dispatch:
+  push:
+    tags: ["v*"]
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          architecture: x64
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gui,video,bg,tools,build]"
+
+      - name: Build the .exe
+        run: powershell -ExecutionPolicy Bypass -File build/build_windows.ps1
+
+      - name: Package
+        run: Compress-Archive -Path build/dist/LazyAstroPhotoSuite/* -DestinationPath LazyAstroPhotoSuite-windows-x64.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LazyAstroPhotoSuite-windows-x64
+          path: LazyAstroPhotoSuite-windows-x64.zip
+          retention-days: 30
