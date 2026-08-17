@@ -6,6 +6,28 @@ All notable changes to **LazyAstroPhotoSuite** are recorded here. The format fol
 ## [Unreleased]
 
 ### Added
+- **LazyNightscape — its own tool.** The foreground-locked Milky Way workflow (sky-only
+  registration + sharp-foreground companion) is now a dedicated launcher card and window,
+  split out of LazyStack. The window shows only what a fixed-tripod sky stack needs
+  (register-on-sky, normalization, crop, optional calibration) plus the foreground/sky
+  segmentation and paint tools; nightscape mode is implied (no on/off checkbox). The plain
+  LazyStack window is now deep-sky-only.
+- **Develop a history image in one click (LazyStretch).** Each history run is already saved
+  as a 16-bit TIFF; a new "Develop ▸" button beside "Continue from image ▸" opens that TIFF
+  straight into LazyDevelop (the shell switches panels and loads it).
+- **Keyboard preview in the Develop mask list.** Arrow-key navigation now previews the
+  highlighted mask exactly like clicking it; a click on the already-shown mask still toggles
+  back to the image (robust against the click-that-also-moves-selection double-event).
+
+### Changed
+- **History captures every dial and option.** An audit of all exposed controls found that
+  `significance` plus `useClassicalDeconv`, `developForeground`, `inputStretched` and
+  `debugBackground` were not persisted; history now round-trips **all** of them. Portable
+  `.lsrecipe` files still exclude input-state / debug bools (`inputStretched`,
+  `debugBackground`) so a recipe stays applicable on any input — only the on-disk history
+  keeps them (`recipe_from_params(..., include_state=True)`).
+
+### Added
 - **Significance stretch (LazyStretch).** A new "Significance (needs stack)" dial
   (`--significance` in the CLI): the displayed brightness of every region is held to what
   its measured SNR statistically supports. The per-pixel significance

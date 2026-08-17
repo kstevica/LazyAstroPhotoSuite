@@ -484,7 +484,7 @@ def test_gui_recipe_controls_roundtrip(qapp, tmp_path):
 def test_nightscape_graded_brush_and_cursor(qapp):
     from PySide6.QtCore import QPointF
     from lazystretch.gui.stack_window import LazyStackPanel
-    sp = LazyStackPanel()
+    sp = LazyStackPanel(nightscape=True)
     assert (sp.ns_bias._lo, sp.ns_bias._hi, sp.ns_bias._dec) == (-0.10, 0.10, 3)   # finer bias
     pv = sp.preview
     pv.set_image(np.stack([np.linspace(0, 1, 200)[None, :].repeat(160, 0)] * 3, -1), keep_view=False)
@@ -501,7 +501,7 @@ def test_nightscape_graded_brush_and_cursor(qapp):
 def test_nightscape_fill_opposite(qapp):
     from PySide6.QtCore import QPointF
     from lazystretch.gui.stack_window import LazyStackPanel
-    sp = LazyStackPanel()
+    sp = LazyStackPanel(nightscape=True)
     pv = sp.preview
     pv.set_image(np.zeros((160, 200, 3)), keep_view=False)
     pv.set_paint_mode("sky"); pv.set_brush(15); pv.set_strength(1.0)
@@ -511,3 +511,96 @@ def test_nightscape_fill_opposite(qapp):
     assert (pv.scribbles() < -0.5).any()                                     # rest filled as earth
     pv.clear_scribbles()
     assert pv.fill_opposite() is False                                       # nothing painted → no-op
+
+
+def test_shell_opens_nightscape_panel(qapp):
+    """Nightscape is its own card/window: LazyStackPanel(nightscape=True), no deep-sky group."""
+    from lazystretch.gui.shell import AppShell, _TOOLS_BY_KEY
+    from lazystretch.gui.stack_window import LazyStackPanel
+
+    assert "nightscape" in _TOOLS_BY_KEY
+    s = AppShell()
+    s.open_tool("nightscape")
+    panel = s._panels.get("nightscape")
+    assert isinstance(panel, LazyStackPanel) and panel._nightscape is True
+    assert s.windowTitle() == "LazyNightscape"
+    assert hasattr(panel, "ns_bias")                      # segmentation controls present
+    p = panel._collect_params()
+    assert p.nightscape is True and p.fix_walking_noise is False
+    # the plain LazyStack window no longer carries the nightscape group
+    s.open_tool("stack")
+    stack = s._panels["stack"]
+    assert stack._nightscape is False and not hasattr(stack, "ns_bias")
+    assert stack._collect_params().nightscape is False
+
+
+def test_develop_from_history_opens_and_loads(qapp, tmp_path, monkeypatch):
+    """The stretch history 'Develop' button emits a TIFF path; the shell loads it in Develop."""
+    import numpy as np
+    from lazystretch.gui.shell import AppShell
+    from lazystretch.io.image_io import save_image
+
+    tif = tmp_path / "hist.tif"
+    save_image(str(tif), np.clip(np.random.default_rng(0).random((32, 40, 3)), 0, 1), bit_depth=16)
+
+    s = AppShell()
+    s.open_tool("stretch")
+    stretch = s._panels["stretch"]
+    stretch.openInDevelop.emit(str(tif))                  # what _develop_selected fires
+    dev = s._panels.get("develop")
+    assert dev is not None and dev.doc is not None        # shell switched + loaded it
+    assert s.stack.currentWidget() is dev
+
+
+def test_significance_and_all_options_round_trip_history(qapp):
+    """Every GUI dial/option (incl. significance, snrProtect) survives a recipe round-trip."""
+    from lazystretch.data.loader import get_data
+    from lazystretch.io.recipes import apply_recipe, recipe_from_params
+    from lazystretch.objects.model import Parameters
+
+    d = get_data()
+    opts = ["doBgExtract", "useGradientCorrection", "darkLaneGC", "doColorCal", "preferSPCC",
+            "doBXT", "useClassicalDeconv", "doNR", "useNRMask", "doSCNR", "doHDR", "doStarReduce",
+            "haloTamer", "removeStars", "useMask", "adaptiveFloor", "starProtect",
+            "doLocalContrast", "protectCores", "enhanceEmission", "reduceCast",
+            "developForeground", "inputStretched", "debugBackground"]
+    base = Parameters.for_object("generic")
+
+    def hist_roundtrip(attr, value):                      # the on-disk history path
+        p = Parameters.for_object("generic"); setattr(p, attr, value)
+        p2 = Parameters.for_object("generic")
+        apply_recipe(p2, recipe_from_params(p, d, include_state=True), d)
+        return getattr(p2, attr)
+
+    for k in ("snrProtect", "significance"):
+        assert hist_roundtrip(k, 0.37) == 0.37, f"{k} not persisted to history"
+    for k in opts:                                        # flip each bool from its default
+        tv = not bool(getattr(base, k))
+        assert hist_roundtrip(k, tv) == tv, f"{k} not persisted to history"
+    # portable .lsrecipe files must still exclude input-state (the recipe-portability contract)
+    p = Parameters.for_object("generic"); p.inputStretched = True
+    assert "inputStretched" not in recipe_from_params(p, d)
+
+
+def test_develop_mask_keyboard_previews_like_click(qapp):
+    """Arrow-key navigation in the mask list previews the mask (currentItemChanged), and a
+    click on the already-shown mask toggles back to the image."""
+    import numpy as np
+    from lazystretch.develop.document import DevelopDocument
+    from lazystretch.gui.develop_window import LazyDevelopPanel
+
+    panel = LazyDevelopPanel()
+    img = np.clip(np.random.default_rng(1).random((24, 24, 3)), 0, 1)
+    panel.doc = DevelopDocument(img)
+    panel.doc.masks["A"] = np.zeros((24, 24), np.float32)
+    panel.doc.masks["B"] = np.ones((24, 24), np.float32)
+    panel._refresh_masks()
+    # keyboard/selection -> preview (no click)
+    panel.mask_list.setCurrentRow(0)
+    assert panel._showing_mask == "A"
+    panel.mask_list.setCurrentRow(1)
+    assert panel._showing_mask == "B"
+    # a click on the already-current (shown) mask returns to the image
+    panel._mask_shown_via_signal = False                  # as the mouse-press event filter sets it
+    panel._toggle_mask_view(panel.mask_list.item(1))
+    assert panel._showing_mask is None

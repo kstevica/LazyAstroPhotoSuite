@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, QRectF, QTimer, Signal
+from PySide6.QtCore import QEvent, Qt, QRectF, QTimer, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -986,6 +986,9 @@ class LazyDevelopPanel(QWidget):
         self.mask_list.setMaximumHeight(90)
         self.mask_list.itemClicked.connect(self._toggle_mask_view)
         self.mask_list.itemDoubleClicked.connect(self._rename_mask)
+        # Arrow-key navigation previews the highlighted mask, exactly like clicking it.
+        self.mask_list.currentItemChanged.connect(self._on_mask_current)
+        self.mask_list.installEventFilter(self)          # clears the preview flag on mouse press
         v.addWidget(self.mask_list)
         self.auto_masks_btn = QPushButton("✨  Auto masks (sky · stars · nebula · dust · cores)")
         self.auto_masks_btn.setToolTip("Analyse the image and generate a set of semantic masks.")
@@ -1098,11 +1101,17 @@ class LazyDevelopPanel(QWidget):
             "Images (*.tif *.tiff *.png *.jpg *.jpeg *.fits *.fit *.fts *.xisf);;All files (*)")
         if not path:
             return
+        self.load_path(path)
+
+    def load_path(self, path: str) -> bool:
+        """Load ``path`` as the working document (used by Open and by 'Develop' from the
+        LazyStretch history — the shell calls this after switching to this panel). Returns
+        whether the load succeeded."""
         try:
             loaded = load_image(path)
         except Exception as exc:
             QMessageBox.critical(self, "Open failed", str(exc))
-            return
+            return False
         self.doc = DevelopDocument(loaded.data, path=path, header=loaded.header)
         self._cancel_tool()
         self.mask_list.clear()
@@ -1118,6 +1127,7 @@ class LazyDevelopPanel(QWidget):
         self._refresh_history()
         self.log_view.clear()
         self.log_view.append(f"Opened {Path(path).name}")
+        return True
 
     def _save(self):
         if self.doc is None:
@@ -1795,18 +1805,45 @@ class LazyDevelopPanel(QWidget):
         self._refresh_masks()
         self.status_label.setText(f"Created mask: {name}")
 
+    def _show_mask(self, name: str):
+        if self.doc is None:
+            return
+        m = self.doc.masks.get(name)
+        if m is None:
+            return
+        self._showing_mask = name
+        self.canvas.set_image(np.asarray(m, dtype=np.float32), keep_view=True)
+        self.status_label.setText(f"Viewing mask: {name}  ·  click it again for the image")
+
+    def _hide_mask(self):
+        self._showing_mask = None
+        self._refresh_canvas()
+        self.status_label.setText("")
+
+    def _on_mask_current(self, current, _previous=None):
+        """Selection change (arrow keys or click-on-new-row) previews the mask like a click."""
+        if current is None or self.doc is None:
+            return
+        self._mask_shown_via_signal = True               # consumed by the click that caused it
+        self._show_mask(current.text())
+
     def _toggle_mask_view(self, item):
-        name = item.text()
-        if self._showing_mask == name:
-            self._showing_mask = None
-            self._refresh_canvas()
-            self.status_label.setText("")
+        # A click that moved the selection already previewed via _on_mask_current; only a click
+        # on the already-current mask (no selection change) toggles back to the image.
+        if getattr(self, "_mask_shown_via_signal", False):
+            self._mask_shown_via_signal = False
+            return
+        if self._showing_mask == item.text():
+            self._hide_mask()
         else:
-            self._showing_mask = name
-            m = self.doc.masks.get(name)
-            if m is not None:
-                self.canvas.set_image(np.asarray(m, dtype=np.float32), keep_view=True)
-                self.status_label.setText(f"Viewing mask: {name}")
+            self._show_mask(item.text())
+
+    def eventFilter(self, obj, event):
+        # Reset the "previewed via selection" flag at the start of each click, so a click on a
+        # mask that was highlighted by the keyboard still toggles correctly.
+        if obj is self.mask_list and event.type() == QEvent.MouseButtonPress:
+            self._mask_shown_via_signal = False
+        return super().eventFilter(obj, event)
 
     def _delete_mask(self):
         item = self.mask_list.currentItem()

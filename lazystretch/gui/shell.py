@@ -69,6 +69,9 @@ _TOOLS = [
     {"key": "moonsun", "brand": "LazyMoonSun", "role": "Sun & Moon", "group": "solar",
      "tagline": "Lucky-imaging burst stacking and finishing for the Sun and Moon.",
      "thumb": "card_moonsun.jpg", "accent": (232, 176, 92)},
+    {"key": "nightscape", "brand": "LazyNightscape", "role": "Nightscape", "group": "specialty",
+     "tagline": "Stack a fixed-tripod Milky Way on the sky stars, keep a sharp foreground.",
+     "thumb": "card_nightscape.jpg", "accent": (120, 150, 214)},
 ]
 _TOOLS_BY_KEY = {t["key"]: t for t in _TOOLS}
 
@@ -79,6 +82,7 @@ _TITLES = {
     "moonsun": "LazyMoonSun",
     "develop": "LazyDevelop",
     "fly": "LazyFlight",
+    "nightscape": "LazyNightscape",
 }
 
 
@@ -266,6 +270,7 @@ class LauncherPage(QWidget):
         blue = _TOOLS_BY_KEY["stack"]["accent"]
         violet = _TOOLS_BY_KEY["stretch"]["accent"]
         amber = _TOOLS_BY_KEY["moonsun"]["accent"]
+        night = _TOOLS_BY_KEY["nightscape"]["accent"]
         head = Qt.AlignLeft | Qt.AlignBottom
         grid = QGridLayout()
         grid.setHorizontalSpacing(20)
@@ -279,9 +284,11 @@ class LauncherPage(QWidget):
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["develop"], on_open), 1, 4)
         grid.addLayout(self._arrow(), 1, 5)           # arrow between Finish and Animate
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["fly"], on_open), 1, 6)
-        grid.setRowMinimumHeight(2, 26)               # gap before Sun & Moon
+        grid.setRowMinimumHeight(2, 26)               # gap before the specialty row
         grid.addWidget(_section_label("Sun & Moon", amber), 3, 0, head)
+        grid.addWidget(_section_label("Nightscape", night), 3, 2, head)
         grid.addWidget(ToolCard(_TOOLS_BY_KEY["moonsun"], on_open), 4, 0)
+        grid.addWidget(ToolCard(_TOOLS_BY_KEY["nightscape"], on_open), 4, 2)
 
         center = QHBoxLayout()
         center.addStretch(1)
@@ -430,6 +437,9 @@ class AppShell(QMainWindow):
         if key == "stack":
             from .stack_window import LazyStackPanel
             return LazyStackPanel()
+        if key == "nightscape":
+            from .stack_window import LazyStackPanel
+            return LazyStackPanel(nightscape=True)          # sky-only stack + foreground
         if key == "develop":
             from .develop_window import LazyDevelopPanel
             return LazyDevelopPanel()
@@ -443,9 +453,18 @@ class AppShell(QMainWindow):
             panel = self._make_panel(key)
             if panel is None:
                 return
+            if hasattr(panel, "openInDevelop"):             # LazyStretch → "Develop" from history
+                panel.openInDevelop.connect(self._open_in_develop)
             self.stack.addWidget(panel)
             self._panels[key] = panel
         self.stack.setCurrentWidget(self._panels[key])
         self.setWindowTitle(_TITLES.get(key, _TITLES["home"]))
         self._tool_name_label.setText(_TITLES.get(key, ""))
         self.toolbar.setVisible(True)
+
+    def _open_in_develop(self, path: str):
+        """Switch to LazyDevelop and load ``path`` (fired by LazyStretch's history Develop button)."""
+        self.open_tool("develop")
+        dev = self._panels.get("develop")
+        if dev is not None and hasattr(dev, "load_path"):
+            dev.load_path(path)

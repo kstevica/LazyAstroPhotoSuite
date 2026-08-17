@@ -24,8 +24,14 @@ from ..objects.model import Parameters
 RECIPE_MAGIC = "lazystretch_recipe"
 
 
-def recipe_from_params(params: Parameters, data: "LazyStretchData | None" = None) -> Dict:
-    """Build a recipe dict from a Parameters object (LazyStretch.js:218-227)."""
+def recipe_from_params(params: Parameters, data: "LazyStretchData | None" = None,
+                       *, include_state: bool = False) -> Dict:
+    """Build a recipe dict from a Parameters object (LazyStretch.js:218-227).
+
+    ``include_state`` adds input-state / debug bools (``inputStretched``, ``debugBackground``)
+    that a *portable* ``.lsrecipe`` must not carry (they describe the input, not the look) but
+    that the on-disk **history** should, so restoring a run reproduces its exact settings.
+    """
     if data is None:
         data = get_data()
     o: Dict = {
@@ -45,11 +51,25 @@ def recipe_from_params(params: Parameters, data: "LazyStretchData | None" = None
     o["dimCore"] = float(params.dimCore)
     o["starShrink"] = float(params.starShrink)
     o["snrProtect"] = float(params.snrProtect)
+    o["significance"] = float(params.significance)
     o["meteorStrength"] = float(params.meteorStrength)
     o["structure"] = float(params.structure)
     o["deepenBackground"] = float(params.deepenBackground)
     o["nightscapeBrightness"] = float(params.nightscapeBrightness)
+    # Port-only pipeline bools (not in PI's recipeBools) — saved explicitly so the GUI's
+    # history/recipe round-trips every exposed option, not just the PI-mirror set.
+    for key in _PORT_BOOLS:
+        o[key] = bool(getattr(params, key))
+    if include_state:                            # history only — kept out of portable recipes
+        for key in _STATE_BOOLS:
+            o[key] = bool(getattr(params, key))
     return o
+
+
+# Portable processing bools the GUI exposes that PI's recipeBools omits.
+_PORT_BOOLS = ("useClassicalDeconv", "developForeground")
+# Input-state / debug bools: history captures them, portable .lsrecipe files do not.
+_STATE_BOOLS = ("inputStretched", "debugBackground")
 
 
 def save_recipe(path: "str | Path", params: Parameters,
@@ -94,10 +114,16 @@ def apply_recipe(params: Parameters, recipe: Dict,
     # Port-only finishing dials (see recipe_from_params): tolerant + clamped, applied only
     # when present so a PI recipe (which lacks them) keeps the Parameters default.
     for key in ("highlights", "transparency", "dimCore", "starShrink", "snrProtect",
-                "meteorStrength", "structure", "deepenBackground", "nightscapeBrightness"):
+                "significance", "meteorStrength", "structure", "deepenBackground",
+                "nightscapeBrightness"):
         v = recipe.get(key)
         if isinstance(v, (int, float)) and not isinstance(v, bool) and math.isfinite(v):
             setattr(params, key, min(max(float(v), 0.0), 1.0))
+            n += 1
+    for key in (*_PORT_BOOLS, *_STATE_BOOLS):    # port-only + state bools (see recipe_from_params)
+        v = recipe.get(key)
+        if isinstance(v, bool):
+            setattr(params, key, v)
             n += 1
     oc = recipe.get("objectClass")
     if isinstance(oc, str) and oc in data.class_list:

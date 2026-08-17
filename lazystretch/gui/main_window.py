@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 import numpy as np
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import Qt, QUrl, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -122,6 +122,10 @@ class LazyStretchPanel(QWidget):
     Self-contained ``QWidget`` — the only top-level chrome it sets (title/size) is
     harmless when embedded in the shell's ``QStackedWidget`` and useful if shown alone.
     """
+
+    # Emitted with a TIFF path when the user clicks "Develop" on a history item; the shell
+    # opens LazyDevelop and loads it. Keeps the panels decoupled (no direct shell handle).
+    openInDevelop = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -447,6 +451,12 @@ class LazyStretchPanel(QWidget):
         self.continue_btn.clicked.connect(self._continue_from_selected)
         ctrl.addSpacing(6)
         ctrl.addWidget(self.continue_btn)
+        self.develop_btn = QPushButton("Develop ▸")
+        self.develop_btn.setToolTip(
+            "Open this history image (saved 16-bit TIFF) in LazyDevelop for hand-finishing.")
+        self.develop_btn.setFocusPolicy(Qt.NoFocus)
+        self.develop_btn.clicked.connect(self._develop_selected)
+        ctrl.addWidget(self.develop_btn)
         ctrl.addStretch(1)
         ctrl_w = QWidget()
         ctrl_w.setLayout(ctrl)
@@ -852,7 +862,7 @@ class LazyStretchPanel(QWidget):
         """Save the finished run (settings + rendered image) to the on-disk history."""
         if self._hist_store is None or self._last_params is None:
             return                                             # narrowband-only / no master path
-        recipe = recipe_from_params(self._last_params, self.data)
+        recipe = recipe_from_params(self._last_params, self.data, include_state=True)
         label = self._run_summary(self._last_params, mode, len(result.steps_run))
         self._hist_store.add(np.asarray(result.image, dtype=np.float32),
                              recipe, label, mode, len(result.steps_run))
@@ -970,6 +980,19 @@ class LazyStretchPanel(QWidget):
             f"Base = history image “{label}” (polish mode). Preview/Execute build on it; "
             "re-open the master to go back.")
         self.status_label.setText("Continuing from the selected history image.")
+
+    def _develop_selected(self):
+        """Open the selected history image in LazyDevelop (it is already a 16-bit TIFF on disk)."""
+        item = self._selected_item()
+        if item is None or self._hist_store is None:
+            self.status_label.setText("Select a history run to develop first.")
+            return
+        path = self._hist_store.image_path(item)
+        if not Path(path).exists():
+            self.status_label.setText("Can't develop — the history image is missing on disk.")
+            return
+        self.openInDevelop.emit(path)                    # shell opens LazyDevelop + loads it
+        self.status_label.setText(f"Opening “{item.get('label', '')}” in LazyDevelop…")
 
     def _open_history_folder(self):
         """Open the per-master history folder in the OS file manager (Win/mac/Linux).

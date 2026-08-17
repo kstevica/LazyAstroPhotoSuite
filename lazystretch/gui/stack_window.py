@@ -57,12 +57,25 @@ _CHECKS = [
     ("reuse_cache", "Reuse cached intermediates"),
     ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
 ]
+# The nightscape window shows only the options that matter for a fixed-tripod sky stack.
+# Calibration/cosmetic/walking-noise are omitted (rarely darks/flats, and a moonlit star
+# reads as a hot pixel); registration, normalization and crop are what count.
+_NIGHTSCAPE_CHECKS = [
+    ("do_register", "Register on sky stars"),
+    ("normalize", "Normalize to reference (background + scale)"),
+    ("local_normalize", "Local normalization (spatially-varying gradient match)"),
+    ("edge_crop", "Crop to common overlap (remove ragged registration edges)"),
+    ("do_calibrate", "Calibrate (bias/dark/flat — only if you shot them)"),
+    ("reuse_cache", "Reuse cached intermediates"),
+    ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
+]
 
 
 class LazyStackPanel(QWidget):
-    def __init__(self):
+    def __init__(self, nightscape: bool = False):
         super().__init__()
-        self.setWindowTitle("LazyStack")
+        self._nightscape = bool(nightscape)
+        self.setWindowTitle("LazyNightscape" if self._nightscape else "LazyStack")
         self._folder: Optional[str] = None
         self._nightscape_fg_path: Optional[str] = None
         self._nightscape_manual_mask: Optional[np.ndarray] = None  # painted mask (preview-res)
@@ -82,6 +95,10 @@ class LazyStackPanel(QWidget):
         root = QHBoxLayout(self)
         root.addWidget(splitter)
         self._apply_params(LazyStackParams())
+        if self._nightscape:                                 # nightscape defaults: no calibration
+            for attr in ("do_calibrate",):
+                if attr in self.checks:
+                    self.checks[attr].setChecked(False)
 
     def _build_controls(self) -> QWidget:
         col = QVBoxLayout()
@@ -100,7 +117,7 @@ class LazyStackPanel(QWidget):
 
         g_opt = QGroupBox("Options")
         ov = QVBoxLayout(g_opt)
-        for attr, label in _CHECKS:
+        for attr, label in (_NIGHTSCAPE_CHECKS if self._nightscape else _CHECKS):
             cb = QCheckBox(label)
             self.checks[attr] = cb
             ov.addWidget(cb)
@@ -110,12 +127,29 @@ class LazyStackPanel(QWidget):
             ov.addWidget(fs)
         col.addWidget(g_opt)
 
-        # --- Nightscape (foreground-locked Milky Way) ---
-        g_ns = QGroupBox("Nightscape (foreground-locked MW)")
+        if self._nightscape:
+            col.addWidget(self._build_nightscape_group())
+
+        note = QLabel("Registration uses astroalign when installed (rotation-aware); "
+                      "otherwise a translation-only fallback. For full fidelity: "
+                      "pip install astroalign ccdproc astroscrappy rawpy")
+        note.setWordWrap(True)
+        note.setStyleSheet("color: gray; font-size: 11px;")
+        col.addWidget(note)
+        col.addStretch(1)
+
+        holder = QWidget()
+        holder.setLayout(col)
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(holder)
+        scroll.setMinimumWidth(420)
+        return scroll
+
+    def _build_nightscape_group(self) -> QWidget:
+        # Foreground-locked Milky Way: this whole window IS nightscape mode (no on/off toggle).
+        g_ns = QGroupBox("Foreground / sky segmentation")
         nv = QVBoxLayout(g_ns)
-        self.ns_check = QCheckBox("Nightscape mode — stack the sky, keep a sharp foreground")
-        self.ns_check.toggled.connect(self._on_nightscape_toggled)
-        nv.addWidget(self.ns_check)
         fgrow = QHBoxLayout()
         self.ns_fg_btn = QPushButton("Foreground image…")
         self.ns_fg_btn.clicked.connect(self._choose_foreground)
@@ -172,23 +206,7 @@ class LazyStackPanel(QWidget):
         ns_note.setWordWrap(True)
         ns_note.setStyleSheet("color: gray; font-size: 11px;")
         nv.addWidget(ns_note)
-        col.addWidget(g_ns)
-
-        note = QLabel("Registration uses astroalign when installed (rotation-aware); "
-                      "otherwise a translation-only fallback. For full fidelity: "
-                      "pip install astroalign ccdproc astroscrappy rawpy")
-        note.setWordWrap(True)
-        note.setStyleSheet("color: gray; font-size: 11px;")
-        col.addWidget(note)
-        col.addStretch(1)
-
-        holder = QWidget()
-        holder.setLayout(col)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(holder)
-        scroll.setMinimumWidth(420)
-        return scroll
+        return g_ns
 
     def _build_view(self) -> QWidget:
         w = QWidget()
@@ -225,10 +243,13 @@ class LazyStackPanel(QWidget):
             setattr(p, attr, fs.value())
         for attr, cb in self.checks.items():
             setattr(p, attr, cb.isChecked())
-        p.nightscape = self.ns_check.isChecked()
-        p.nightscape_foreground = self._nightscape_fg_path or ""
-        p.nightscape_bias = float(self.ns_bias.value())
-        p.nightscape_mask_override = self._nightscape_manual_mask   # painted mask wins over auto (or None)
+        if self._nightscape:
+            p.nightscape = True
+            p.fix_walking_noise = False          # a moonlit star reads as a static hot pixel
+            p.fix_banding = False
+            p.nightscape_foreground = self._nightscape_fg_path or ""
+            p.nightscape_bias = float(self.ns_bias.value())
+            p.nightscape_mask_override = self._nightscape_manual_mask   # painted mask wins over auto
         return p
 
     def _apply_paint(self):
@@ -242,7 +263,6 @@ class LazyStackPanel(QWidget):
         from ..lazystack import nightscape as ns
         mask = ns.refine_mask(self._seg_median, scr, auto_mask=self._seg_auto)
         self._nightscape_manual_mask = np.asarray(mask, dtype=np.float32)
-        self.ns_check.setChecked(True)
         med = self._seg_median
         base = np.clip(np.arcsinh(np.clip(med, 0, 1) * 25.0) / np.arcsinh(25.0) * 1.3, 0, 1)
         ov = np.stack([base] * 3, axis=-1)
@@ -266,15 +286,6 @@ class LazyStackPanel(QWidget):
         else:
             self.status_label.setText("Paint ONE class first (only Sky or only Earth), then Fill rest (opposite).")
 
-    def _on_nightscape_toggled(self, on: bool):
-        # A moonlit star can look like a static hot pixel, and there are rarely darks/flats — so
-        # calibration/cosmetic/walking-noise are off by default for a nightscape (re-enable if wanted).
-        if on:
-            for attr in ("do_calibrate", "do_cosmetic", "fix_walking_noise"):
-                if attr in self.checks:
-                    self.checks[attr].setChecked(False)
-            self.status_label.setText("Nightscape mode on — Preview segmentation, then Stack.")
-
     def _choose_foreground(self):
         path, _ = QFileDialog.getOpenFileName(
             self, "Choose foreground image (optional)", self._folder or "",
@@ -283,7 +294,6 @@ class LazyStackPanel(QWidget):
             self._nightscape_fg_path = path
             self.ns_fg_label.setText(f"user: {Path(path).name}")
             self.ns_fg_label.setStyleSheet("")
-            self.ns_check.setChecked(True)
 
     def _preview_segmentation(self):
         if self._folder is None:
@@ -428,7 +438,10 @@ class LazyStackPanel(QWidget):
         QMessageBox.critical(self, "LazyStack error", msg)
 
     def _set_busy(self, busy: bool):
-        for b in (self.measure_btn, self.stack_btn, self.ns_preview_btn):
+        btns = [self.measure_btn, self.stack_btn]
+        if hasattr(self, "ns_preview_btn"):
+            btns.append(self.ns_preview_btn)
+        for b in btns:
             b.setEnabled(not busy)
 
     def _save_result(self):

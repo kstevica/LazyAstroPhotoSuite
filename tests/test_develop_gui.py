@@ -87,12 +87,13 @@ def test_launcher_builds_grouped_cards(qapp):
     page = LauncherPage(on_open=lambda k: opened.append(k))
     cards = page.findChildren(ToolCard)
     assert {c._spec["key"] for c in cards} == {"stack", "stretch", "develop",
-                                               "fly", "moonsun"}
+                                               "fly", "moonsun", "nightscape"}
     # the pipeline groups: stack is "master"; stretch+develop+fly "process";
-    # moonsun "solar"
+    # moonsun "solar"; nightscape "specialty"
     groups = {t["key"]: t["group"] for t in _TOOLS}
     assert groups["stack"] == "master"
     assert groups["stretch"] == groups["develop"] == groups["fly"] == "process"
+    assert groups["nightscape"] == "specialty"
     assert groups["moonsun"] == "solar"
     # bundled background + thumbnails exist
     assert (_ASSETS / "launcher_bg.jpg").exists()
