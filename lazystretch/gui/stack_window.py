@@ -40,34 +40,48 @@ _DIALS = [
     ("max_reject_frac", "Max cull frac", 0.0, 0.6, 2),
     ("ecc_hard", "Ecc reject", 0.4, 0.9, 2),
 ]
+# (attr, short label, tooltip). Labels stay inside the control column; the fuller
+# explanation lives in the hover tooltip so nothing is lost.
 _CHECKS = [
-    ("do_calibrate", "Calibrate (bias/dark/flat)"),
-    ("do_cosmetic", "Cosmetic correction (hot/cold)"),
-    ("fix_walking_noise", "Fix walking noise (static hot-pixel repair; no darks/dither needed)"),
-    ("fix_banding", "Suppress column/row banding (fixed-pattern noise; no darks needed)"),
-    ("demaze", "Remove X-Trans demosaic mesh (6×6 grid; Fuji, optional)"),
-    ("do_register", "Register frames"),
-    ("normalize", "Normalize to reference (background + scale)"),
-    ("local_normalize", "Local normalization (spatially-varying gradient match)"),
-    ("edge_crop", "Crop to common overlap (remove ragged registration edges)"),
-    ("emit_snr_map", "Write noise/SNR map (feeds the stretch's SNR-protect mask)"),
-    ("preserve_meteors", "Preserve meteor trails (detect + save a meteor layer for the stretch)"),
-    ("amplified", "EXPERIMENTAL — Amplified signal (keep soft frames via frequency-split "
-     "weights, e\u207b noise model, pattern removal, 2\u00d7 fine grid when undersampled)"),
-    ("reuse_cache", "Reuse cached intermediates"),
-    ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
+    ("do_calibrate", "Calibrate", "Apply bias / dark / flat master calibration."),
+    ("do_cosmetic", "Cosmetic correction", "Repair hot and cold pixels."),
+    ("fix_walking_noise", "Fix walking noise",
+     "Static hot-pixel repair across frames — no darks or dithering needed."),
+    ("fix_banding", "Suppress column/row banding",
+     "Remove fixed-pattern (column/row) banding on the master — no darks needed."),
+    ("demaze", "Remove X-Trans mesh",
+     "Remove the Fuji X-Trans 6×6 demosaic grid (optional)."),
+    ("do_register", "Register frames", "Align every kept frame to the reference."),
+    ("normalize", "Normalize to reference",
+     "Match each frame's background + scale to the reference."),
+    ("local_normalize", "Local normalization",
+     "Spatially-varying gradient match to the reference."),
+    ("edge_crop", "Crop to common overlap",
+     "Trim ragged registration edges to the fully-covered region."),
+    ("emit_snr_map", "Write noise/SNR map",
+     "Save a per-pixel noise/SNR map that feeds the stretch's SNR-protect mask."),
+    ("preserve_meteors", "Preserve meteor trails",
+     "Detect meteors (rejected transients) and save a layer the stretch composites back."),
+    ("amplified", "Amplified signal (experimental)",
+     "EXPERIMENTAL — keep soft frames via frequency-split weights, an e⁻ noise "
+     "model, dither-validated pattern removal, and a 2× fine grid when undersampled."),
+    ("reuse_cache", "Reuse cached intermediates",
+     "Skip re-decoding / re-registering frames already staged on disk."),
+    ("stage_to_disk", "Stage to disk (low memory)",
+     "Stream frames through lazystack/work. Off = hold the burst in RAM (no work files)."),
 ]
 # The nightscape window shows only the options that matter for a fixed-tripod sky stack.
 # Calibration/cosmetic/walking-noise are omitted (rarely darks/flats, and a moonlit star
 # reads as a hot pixel); registration, normalization and crop are what count.
 _NIGHTSCAPE_CHECKS = [
-    ("do_register", "Register on sky stars"),
-    ("normalize", "Normalize to reference (background + scale)"),
-    ("local_normalize", "Local normalization (spatially-varying gradient match)"),
-    ("edge_crop", "Crop to common overlap (remove ragged registration edges)"),
-    ("do_calibrate", "Calibrate (bias/dark/flat — only if you shot them)"),
-    ("reuse_cache", "Reuse cached intermediates"),
-    ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
+    ("do_register", "Register on sky stars", "Align on the sky asterisms only (foreground masked)."),
+    ("normalize", "Normalize to reference", "Match each frame's background + scale to the reference."),
+    ("local_normalize", "Local normalization", "Spatially-varying gradient match to the reference."),
+    ("edge_crop", "Crop to common overlap", "Trim ragged registration edges to the covered region."),
+    ("do_calibrate", "Calibrate (if you shot darks/flats)",
+     "Apply bias / dark / flat calibration — usually off for a nightscape."),
+    ("reuse_cache", "Reuse cached intermediates", "Skip re-decoding frames already staged on disk."),
+    ("stage_to_disk", "Stage to disk (low memory)", "Off = hold the burst in RAM (no work files)."),
 ]
 
 
@@ -117,8 +131,9 @@ class LazyStackPanel(QWidget):
 
         g_opt = QGroupBox("Options")
         ov = QVBoxLayout(g_opt)
-        for attr, label in (_NIGHTSCAPE_CHECKS if self._nightscape else _CHECKS):
+        for attr, label, tip in (_NIGHTSCAPE_CHECKS if self._nightscape else _CHECKS):
             cb = QCheckBox(label)
+            cb.setToolTip(tip)
             self.checks[attr] = cb
             ov.addWidget(cb)
         for attr, label, lo, hi, dec in _DIALS:
