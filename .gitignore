@@ -47,5 +47,10 @@ build/pyi-spec/
 build/_pi*/
 build/_probe*.py
 
-# website: retina PNG originals are dev intermediates (shot-*.jpg are committed)
-web/img/shots/
+# Not published in the public repo (kept locally):
+#   reference/    — original PixInsight source (LazyStretch.js, the port's source of truth)
+#   calibration/  — internal calibration / survey scripts
+#   web/          — website source (deployed separately to kstevica.com/laps)
+reference/
+calibration/
+web/
