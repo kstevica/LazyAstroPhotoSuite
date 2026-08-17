@@ -55,11 +55,11 @@ the app degrades gracefully without them. Install separately if wanted: the RC-A
 
 `.github/workflows/build-macos.yml` builds the arm64 `.app` on a `macos-14` runner (those
 runners *are* Apple Silicon) and uploads `LazyAstroPhotoSuite-macos-arm64.zip` as an
-artifact. It runs on every push to `main`, on `v*` tags, and on manual *Run workflow*. macOS
-runners bill at 10× on private repos — to build less often, drop the `push: branches: [main]`
-block and use a tag or the dispatch button. The artifact is **unsigned / un-notarized** (no
-Apple Developer cert in CI): first launch needs right-click → *Open*, or
-`xattr -dr com.apple.quarantine LazyAstroPhotoSuite.app`.
+artifact. Trigger it from the repo's **Actions** tab → *Build macOS app (Apple Silicon)* →
+*Run workflow*, or push a `v*` tag (macOS runners bill at 10× on private repos, so it does
+**not** build on every push — add `branches: [main]` under `push:` if you want that). The
+artifact is **unsigned / un-notarized** (no Apple Developer cert in CI): first launch needs
+right-click → *Open*, or `xattr -dr com.apple.quarantine LazyAstroPhotoSuite.app`.
 
 ## Windows build
 

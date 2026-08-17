@@ -4,17 +4,16 @@ name: Build macOS app (Apple Silicon)
 # macos-14 runner — those runners ARE Apple Silicon, so the produced .app is native arm64.
 # Download the .zip from the run's "Artifacts" (or a Release, when triggered by a tag).
 #
-# TRIGGERS: this builds on every push to main so committing the workflow (or any change) kicks
-# off an Apple binary, plus manual dispatch and version tags. macOS runners are billed at 10×
-# on private repos — if that matters, delete the `push: branches: [main]` block below and
-# trigger via a `v*` tag or the "Run workflow" button instead.
+# TRIGGERS: manual dispatch and version tags (macOS runners bill at 10× on private repos, so
+# this does not build on every push). Trigger from the repo's Actions tab → "Build macOS app
+# (Apple Silicon)" → Run workflow, or push a `v*` tag. To also build on every push to main, add
+# `branches: [main]` back under `push:`.
 #
 # NOTE: the .app is UNSIGNED and un-notarized (no Apple Developer cert in CI). On first launch
 # users must right-click → Open (or `xattr -dr com.apple.quarantine LazyAstroPhotoSuite.app`).
 on:
   workflow_dispatch:
   push:
-    branches: [main]
     tags: ["v*"]
 
 jobs:
