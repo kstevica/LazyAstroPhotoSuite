@@ -3,7 +3,12 @@
 All notable changes to **LazyAstroPhotoSuite** are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
-## [Unreleased]
+## [1.1.0] — 2026-08-17
+
+First **source-available** release: the code is public on GitHub under the PolyForm
+Noncommercial 1.0.0 licence (free for any non-commercial use; commercial use requires a
+licence from the author — kstevica@gmail.com). Native macOS (Apple Silicon) and Windows
+builds are published as GitHub Release assets.
 
 ### Added
 - **LazyNightscape — its own tool.** The foreground-locked Milky Way workflow (sky-only

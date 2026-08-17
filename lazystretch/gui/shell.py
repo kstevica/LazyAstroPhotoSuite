@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QPushButton,
     QStackedWidget,
     QToolBar,
@@ -405,6 +406,11 @@ class AppShell(QMainWindow):
             menu.addAction(act)
             self._tool_actions[t["key"]] = act
 
+        help_menu = self.menuBar().addMenu("Help")
+        about = QAction("About LazyAstroPhotoSuite", self)
+        about.triggered.connect(self._show_about)
+        help_menu.addAction(about)
+
         # A persistent back-to-launcher button, shown only while a tool is open (the
         # tools are stacked pages in one window, so there is no per-tool window to close).
         self.toolbar = QToolBar("Navigation")
@@ -420,6 +426,19 @@ class AppShell(QMainWindow):
         self.toolbar.setVisible(False)
 
     # --------------------------------------------------------------- navigation
+
+    def _show_about(self):
+        QMessageBox.about(
+            self, "About LazyAstroPhotoSuite",
+            f"<h3>LazyAstroPhotoSuite <span style='font-weight:normal'>v{_VERSION}</span></h3>"
+            "<p>An end-to-end astrophotography workflow — stack, stretch, develop, "
+            "fly-through video, and Sun &amp; Moon.</p>"
+            "<p>Built by <b>Stevica Kuharski</b>.</p>"
+            "<p>Source-available &amp; free for non-commercial use "
+            "(PolyForm Noncommercial 1.0.0). Commercial use requires a licence — "
+            "contact <a href='mailto:kstevica@gmail.com'>kstevica@gmail.com</a>.</p>"
+            "<p><a href='https://kstevica.com/laps'>kstevica.com/laps</a> · "
+            "<a href='https://github.com/kstevica/LazyAstroPhotoSuite'>GitHub</a></p>")
 
     def show_home(self):
         self.stack.setCurrentWidget(self.launcher)

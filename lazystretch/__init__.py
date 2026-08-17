@@ -25,7 +25,7 @@ for _k, _v in (
 ):
     _os.environ.setdefault(_k, _v)
 
-__version__ = "1.0.0"
+__version__ = "1.1.0"
 
 from .data.loader import ClassProfile, LazyStretchData, get_data, load_data
 from .pipeline.params import (

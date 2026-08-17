@@ -41,6 +41,14 @@ Turn a folder of light subs into a single integrated master.
 Tip: the noise/SNR and coverage companions travel with the master and make the stretch smarter
 about where to push detail vs. protect the background.
 
+**Experimental — Amplified signal.** Tick this option to stop *culling* imperfect frames and
+instead keep their photons: soft frames feed the faint structure at low spatial frequencies
+while only sharp frames draw the detail, integration is inverse-variance weighted, a noise
+model is measured from your own frames, sensor-fixed patterns the dither can prove are static
+are removed, and undersampled dithered sets are drizzled onto a 2× grid. It writes its receipts
+to `lazystack/amplified_meta.json`. Best on mixed-quality nights; on a uniform set it does no
+harm. Needs "Stage to disk" on for the fine grid.
+
 ---
 
 ## 2 · LazyStretch — automatic, object-aware stretch
@@ -58,6 +66,17 @@ The heart of the suite: a statistics-driven stretch that adapts to *what* you're
 5. Click **Execute** for the full-resolution result, then **Save Result…**.
 6. **Save log…** writes the whole run to a text file (or right-click the log). You can also
    save a **recipe** and re-apply the same settings to another master.
+
+**Significance stretch** (needs a LazyStack master with a noise map). This dial holds each
+region's displayed brightness to what its **measured SNR** statistically supports: sub-proof
+pixels ease toward the sky floor while structure the stack *proved* keeps the full stretch, so
+faint real nebulosity stays up and noise stops masquerading as signal. It pairs naturally with
+an Amplified-signal master. The ledger shows (and lets you pin) the σ thresholds.
+
+**History → Develop.** Every run is saved as a 16-bit TIFF in the history list. Select one and
+click **Develop ▸** to open it straight in LazyDevelop, or **Continue from image ▸** to keep
+processing on top of it. Every dial and option is saved with the run, so reloading a history
+entry restores its exact settings.
 
 ---
 
@@ -78,7 +97,9 @@ Hand-finish a stretched master, Lightroom-style, with full history and masks.
    - **Background** — Background extraction, Gradient cleanup, Dehaze, De-veil.
    - **Studio** — Selective Color, Wavelet clarity, and **Star spikes**.
 3. Adjust the tool's controls (they preview live), optionally gate it through a **mask**
-   (luminance / highlights / star), then click **Apply** to add it as a history step.
+   (luminance / highlights / range / painted / one-click semantic auto-masks), then click
+   **Apply** to add it as a history step. In the mask list you can **arrow-key** through masks
+   to preview each one (click a shown mask to return to the image).
 4. Use **Undo/Redo**, click any history step to edit it in place, and **Save recipe** to reuse
    the whole edit stack.
 
@@ -124,6 +145,24 @@ Lucky-imaging burst stacking + finishing for the Sun and Moon.
 
 ---
 
+## 6 · LazyNightscape — foreground-locked Milky Way
+
+Stack a fixed-tripod Milky Way while keeping a sharp foreground.
+
+1. Open **LazyNightscape** → pick your folder of sky frames.
+2. Click **Preview segmentation** to see where LazyNightscape splits **sky** from
+   **foreground** (the horizon). Nudge the **Sky ↔ foreground bias**, or **paint** Sky/Earth
+   strokes to refine it — the brush snaps to the horizon.
+3. Optionally pick your own **Foreground image…** (a separate sharp exposure); otherwise the
+   sharpest frame is used.
+4. **Stack** — it registers on the **sky stars only** (the foreground is masked so it doesn't
+   confuse alignment), integrates the sky, and saves the sharp foreground + sky mask as
+   companions.
+5. Open the resulting master in **LazyStretch** — the foreground is composited over the
+   stretched deep sky automatically (a "Nightscape foreground" dial controls it).
+
+---
+
 ## Optional: connect your AI tools
 
 LAPS auto-detects these if present and prefers them; otherwise it uses built-in fallbacks:
@@ -148,3 +187,7 @@ Nothing is required — the suite is complete on its own, and bundles its own ff
 ## Questions & feedback
 
 Found a bug, or have an idea? → **kstevica@gmail.com** · **[kstevica.com/laps](https://kstevica.com/laps)**
+· **[GitHub](https://github.com/kstevica/LazyAstroPhotoSuite)**
+
+LAPS is **source-available** and free for non-commercial use (PolyForm Noncommercial 1.0.0).
+For commercial use, contact **kstevica@gmail.com**.

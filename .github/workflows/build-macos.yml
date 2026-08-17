@@ -19,6 +19,8 @@ on:
 jobs:
   macos:
     runs-on: macos-14                       # Apple Silicon (arm64) runner
+    permissions:
+      contents: write                       # create/attach to the tag's Release
     steps:
       - uses: actions/checkout@v4
 
@@ -47,3 +49,10 @@ jobs:
           name: LazyAstroPhotoSuite-macos-arm64
           path: LazyAstroPhotoSuite-macos-arm64.zip
           retention-days: 30
+
+      - name: Attach to the tag's GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: LazyAstroPhotoSuite-macos-arm64.zip
+          fail_on_unmatched_files: true

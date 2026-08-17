@@ -604,3 +604,18 @@ def test_develop_mask_keyboard_previews_like_click(qapp):
     panel._mask_shown_via_signal = False                  # as the mouse-press event filter sets it
     panel._toggle_mask_view(panel.mask_list.item(1))
     assert panel._showing_mask is None
+
+
+def test_shell_about_dialog_shows_version_and_license(qapp, monkeypatch):
+    """Help → About surfaces the version, author, license and links."""
+    import lazystretch
+    from lazystretch.gui.shell import AppShell
+    from PySide6.QtWidgets import QMessageBox
+    captured = {}
+    monkeypatch.setattr(QMessageBox, "about",
+                        lambda parent, title, text: captured.update(title=title, text=text))
+    s = AppShell()
+    s._show_about()
+    assert lazystretch.__version__ in captured["text"]
+    assert "Noncommercial" in captured["text"]
+    assert "github.com/kstevica/LazyAstroPhotoSuite" in captured["text"]

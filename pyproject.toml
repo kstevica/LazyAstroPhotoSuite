@@ -4,12 +4,12 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "lazystretch"
-version = "1.0.0"
+version = "1.1.0"
 description = "LazyAstroPhotoSuite — an end-to-end astrophotography workflow: stack, stretch, develop, fly-through video, and Sun & Moon."
 readme = "README.md"
 requires-python = ">=3.9"
-license = { text = "TBD" }
-authors = [{ name = "kstevica" }]
+license = { text = "PolyForm-Noncommercial-1.0.0" }   # free for non-commercial use; commercial use needs a licence (kstevica@gmail.com). See LICENSE.
+authors = [{ name = "Stevica Kuharski", email = "kstevica@gmail.com" }]
 dependencies = [
     "numpy>=1.24",
     "scipy>=1.10",
