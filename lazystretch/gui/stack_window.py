@@ -52,6 +52,8 @@ _CHECKS = [
     ("edge_crop", "Crop to common overlap (remove ragged registration edges)"),
     ("emit_snr_map", "Write noise/SNR map (feeds the stretch's SNR-protect mask)"),
     ("preserve_meteors", "Preserve meteor trails (detect + save a meteor layer for the stretch)"),
+    ("amplified", "EXPERIMENTAL — Amplified signal (keep soft frames via frequency-split "
+     "weights, e\u207b noise model, pattern removal, 2\u00d7 fine grid when undersampled)"),
     ("reuse_cache", "Reuse cached intermediates"),
     ("stage_to_disk", "Stage to disk (low memory; off = in-RAM, no work files)"),
 ]

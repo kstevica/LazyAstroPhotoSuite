@@ -3,6 +3,41 @@
 All notable changes to **LazyAstroPhotoSuite** are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Experimental — Amplified signal stacking (LazyStack).** One checkbox that changes what
+  "stacking" means: instead of culling imperfect frames, it keeps their photons and uses
+  physics to decide where each frame is trustworthy. Five measured mechanisms, all logged
+  with evidence and receipted in `lazystack/amplified_meta.json`:
+  1. *Soft frames kept* — bloated / bright-sky frames are no longer culled (only trailed
+     frames still hard-reject); a frequency split feeds their full low band to the faint
+     structure while their high band is down-weighted by their measured MTF.
+  2. *Inverse-variance integration* — every frame weighted 1/σ² from its measured noise
+     floor (the maximum-likelihood mean), replacing the flat SNR weight.
+  3. *Photon-transfer noise model* — var = a·signal + b regressed from the registered
+     frames themselves (no calibration data needed) as a lower-envelope fit over the
+     sky-and-faint regime (χ²-debiased 25th-percentile bins, contaminated bins dropped),
+     so star-halo jitter can't inflate it; used as a physical floor for the clip scale
+     where the sample MAD collapses — capped below bright structure so trails over
+     nebulosity still reject — and reported as an effective full-scale e⁻ figure.
+  4. *Dither-validated static-pattern removal* — sensor-fixed structure that the moving
+     sky can't explain is subtracted before registration, band-limited to spatial scales
+     the dither can PROVE are static (highpass σ = dither/3), so extended nebulosity is
+     untouchable by construction; star-safe via a temporal-MAD guard, soft-thresholded,
+     never run in Nightscape mode (the land is static by design), written to separate
+     staging so the reusable calibrated cache stays pristine, and hash-keyed into the
+     registration cache. Skipped, with the reason logged, when the dither can't prove
+     separation.
+  5. *Fine-grid registration (drizzle-lite)* — undersampled dithered sets (FWHM < 2.5 px,
+     ≥ 8 frames) are warped once, straight onto a 2× grid (`LZSGRID=2`), recovering the
+     sub-pixel detail the dither actually sampled; never a second interpolation. Guarded:
+     staged mode only, not with local normalization, and only with measured disk headroom
+     for the 4× staging (the estimate and the decision are logged).
+  The master is stamped `LZSAMP=1`; the noise/SNR companion reflects the new weighting, so
+  the stretch's SNR-protect mask benefits immediately. No pixels are invented anywhere —
+  every mechanism only re-weights, cleans, or re-grids photons that were captured.
+
 ## [1.0.0] — 2026-08-15
 
 First public release of the suite: LazyStack, LazyStretch, LazyDevelop, LazyFlight and

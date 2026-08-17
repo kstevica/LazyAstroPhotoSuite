@@ -18,6 +18,8 @@ import numpy as np
 
 def sigma_clip_mean(cube: np.ndarray, *, sigma_low: float = 4.0, sigma_high: float = 3.0,
                     iters: int = 3, weights: Optional[Sequence[float]] = None,
+                    weights_hi: Optional[Sequence[float]] = None,
+                    model_ab: Optional[Sequence[float]] = None,
                     return_coverage: bool = False, return_noise: bool = False,
                     return_transient: bool = False):
     """Per-pixel sigma-clipped (weighted) mean over axis 0 of ``cube`` (N, ...).
@@ -27,10 +29,14 @@ def sigma_clip_mean(cube: np.ndarray, *, sigma_low: float = 4.0, sigma_high: flo
     divisor, so a partial-coverage pixel is the mean of the frames that actually cover it —
     never divided-by-N against silent zeros (the old bright/dark edge-strip bug).
 
-    Optional extra maps (returned in this order after the mean): with ``return_coverage`` the
-    per-pixel count of frames that had real data (drives the overlap crop); with ``return_noise``
-    a per-pixel **standard error of the mean** (``std(survivors)/√N`` on luminance) — a directly
-    measured noise map that is a far better SNR estimate than post-hoc single-image guesses.
+    Optional extra maps (returned in this order after the mean): with ``weights_hi`` a SECOND
+    weighted mean of the same survivors (the amplified mode's sharp-weighted high band — one
+    rejection pass, two weightings); with ``return_coverage`` the per-pixel count of frames
+    that had real data (drives the overlap crop); with ``return_noise`` a per-pixel **standard
+    error of the mean** (``std(survivors)/√N`` on luminance) — a directly measured noise map
+    that is a far better SNR estimate than post-hoc single-image guesses. ``model_ab=(a, b)``
+    adds the photon-transfer floor ``√(a·median+b)`` to the clip scale, so rejection stays
+    physical where the sample MAD collapses (flat sky, small N).
     """
     data = np.asarray(cube, dtype=np.float64)
     n = data.shape[0]
@@ -45,6 +51,14 @@ def sigma_clip_mean(cube: np.ndarray, *, sigma_low: float = 4.0, sigma_high: flo
             m = np.nanmedian(masked, axis=0)
             mad = np.nanmedian(np.abs(masked - m), axis=0)
             s = np.maximum(1.4826 * mad, 1e-4)            # tiny floor: still clips a lone spike
+            if model_ab is not None:                      # photon-transfer floor: physics, not
+                a_m, b_m = float(model_ab[0]), float(model_ab[1])   # sample luck, sets the scale
+                floor = 0.7 * np.sqrt(np.maximum(a_m * m + b_m, 0.0))
+                if len(model_ab) > 2 and model_ab[2] is not None:
+                    # Cap: above m_cap (bright structure) the fit regime doesn't apply —
+                    # an inflated floor there would let satellite trails survive the clip.
+                    floor = np.where(m <= float(model_ab[2]), floor, 0.0)
+                s = np.maximum(s, floor)
             lo = m - sigma_low * s                        #             among near-identical inliers
             hi = m + sigma_high * s
             mask = valid & (data >= lo) & (data <= hi)
@@ -60,9 +74,17 @@ def sigma_clip_mean(cube: np.ndarray, *, sigma_low: float = 4.0, sigma_high: flo
         fallback = np.nanmean(np.where(valid, data, np.nan), axis=0)   # NaN only if 0 coverage
     weighted = (safe * wc).sum(axis=0) / np.where(wsum > 0, wsum, 1.0)
     out = np.clip(np.where(wsum > 0, weighted, fallback), 0.0, 1.0)    # NaN survives clip
-    if not (return_coverage or return_noise or return_transient):
+    out_hi = None
+    if weights_hi is not None:                     # second weighting of the SAME survivors
+        wh = np.asarray(weights_hi, dtype=np.float64).reshape(wshape) * mask
+        whsum = wh.sum(axis=0)
+        weighted_hi = (safe * wh).sum(axis=0) / np.where(whsum > 0, whsum, 1.0)
+        out_hi = np.clip(np.where(whsum > 0, weighted_hi, fallback), 0.0, 1.0)
+    if not (return_coverage or return_noise or return_transient) and out_hi is None:
         return out
     result = [out]
+    if out_hi is not None:
+        result.append(out_hi)
     if return_coverage:
         per_px = valid.all(axis=-1) if data.ndim == 4 else valid       # collapse colour
         result.append(per_px.sum(axis=0).astype(np.int32))
@@ -105,21 +127,27 @@ def combine_master(frames: Sequence[np.ndarray], *, sigma_low: float = 5.0,
 
 
 def integrate(frames: Sequence[np.ndarray], *, weights: Optional[Sequence[float]] = None,
+              weights_hi: Optional[Sequence[float]] = None,
+              model_ab: Optional[Sequence[float]] = None,
               sigma_low: float = 4.0, sigma_high: float = 3.0,
               return_coverage: bool = False, return_noise: bool = False,
               return_transient: bool = False):
     """Integrate the final registered light stack (weighted sigma-clipped mean).
 
-    Optional maps follow the master in order: ``return_coverage`` (covered-frame count),
-    ``return_noise`` (standard-error map), ``return_transient`` (meteor contribution + source frame).
+    Optional maps follow the master in order: ``weights_hi`` (second, sharp-weighted mean),
+    ``return_coverage`` (covered-frame count), ``return_noise`` (standard-error map),
+    ``return_transient`` (meteor contribution + source frame).
     """
     cube = np.stack([np.asarray(f, dtype=np.float64) for f in frames], axis=0)
     return sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high, weights=weights,
+                           weights_hi=weights_hi, model_ab=model_ab,
                            return_coverage=return_coverage, return_noise=return_noise,
                            return_transient=return_transient)
 
 
 def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[float]] = None,
+                  weights_hi: Optional[Sequence[float]] = None,
+                  model_ab: Optional[Sequence[float]] = None,
                   sigma_low: float = 4.0, sigma_high: float = 3.0,
                   target_bytes: int = 200_000_000, log=None,
                   return_coverage: bool = False, return_noise: bool = False,
@@ -143,6 +171,7 @@ def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[f
     band = int(max(1, min(H, target_bytes // max(1, row_bytes))))
     n_bands = (H + band - 1) // band
     out = np.empty(shape, dtype=np.float32)
+    out_hi = np.empty(shape, dtype=np.float32) if weights_hi is not None else None
     coverage = np.empty((H, shape[1]), dtype=np.int32) if return_coverage else None
     noise = np.empty((H, shape[1]), dtype=np.float32) if return_noise else None
     transient = np.empty(shape, dtype=np.float32) if return_transient else None
@@ -151,11 +180,14 @@ def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[f
         y1 = min(H, y0 + band)
         cube = np.stack([np.asarray(m[y0:y1], dtype=np.float64) for m in mm], axis=0)
         res = sigma_clip_mean(cube, sigma_low=sigma_low, sigma_high=sigma_high,
-                              weights=weights, return_coverage=return_coverage,
+                              weights=weights, weights_hi=weights_hi, model_ab=model_ab,
+                              return_coverage=return_coverage,
                               return_noise=return_noise, return_transient=return_transient)
-        if return_coverage or return_noise or return_transient:
+        if return_coverage or return_noise or return_transient or out_hi is not None:
             band_out = res[0]
             idx = 1
+            if out_hi is not None:
+                out_hi[y0:y1] = res[idx].astype(np.float32); idx += 1
             if return_coverage:
                 coverage[y0:y1] = res[idx]; idx += 1
             if return_noise:
@@ -169,9 +201,11 @@ def combine_files(paths: Sequence["str | Path"], *, weights: Optional[Sequence[f
         if log is not None:
             log(f"   integrating rows {y0}-{y1} ({bi + 1}/{n_bands}, "
                 f"{100 * y1 // H}%)")
-    if not (return_coverage or return_noise or return_transient):
+    if not (return_coverage or return_noise or return_transient) and out_hi is None:
         return out
     result = [out]
+    if out_hi is not None:
+        result.append(out_hi)
     if return_coverage:
         result.append(coverage)
     if return_noise:

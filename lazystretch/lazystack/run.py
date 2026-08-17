@@ -18,6 +18,7 @@ import numpy as np
 from ..io.cache import _cache_key, cached_load
 from ..io.image_io import RAW_EXT, capture_time, load_image, save_image
 from . import (
+    amplified as amp_mod,
     calibrate as cal,
     contract,
     integrate as integ,
@@ -392,11 +393,81 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         else:
             log("  no static bad pixels found.")
 
+    # --- stage 1c (amplified): dither-validated static-pattern removal, SENSOR space ---
+    # The sky moves with the dither; the sensor's residual pattern does not — that geometry
+    # makes the separation well-posed. Runs before registration (like the walking-noise fix)
+    # so the pattern never gets dragged along the drift.
+    amp = bool(getattr(params, "amplified", False))
+    amp_meta: dict = {}
+    amp_pattern = None
+    amp_phash = ""
+    if amp:
+        log("AMPLIFIED SIGNAL (experimental): physics-weighted integration engaged.")
+        fwhm_med_all = culled.get("fwhm_med")
+        fwhm_px = float(fwhm_med_all) if (fwhm_med_all and np.isfinite(fwhm_med_all)) else 3.0
+        dither_px = amp_mod.measure_dither(_get, frames, keep, ref_global, log=log)
+        amp_meta["dither_px"] = round(dither_px, 2)
+        amp_meta["soft_kept"] = {str(i): r for i, r in culled.get("soft_kept", {}).items()}
+        if ns_state is not None:
+            # A nightscape's static land is, by definition, fixed in sensor coordinates —
+            # exactly what the pattern estimator hunts. Never let it eat the foreground.
+            log("  static-pattern removal skipped: nightscape foreground is static by design.")
+        else:
+            amp_pattern = amp_mod.static_pattern(_get, frames, keep, fwhm_px=fwhm_px,
+                                                 dither_px=dither_px, log=log)
+        amp_meta["pattern_removed"] = amp_pattern is not None
+        if amp_pattern is not None:
+            import hashlib
+            amp_phash = hashlib.sha1(amp_pattern.tobytes()).hexdigest()[:8]
+            for i in keep:
+                fixed = amp_mod.subtract_pattern(_get(frames[i]), amp_pattern)
+                if staged:
+                    # NEVER overwrite the reusable cal_ cache in place — an amplified-off
+                    # re-run would silently reload pattern-subtracted frames. New files,
+                    # repointed handles; originals stay pristine.
+                    calp = frames[i].with_name(f"calp_{amp_phash}_{frames[i].name}")
+                    np.save(str(calp), fixed.astype(np.float32))
+                    frames[i] = calp
+                else:
+                    frames[i] = fixed.astype(np.float32)
+            log("  static pattern subtracted from every kept frame (sensor space, "
+                "originals kept).")
+
     # --- stage 2: register the kept frames to the reference (reg cache keyed src+ref) ---
     log(f"Registering {len(keep)} frames to reference {names[ref_global]}…")
     ref_key = keys[ref_global] if staged else None
     ref = _get(frames[ref_global])
     aligner = reg.Aligner(ref, log=log, sky_mask=(ns_state["sky_mask"] if ns_state else None))
+
+    # Amplified fine grid (drizzle-lite): undersampled + dithered sets are warped once,
+    # straight onto a 2× grid — the sub-pixel information the dither sampled is real.
+    # Guards: staged only (an in-memory 2× cube is tens of GB), no local normalization
+    # (it subtracts against the 1× reference), and a real disk-headroom check — the 2×
+    # staging is 4× the 1× footprint (1.4 GB per 30 MP frame).
+    amp_fine = False
+    if amp and ns_state is None:
+        fw = culled.get("fwhm_med")
+        if fw and np.isfinite(fw) and fw < 2.5 and len(keep) >= 8:
+            if not staged:
+                log("  fine grid: skipped (needs 'Stage to disk' — an in-memory 2× stack "
+                    "would not fit in RAM)")
+            elif bool(params.local_normalize):
+                log("  fine grid: skipped (local normalization operates on the 1× grid)")
+            else:
+                import shutil as _sh
+                need = len(keep) * int(np.asarray(ref).size) * 4 * 4   # 2× float32 staging
+                free = _sh.disk_usage(str(work)).free
+                if free < 1.3 * need:
+                    log(f"  fine grid: skipped — needs ~{need / 1e9:.0f} GB staging, "
+                        f"{free / 1e9:.0f} GB free (disk headroom)")
+                else:
+                    amp_fine = aligner.set_fine(2)
+                    log("  fine grid: 2× (undersampled at FWHM %.2f px, ~%.0f GB staging)"
+                        % (fw, need / 1e9) if amp_fine
+                        else "  fine grid: unavailable (needs astroalign)")
+        elif fw and np.isfinite(fw):
+            log(f"  fine grid: 1× (FWHM {fw:.2f} px — well sampled)")
+    amp_meta["grid"] = 2 if amp_fine else 1
     local_norm = bool(params.local_normalize)
     normalize = bool(params.normalize) or local_norm     # LN includes the global step
     ref_med, ref_sig = nrm.frame_stats(ref) if normalize else (0.0, 1.0)
@@ -404,7 +475,10 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     # keep the reg cache from being reused across a format/repair change (else the repair, done on
     # the cal frames in stage 1b, is silently bypassed when a stale reg file is reused).
     wtag = "w" if getattr(params, "fix_walking_noise", True) else ""
-    nsuf = ("_ln" if local_norm else ("_n" if normalize else "")) + "_c" + wtag   # changes reg output
+    # The pattern HASH keys the reg cache: a different pattern estimate must never reuse a
+    # registration produced from differently-subtracted frames.
+    atag = (f"_a{2 if amp_fine else 1}{('p' + amp_phash) if amp_pattern is not None else ''}") if amp else ""
+    nsuf = ("_ln" if local_norm else ("_n" if normalize else "")) + "_c" + wtag + atag   # changes reg output
     if local_norm:
         log("Local normalization: matching each frame's gradient to the reference.")
     elif normalize:
@@ -422,7 +496,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             return {"idx": idx, "handle": reg_path, "name": names[idx], "path": paths[idx],
                     "w": w, "cached": True}
         if idx == ref_global:
-            aligned = ref
+            aligned = aligner.align_ref() if amp_fine else ref
         else:
             try:
                 aligned = aligner.align(_get(frames[idx]))
@@ -482,17 +556,52 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     emit_snr = getattr(params, "emit_snr_map", True)
     emit_met = getattr(params, "preserve_meteors", True)
     ikw = dict(return_coverage=True, return_noise=emit_snr, return_transient=emit_met)
+    amp_wi = None
+    if amp:
+        # Inverse-variance low band + MTF-weighted high band, over the frames that actually
+        # registered (aligned order == keep order minus registration failures).
+        aligned_order = [idx for idx in keep if idx in reg_results]
+        amp_wi = amp_mod.band_weights(measures, aligned_order, ref_idx=ref_global, log=log)
+        weights = amp_wi["w_lo"]
+        model = amp_mod.photon_transfer(aligned_handles, log=log)
+        amp_meta["photon_transfer"] = model
+        ikw["weights_hi"] = amp_wi["w_hi"]
+        # The fit runs on luminance; per-channel deviations carry ~nch× the variance for
+        # uncorrelated channel noise, so scale the floor to per-channel units. m_cap keeps
+        # the floor out of bright structure, where the fit regime doesn't apply.
+        nch = 3 if (np.asarray(_get(aligned_handles[0]) if not staged else np.load(
+            str(aligned_handles[0]), mmap_mode="r")).ndim == 3) else 1
+        ikw["model_ab"] = (model["a"] * nch, model["b"] * nch, model["m_cap"]) if model else None
     if staged:
         res = integ.combine_files(aligned_handles, weights=weights, sigma_low=params.sigma_low,
                                   sigma_high=params.sigma_high, log=log, **ikw)
     else:
         res = integ.integrate(aligned_handles, weights=weights, sigma_low=params.sigma_low,
                               sigma_high=params.sigma_high, **ikw)
-    res = list(res)                                      # order: master, coverage, [noise], [transient, tframe]
+    res = list(res)                    # order: master, [master_hi], coverage, [noise], [transient, tframe]
     master = res.pop(0)
+    master_hi = res.pop(0) if (amp and ikw.get("weights_hi") is not None) else None
     coverage = res.pop(0)
     noise = res.pop(0) if emit_snr else None
     transient, tframe = (res.pop(0), res.pop(0)) if emit_met else (None, None)
+
+    if master_hi is not None:
+        # Frequency merge: lowpass of the all-frames mean + highpass of the sharp-weighted
+        # mean — every photon deepens the faint structure, only sharp photons draw detail.
+        sigma_px = max(1.5, float(amp_wi["fwhm_best"])) * (2 if amp_fine else 1)
+        nanmask = ~np.isfinite(np.asarray(master))
+        merged = amp_mod.band_merge(np.nan_to_num(master, nan=0.0),
+                                    np.nan_to_num(master_hi, nan=0.0), sigma_px=sigma_px)
+        merged = np.asarray(merged)
+        merged[nanmask] = np.nan
+        master = merged
+        amp_meta["band_sigma_px"] = round(sigma_px, 2)
+        amp_meta["weights"] = {"low": [round(w, 3) for w in amp_wi["w_lo"]],
+                               "high": [round(w, 3) for w in amp_wi["w_hi"]],
+                               "fwhm": [round(f, 2) for f in amp_wi["fwhm"]],
+                               "fwhm_best": round(float(amp_wi["fwhm_best"]), 2)}
+        log(f"  band merge: split at σ {sigma_px:.1f}px — low band fed by all "
+            f"{n_stacked} frame(s), high band sharp-weighted.")
 
     edge_crop = getattr(params, "edge_crop", True)
     if edge_crop:                                        # crop to the common fully-covered overlap
@@ -509,6 +618,10 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
         master = cal.demaze(master)
         log("Removed X-Trans demosaic mesh (6×6 fixed-pattern grid).")
     header = contract.contract_header(n_stacked, edges, exposure)
+    if amp:
+        header["LZSAMP"] = 1                             # amplified-signal master
+        header["LZSGRID"] = 2 if amp_fine else 1
+        amp_mod.write_meta(out_dir, amp_meta, log)
     master_path = out_dir / MASTER_NAME
     save_image(str(master_path), master, bit_depth=16, header=header)
     log(f"Master: {master_path}  (LZSNSUB={n_stacked}, crop L{edges['L']} R{edges['R']} "
@@ -605,4 +718,5 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
             "meteors": meteor_list,
             "nightscape_foreground_path": str(nightscape_fg_path) if nightscape_fg_path else None,
             "nightscape": ns_state["info"] if ns_state else None,
+            "amplified": amp_meta if amp else None,
             "registered_with": "astroalign" if reg.astroalign_available() else "fft-translation"}

@@ -72,14 +72,27 @@ def cull(measures: List[dict], params, *, log: Callable[[str], None] = _noop) ->
     fwhm_med, fwhm_mad = float(np.median(fwhm)), _mad(fwhm)
     bg_med, bg_mad = float(np.median(bg)), _mad(bg)
 
+    # Amplified mode: bloated / bright-sky frames are photons, not garbage — they stay in
+    # the stack (frequency-split weights use their low band fully, their high band barely).
+    # Only trailed frames (anisotropic smear — no band is trustworthy) still hard-reject.
+    amplified = bool(getattr(params, "amplified", False))
     soft: dict = {}
+    soft_kept: dict = {}
     for k, i in enumerate(idx):
         if ecc[k] > params.ecc_hard:
             soft[i] = f"trailed (ecc {ecc[k]:.2f} > {params.ecc_hard})"
         elif fwhm[k] > fwhm_med + params.fwhm_mads * fwhm_mad:
-            soft[i] = f"bloated (FWHM {fwhm[k]:.2f} vs {fwhm_med:.2f})"
+            if amplified:
+                soft_kept[i] = f"soft (FWHM {fwhm[k]:.2f} vs {fwhm_med:.2f}) — kept for low band"
+            else:
+                soft[i] = f"bloated (FWHM {fwhm[k]:.2f} vs {fwhm_med:.2f})"
         elif bg[k] > bg_med + params.bg_mads * bg_mad:
-            soft[i] = f"background surge (bg {bg[k]:.4f} vs {bg_med:.4f})"
+            if amplified:
+                soft_kept[i] = f"bright sky (bg {bg[k]:.4f} vs {bg_med:.4f}) — kept, down-weighted"
+            else:
+                soft[i] = f"background surge (bg {bg[k]:.4f} vs {bg_med:.4f})"
+    for i, why in soft_kept.items():
+        log(f"amplified: frame {i} {why}")
 
     # cap over-culling of the SOFT rejects (zero-star frames are always out)
     max_rej = int(np.floor(params.max_reject_frac * len(idx)))
@@ -102,4 +115,4 @@ def cull(measures: List[dict], params, *, log: Callable[[str], None] = _noop) ->
     log(f"kept {len(keep)}/{n}, rejected {len(reasons)}; reference frame index {reference} "
         f"(FWHM {measures[reference]['fwhm']:.2f}, bg {measures[reference]['bg']:.4f})")
     return {"keep": keep, "reference": reference, "rejected": reasons, "reasons": reasons,
-            "fwhm_med": fwhm_med, "bg_med": bg_med}
+            "soft_kept": soft_kept, "fwhm_med": fwhm_med, "bg_med": bg_med}

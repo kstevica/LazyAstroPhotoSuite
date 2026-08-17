@@ -27,6 +27,10 @@ class LazyStackParams:
     edge_crop: bool = True         # crop the master to the common fully-covered overlap region
     emit_snr_map: bool = True      # write a per-pixel noise/SNR companion (feeds the stretch's SNR mask)
     preserve_meteors: bool = True  # detect meteor trails (rejected transients) + save a meteor layer
+    amplified: bool = False        # EXPERIMENTAL amplified signal: keep soft frames with
+                                   # frequency-split weights, inverse-variance integration,
+                                   # photon-transfer clip floor, dither-validated pattern
+                                   # removal, 2× fine grid when undersampled
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory
     decode_workers: int = 0        # parallel decode+measure threads (0 = auto by cores/memory; 1 = serial)
