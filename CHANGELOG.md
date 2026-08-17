@@ -6,6 +6,18 @@ All notable changes to **LazyAstroPhotoSuite** are recorded here. The format fol
 ## [Unreleased]
 
 ### Added
+- **Significance stretch (LazyStretch).** A new "Significance (needs stack)" dial
+  (`--significance` in the CLI): the displayed brightness of every region is held to what
+  its measured SNR statistically supports. The per-pixel significance
+  S = (matched-filtered luminance − sky) / σ is computed in the linear domain from
+  LazyStack's measured noise map (conservative: the PSF-scale detection kernel genuinely
+  lowers σ, but that credit is never claimed), folded with frame-support coverage, and
+  ramped 0→1 between 1.5σ and 4σ — both thresholds live in the PROC ledger and are
+  pinnable. After the stretch, sub-proof pixels ease toward the stretched sky floor
+  (hue preserved) while proven structure keeps the full stretch: faint real nebulosity
+  stays up because the stack *proved* it, and noise stops masquerading as signal. Pairs
+  naturally with the amplified stack's calibrated noise map; off by default, no-op
+  without a noise companion.
 - **Experimental — Amplified signal stacking (LazyStack).** One checkbox that changes what
   "stacking" means: instead of culling imperfect frames, it keeps their photons and uses
   physics to decide where each frame is trustworthy. Five measured mechanisms, all logged

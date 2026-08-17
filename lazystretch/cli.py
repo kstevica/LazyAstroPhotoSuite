@@ -85,6 +85,9 @@ def build_parser() -> argparse.ArgumentParser:
                    help="dim-core dial 0..1 (mask the large bright veil + lower its luminosity)")
     p.add_argument("--star-shrink", type=float, dest="starShrink",
                    help="software star reduction 0..1 (thin the star carpet; no StarNet)")
+    p.add_argument("--significance", type=float, dest="significance",
+                   help="significance stretch 0..1: hold each region to what its measured "
+                        "SNR supports (needs a LazyStack master with a noise map)")
     p.add_argument("--snr-protect", type=float, dest="snrProtect",
                    help="SNR-protect 0..1 using a LazyStack noise map (protect signal in NR, "
                         "damp local contrast in pure-noise regions)")
@@ -153,7 +156,7 @@ def _make_params(args, object_class: str, preset: Optional[dict] = None) -> Para
     # explicit CLI dials (None == unset, so a preset/recipe value survives)
     for name in ("satAdj", "brightAdj", "bgAdj", "blackAdj", "contrastAdj",
                  "dehaze", "gradientCleanup", "chromaNR", "starsAdj", "deepen", "highlights",
-                 "transparency", "dimCore", "starShrink", "snrProtect", "meteorStrength", "structure",
+                 "transparency", "dimCore", "starShrink", "snrProtect", "significance", "meteorStrength", "structure",
                  "deepenBackground", "nightscapeBrightness"):
         v = getattr(args, name)
         if v is not None:
@@ -237,7 +240,8 @@ def main(argv: Optional[list] = None) -> int:
             print(f"Curated recipe: {rec['name']} — {rec['why']}")
     params = _make_params(args, object_class, preset)
     params.ha, params.oiii, params.sii = ha, oiii, sii
-    if args.input and params.snrProtect > 0:                 # SNR-protect needs the master's noise map
+    if args.input and (params.snrProtect > 0 or getattr(params, "significance", 0) > 0):
+        # SNR-protect / significance need the master's noise map
         from .processes.snrmask import load_coverage_map, load_noise_map
         params.snr_noise_map = load_noise_map(args.input)
         params.snr_coverage_map = load_coverage_map(args.input)

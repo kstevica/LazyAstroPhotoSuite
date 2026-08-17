@@ -99,6 +99,11 @@ class Parameters:
                                    # per-pixel noise map to protect high-SNR signal from NR and
                                    # damp local-contrast in pure-noise regions. Needs snr_noise_map
                                    # (a LazyStack master's companion). Port-only finishing dial.
+    significance: float = 0.0      # significance stretch 0..1 (0=off): hold every region's
+                                   # displayed brightness to what its measured SNR statistically
+                                   # supports — sub-proof pixels ease toward the sky floor, proven
+                                   # structure keeps the full stretch. Needs snr_noise_map.
+                                   # Port-only finishing dial.
 
     # --- transient narrowband channel arrays (not persisted) ---
     ha: Optional[np.ndarray] = field(default=None, repr=False)

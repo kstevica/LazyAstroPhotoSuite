@@ -171,7 +171,7 @@ def run_pipeline(
     eff_gc = bool(ledger.record("Background", "use GradientCorrection", eff_gc))
 
     ctx = {"img": target, "eff_floor": eff.bgLevel, "color_cal_done": False, "stretch": None,
-           "noise_map": None, "coverage_map": None, "snr_raw": None,
+           "noise_map": None, "coverage_map": None, "snr_raw": None, "sig_w": None,
            "meteor_layer": None, "meteor_labels": None,
            "nightscape_fg": None, "nightscape_mask": None}
     steps: List = []
@@ -210,8 +210,9 @@ def run_pipeline(
     # SNR-protect: LazyStack's measured per-pixel noise + coverage maps (companions of the master)
     # drive a mask that protects high-SNR signal from NR and damps local contrast in pure-noise regions.
     snr_protect = float(getattr(params, "snrProtect", 0.0) or 0.0)
+    significance = float(getattr(params, "significance", 0.0) or 0.0)
     _nm = getattr(params, "snr_noise_map", None)
-    if snr_protect > 0 and _nm is not None:
+    if (snr_protect > 0 or significance > 0) and _nm is not None:
         _nm = np.asarray(_nm, dtype=np.float64)
         _hw = np.asarray(target).shape[:2]
         if _nm.shape == _hw:
@@ -270,6 +271,19 @@ def run_pipeline(
             _log(f"   SNR-protect {snr_protect:.2f}: ~{100 * frac:.0f}% low-SNR (protect NR signal, "
                  f"damp local contrast there)")
         add("SNR-protect mask (from stack noise map)", _snr)
+
+    # --- significance weight (linear domain, after crop): what the data statistically supports ---
+    if ctx["noise_map"] is not None and significance > 0:
+        def _sig_build():
+            s_lo = ledger.record("Significance", "sigma low", 1.5)
+            s_hi = ledger.record("Significance", "sigma high", 4.0)
+            ctx["sig_w"] = snrmask.significance_weight(
+                ctx["img"], ctx["noise_map"], coverage=ctx["coverage_map"],
+                s_lo=float(s_lo), s_hi=float(s_hi))
+            frac = float(np.mean(ctx["sig_w"] < 0.5))
+            _log(f"   significance map: {s_lo:.1f}σ→{s_hi:.1f}σ ramp; "
+                 f"~{100 * frac:.0f}% of pixels below proof")
+        add("Significance map (from stack noise map)", _sig_build)
 
     # Debug: accumulate the estimated gradient/background (before - after) so it can be inspected
     # as an image — if you can see galactic dust in the model, the step is stealing real signal.
@@ -544,6 +558,26 @@ def run_pipeline(
                 _log("   SNR-protected: local contrast damped in low-SNR regions")
             ctx["img"] = out
         add("Local contrast (LHE)" + (" core-protected" if params.protectCores else ""), _lhe)
+
+    # --- significance stretch (stretched domain): the display holds every region to what its
+    #     measured SNR statistically supports — sub-proof pixels ease toward the sky floor,
+    #     proven structure keeps the full stretch. Luminance-scaling per pixel, hue preserved. ---
+    if significance > 0:
+        def _sig_apply():
+            w = ctx["sig_w"]
+            if w is None:
+                _log("   significance stretch skipped (no stack noise map)")
+                return
+            img = np.asarray(ctx["img"], dtype=np.float64)
+            lum = img[..., :3].mean(axis=2) if img.ndim == 3 else img
+            floor = float(np.nanmedian(lum))                 # the stretched sky level
+            factor = 1.0 - significance * (1.0 - w)          # 1 = keep, ->1-dial at zero proof
+            if img.ndim == 3:
+                factor = factor[..., None]
+            ctx["img"] = np.clip(floor + factor * (img - floor), 0.0, 1.0)
+            _log(f"   significance stretch {significance:.2f}: sub-proof structure eased "
+                 f"toward the sky floor ({floor:.3f})")
+        add("Significance stretch (dial)", _sig_apply)
 
     # --- star handling: Remove stars (starless output) OR Star reduction (js:4702-4723) ---
     do_remove = params.removeStars and not preview

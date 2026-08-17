@@ -65,6 +65,40 @@ def snr_map(master: np.ndarray, noise: np.ndarray) -> np.ndarray:
     return np.maximum(lum, 0.0) / (nz + 1e-6)
 
 
+def significance_weight(master: np.ndarray, noise: np.ndarray, *,
+                        coverage: Optional[np.ndarray] = None,
+                        s_lo: float = 1.5, s_hi: float = 4.0,
+                        psf_px: float = 1.5, smooth: float = 3.0) -> np.ndarray:
+    """Per-pixel statistical-significance weight in [0, 1] for the significance stretch.
+
+    S = (matched-filtered luminance − sky) / σ, in the LINEAR domain, where σ is the
+    stack's measured standard error. The luminance is averaged over a PSF-scale kernel
+    first (detection-image style: faint PSF-scale structure is judged at the resolution
+    it actually has) while σ is left UNREDUCED — conservative by construction, since the
+    kernel average genuinely lowers the standard error but we never claim that credit.
+    The weight ramps 0→1 between ``s_lo``σ and ``s_hi``σ (smoothstep), low-coverage
+    pixels are demoted, and the field is smoothed so the gate has no per-pixel speckle.
+    """
+    a = np.asarray(master, dtype=np.float64)
+    lum = a[..., :3].mean(axis=2) if a.ndim == 3 else a
+    nz = np.asarray(noise, dtype=np.float64)
+    if nz.shape != lum.shape:
+        raise ValueError(f"noise map shape {nz.shape} != image {lum.shape}")
+    det = gaussian_filter(lum, float(psf_px))               # matched-filter detection image
+    sky = float(np.nanmedian(det))
+    s = (det - sky) / (nz + 1e-9)
+    t = np.clip((s - s_lo) / max(s_hi - s_lo, 1e-6), 0.0, 1.0)
+    w = t * t * (3.0 - 2.0 * t)                             # smoothstep
+    if coverage is not None:
+        cov = np.asarray(coverage, dtype=np.float64)
+        if cov.shape == w.shape:
+            cmax = float(cov.max()) or 1.0
+            w = w * np.clip(cov / cmax, 0.0, 1.0) ** 0.5    # low frame support → less confident
+    if smooth and smooth > 0:
+        w = gaussian_filter(w, float(smooth))
+    return np.clip(w, 0.0, 1.0)
+
+
 def snr_protect_mask(master: np.ndarray, noise: np.ndarray, strength: float = 0.5, *,
                      coverage: Optional[np.ndarray] = None,
                      lo_pct: float = 20.0, hi_pct: float = 70.0, smooth: float = 8.0) -> np.ndarray:
