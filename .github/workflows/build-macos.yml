@@ -1,0 +1,50 @@
+name: Build macOS app (Apple Silicon)
+
+# Builds LazyAstroPhotoSuite.app for Apple Silicon (arm64) with PyInstaller on GitHub's
+# macos-14 runner — those runners ARE Apple Silicon, so the produced .app is native arm64.
+# Download the .zip from the run's "Artifacts" (or a Release, when triggered by a tag).
+#
+# TRIGGERS: this builds on every push to main so committing the workflow (or any change) kicks
+# off an Apple binary, plus manual dispatch and version tags. macOS runners are billed at 10×
+# on private repos — if that matters, delete the `push: branches: [main]` block below and
+# trigger via a `v*` tag or the "Run workflow" button instead.
+#
+# NOTE: the .app is UNSIGNED and un-notarized (no Apple Developer cert in CI). On first launch
+# users must right-click → Open (or `xattr -dr com.apple.quarantine LazyAstroPhotoSuite.app`).
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    tags: ["v*"]
+
+jobs:
+  macos:
+    runs-on: macos-14                       # Apple Silicon (arm64) runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"            # arm64 CPython on macos-14
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[gui,video,bg,tools,build]"
+
+      - name: Build the .app
+        env:
+          PYTHON: python                     # use the CI interpreter (no local .venv-build here)
+        run: bash build/build_macos.sh
+
+      - name: Package (ditto preserves the bundle's symlinks + resource forks)
+        run: |
+          ditto -c -k --sequesterRsrc --keepParent \
+            "build/dist/LazyAstroPhotoSuite.app" \
+            "LazyAstroPhotoSuite-macos-arm64.zip"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LazyAstroPhotoSuite-macos-arm64
+          path: LazyAstroPhotoSuite-macos-arm64.zip
+          retention-days: 30

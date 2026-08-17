@@ -51,6 +51,16 @@ bundle's `CFBundleName` = **LazyAstroPhotoSuite**, with a themed icon (`build/ma
 the app degrades gracefully without them. Install separately if wanted: the RC-Astro CLI
 (`rc-astro` — BlurX/StarX/NoiseX), StarNet, GraXpert, DeepSNR, ASTAP.
 
+### GitHub Actions (Apple Silicon, no Mac needed)
+
+`.github/workflows/build-macos.yml` builds the arm64 `.app` on a `macos-14` runner (those
+runners *are* Apple Silicon) and uploads `LazyAstroPhotoSuite-macos-arm64.zip` as an
+artifact. It runs on every push to `main`, on `v*` tags, and on manual *Run workflow*. macOS
+runners bill at 10× on private repos — to build less often, drop the `push: branches: [main]`
+block and use a tag or the dispatch button. The artifact is **unsigned / un-notarized** (no
+Apple Developer cert in CI): first launch needs right-click → *Open*, or
+`xattr -dr com.apple.quarantine LazyAstroPhotoSuite.app`.
+
 ## Windows build
 
 PyInstaller **cannot cross-compile** a Windows `.exe` from macOS — it must run on Windows.
