@@ -36,6 +36,7 @@ _LUM = np.array([0.2126, 0.7152, 0.0722], dtype=np.float64)
 _LHE_RADIUS = 64          # P.radius
 _LHE_SLOPE_LIMIT = 1.5    # P.slopeLimit (contrast limit; see note in local_contrast)
 _LHE_DEFAULT_AMOUNT = 0.12  # P.amount default when caller passes None
+_LHE_OVERSHOOT = 3.0      # soft-clip detail beyond this × its 90th-pctile scale (star deringing)
 
 
 def _luminance(a: np.ndarray) -> np.ndarray:
@@ -211,7 +212,17 @@ def local_contrast(img, amount=_LHE_DEFAULT_AMOUNT) -> np.ndarray:
 
     def _enhance(ch: np.ndarray) -> np.ndarray:
         local_mean = gaussian_filter(ch, sigma=sigma, mode="reflect")
-        return ch + amount * (ch - local_mean)
+        detail = ch - local_mean
+        # Overshoot limit (models LHE's slopeLimit, unmodelled before): our unsharp stand-in
+        # rings around bright stars — large NEGATIVE detail in the ring becomes a dark halo /
+        # crescent. Soft-clip the detail at a multiple of its structure-scale magnitude (90th
+        # percentile of |detail|, so the sky-noise floor doesn't set the scale): nebula-scale
+        # contrast passes ~linearly, extreme star overshoot is compressed. Symmetric — it tames
+        # both the bright ring and the dark halo, and never over-darkens a pixel.
+        scale = float(np.percentile(np.abs(detail), 90)) + 1e-6
+        lim = _LHE_OVERSHOOT * scale
+        detail = lim * np.tanh(detail / lim)
+        return ch + amount * detail
 
     if a.ndim == 2:
         out = _enhance(a)
