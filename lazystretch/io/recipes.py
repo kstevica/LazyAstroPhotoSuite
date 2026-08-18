@@ -67,7 +67,7 @@ def recipe_from_params(params: Parameters, data: "LazyStretchData | None" = None
 
 
 # Portable processing bools the GUI exposes that PI's recipeBools omits.
-_PORT_BOOLS = ("useClassicalDeconv", "developForeground")
+_PORT_BOOLS = ("useClassicalDeconv", "developForeground", "fixChromatic")
 # Input-state / debug bools: history captures them, portable .lsrecipe files do not.
 _STATE_BOOLS = ("inputStretched", "debugBackground")
 

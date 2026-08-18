@@ -66,6 +66,7 @@ _OPTIONS = [
     ("darkLaneGC", "…dark-lane gradient (no empty sky)"),
     ("doColorCal", "Color calibration"),
     ("preferSPCC", "…prefer SPCC (needs a solve)"),
+    ("fixChromatic", "Fix chromatic aberration (align R/G to B, before deconv)"),
     ("doBXT", "Deconvolution / sharpening (BlurX)"),
     ("useClassicalDeconv", "…classical RL deconvolution (no BlurX)"),
     ("doNR", "Noise reduction"),

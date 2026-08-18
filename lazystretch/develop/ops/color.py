@@ -9,6 +9,7 @@ from ...processes.scnr import scnr
 from ...processes.chromanr import chroma_nr
 from ...processes.colorcal import background_neutralize
 from ...processes.finishing import reduce_cast, emission_boost
+from ...processes.chroma import correct_chromatic_aberration
 from . import Op, ParamSpec, register
 
 _LUMA = np.array([0.2126, 0.7152, 0.0722], dtype=np.float32)
@@ -51,6 +52,10 @@ def _bg_neutralize(img: np.ndarray, p: dict) -> np.ndarray:
 
 def _reduce_cast(img: np.ndarray, p: dict) -> np.ndarray:
     return reduce_cast(img)
+
+
+def _fix_chromatic(img: np.ndarray, p: dict) -> np.ndarray:
+    return correct_chromatic_aberration(img, strength=float(p.get("strength", 1.0)))
 
 
 def _emission(img: np.ndarray, p: dict) -> np.ndarray:
@@ -97,6 +102,14 @@ register(Op(
     "reduce_cast", "Reduce colour cast", "Color", _reduce_cast, needs_color=True,
     params=[],
     tooltip="Pull the faint sky 30% toward grey through a background mask.",
+))
+
+register(Op(
+    "fix_chromatic", "Fix chromatic aberration", "Color", _fix_chromatic, needs_color=True,
+    heavy=True,
+    params=[ParamSpec("strength", "Strength", "float", 0.0, 1.0, 1.0, 2)],
+    tooltip="Align the R and G channels to B from star offsets — removes lateral-CA colour "
+            "fringes and the dark star crescents sharpening can leave.",
 ))
 
 register(Op(

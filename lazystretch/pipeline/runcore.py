@@ -324,6 +324,15 @@ def run_pipeline(
             ctx["img"] = out
         add("Dark-lane gradient model", _darklane)
 
+    # --- chromatic-aberration correction (linear, BEFORE deconvolution) — align R/G to B and
+    #     match per-channel star sizes so lateral CA doesn't fringe/crescent. NOTE: per-channel
+    #     deconvolution downstream can partly re-introduce a mismatch on severe CA. ---
+    if getattr(params, "fixChromatic", False) and is_color and not params.inputStretched:
+        def _ca():
+            from ..processes import chroma
+            ctx["img"] = chroma.correct_chromatic_aberration(ctx["img"], log=_log)
+        add("Chromatic-aberration correction (align R,G to B; match sizes)", _ca)
+
     # --- deconvolution (BlurX wall -> optional classical RL) (js:3344-3354) ---
     if params.inputStretched:
         _log("-- Deconvolution skipped (input already stretched)")

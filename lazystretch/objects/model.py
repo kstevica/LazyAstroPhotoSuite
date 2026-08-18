@@ -58,6 +58,8 @@ class Parameters:
     adaptiveFloor: bool = True
     enhanceEmission: bool = False
     reduceCast: bool = False
+    fixChromatic: bool = False       # correct lateral chromatic aberration (align R/G to B,
+                                     # linear, before deconvolution) — kills dark star crescents
     developForeground: bool = True   # nightscape: develop the linear foreground; off = use it as-is
                                      # (when the supplied foreground is already developed, e.g. Mode 2)
     workOnClone: bool = True

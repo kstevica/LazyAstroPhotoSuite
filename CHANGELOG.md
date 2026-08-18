@@ -3,6 +3,29 @@
 All notable changes to **LazyAstroPhotoSuite** are recorded here. The format follows
 [Keep a Changelog](https://keepachangelog.com/).
 
+## [Unreleased]
+
+### Added
+- **Chromatic-aberration correction** (`processes/chroma.py`) — measures per-star R→B and
+  G→B centroid offsets across the frame, fits a smooth robust polynomial offset field, warps
+  R/G to align with B, and matches the per-channel star **sizes** (star-local blur to a common
+  PSF) so lateral CA / OSC channel misregistration doesn't leave coloured fringes. Wired in
+  three places: a **LazyStretch** option ("Fix chromatic aberration", on the linear master
+  before deconvolution; saved in recipes/history), a **LazyStack** master option, and a
+  **LazyDevelop** Color tool with a strength slider. It reduces measured CA well (near-perfect
+  on a modelled radial CA; a real M42 master's ~1.4 px offset roughly halves). *Known limit:*
+  on **severe** CA it only partly clears the "dark star crescents", because per-channel
+  deconvolution downstream can re-introduce a mismatch — fully solving that needs matched-PSF
+  deconvolution (what PixInsight's BlurX does internally), which wrapping the RC-Astro CLI
+  can't replicate. Off by default; opt-in.
+
+### Fixed
+- **`local_contrast` (LHE) star-edge ringing** — the unsharp stand-in modelled PI LHE's
+  `slopeLimit` for the first time: the high-pass detail is soft-clipped at a multiple of its
+  structure-scale magnitude, so nebula-scale contrast passes ~linearly but extreme
+  bright-star overshoot no longer rings into dark halos, and a pixel is never darkened
+  further than before.
+
 ## [1.1.0] — 2026-08-17
 
 First **source-available** release: the code is public on GitHub under the PolyForm

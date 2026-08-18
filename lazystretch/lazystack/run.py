@@ -614,6 +614,9 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     if getattr(params, "fix_banding", True):             # remove column/row fixed-pattern banding
         master = cal.suppress_banding(master)
         log("Suppressed column/row banding (fixed-pattern residual).")
+    if getattr(params, "fix_chromatic", False) and master.ndim == 3:  # lateral CA: align R/G to B
+        from ..processes import chroma
+        master = chroma.correct_chromatic_aberration(master, log=log)
     if getattr(params, "demaze", False):                 # remove the X-Trans 6×6 demosaic mesh (opt-in)
         master = cal.demaze(master)
         log("Removed X-Trans demosaic mesh (6×6 fixed-pattern grid).")

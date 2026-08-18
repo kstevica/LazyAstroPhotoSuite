@@ -49,6 +49,9 @@ _CHECKS = [
      "Static hot-pixel repair across frames — no darks or dithering needed."),
     ("fix_banding", "Suppress column/row banding",
      "Remove fixed-pattern (column/row) banding on the master — no darks needed."),
+    ("fix_chromatic", "Fix chromatic aberration",
+     "Align the R and G channels to B (from star offsets) so lateral CA can't become dark "
+     "star crescents once the master is sharpened/stretched."),
     ("demaze", "Remove X-Trans mesh",
      "Remove the Fuji X-Trans 6×6 demosaic grid (optional)."),
     ("do_register", "Register frames", "Align every kept frame to the reference."),
