@@ -28,8 +28,15 @@ to the launcher.
 Turn a folder of light subs into a single integrated master.
 
 1. Open **LazyStack**.
-2. **Pick your subs** (a folder of calibrated or raw lights). Add flats/darks/bias if you have
-   them.
+2. **Pick your frame sets.** Choose a folder per set — **Lights** (required), and optionally
+   **Darks**, **Flats**, **Bias**, and **Dark flats** — so calibration frames can live anywhere
+   (e.g. a shared darks/bias library reused across targets). Or click **Auto-detect from one
+   folder…** and point it at a dataset folder that holds `lights/`, `darks/`, `flats/`,
+   `biases/` (and `dark_flats/`) subfolders — it fills every set by name, and you can still
+   override any one of them. The master is written beside your Lights set.
+   - **Dark flats** are darks matched to the *flats'* exposure. Supply them and they calibrate
+     your flats (better than bias, since they also remove the flat-exposure dark current);
+     without them, bias is used.
 3. LazyStack **calibrates, registers and integrates** them, rejecting outliers (satellite
    trails, cosmic rays). It also:
    - **edge-crops** the stack border where frames don't all overlap,

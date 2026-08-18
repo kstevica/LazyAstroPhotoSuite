@@ -6,6 +6,19 @@ All notable changes to **LazyAstroPhotoSuite** are recorded here. The format fol
 ## [Unreleased]
 
 ### Added
+- **Per-set frame folders in LazyStack.** The Stack (and Nightscape) window now lets you pick
+  a folder per set — **Lights / Darks / Flats / Bias / Dark flats** — so calibration frames
+  can live anywhere (e.g. a shared darks/bias library), not only in subfolders of one dataset
+  root. "Auto-detect from one folder…" keeps the old one-click behaviour (scans
+  `lights/darks/flats/biases/dark_flats` subfolders by name), and explicit picks can override
+  individual scanned sets. Output (`lazystack/`) is written beside the Lights set. Only Lights
+  is required; blank sets are skipped. (`lazystack.run.resolve_sets`; params `lights_dir` /
+  `darks_dir` / `flats_dir` / `biases_dir` / `dark_flats_dir`.)
+- **Dark-flats (flat-darks) support.** When supplied, dark-flats — darks matched to the
+  *flats'* exposure — calibrate the flats instead of the bias, subtracting the flat-exposure
+  dark current + read pedestal for a cleaner flat master. Falls back to the bias when no
+  dark-flats are given. Auto-detected from a `dark_flats/` (also `flatdarks/`, `flat_darks/`…)
+  subfolder or selectable as its own folder.
 - **Chromatic-aberration correction** (`processes/chroma.py`) — measures per-star R→B and
   G→B centroid offsets across the frame, fits a smooth robust polynomial offset field, warps
   R/G to align with B, and matches the per-channel star **sizes** (star-local blur to a common

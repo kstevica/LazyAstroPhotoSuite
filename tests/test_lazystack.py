@@ -412,6 +412,78 @@ def test_stack_writes_noise_map_companion(tmp_path):
     assert cov.shape == res["master"].shape[:2] and int(cov.max()) <= res["n_stacked"]
 
 
+def _save_uniform(path, value, shape, bit_depth=16):
+    save_image(str(path), np.full(shape, value, np.float32), bit_depth=bit_depth)
+
+
+# --- frame-set resolution (per-set folders + dark-flats) ---
+
+def test_find_sets_detects_dark_flats_by_alias(tmp_path):
+    (tmp_path / "lights").mkdir()
+    save_image(str(tmp_path / "lights" / "l0.fits"), _starfield(seed=0), bit_depth=16)
+    save_image(str(tmp_path / "lights" / "l1.fits"), _starfield(seed=1), bit_depth=16)
+    (tmp_path / "flatdarks").mkdir()                       # alias for dark_flats
+    _save_uniform(tmp_path / "flatdarks" / "df0.fits", 0.03, (60, 60))
+    _save_uniform(tmp_path / "flatdarks" / "df1.fits", 0.03, (60, 60))
+    sets = lsrun.find_sets(str(tmp_path))
+    assert len(sets["lights"]) == 2
+    assert len(sets["dark_flats"]) == 2                    # 'flatdarks' recognised as dark-flats
+
+
+def test_resolve_sets_explicit_dirs_override_scan(tmp_path):
+    (tmp_path / "lights").mkdir()
+    (tmp_path / "darks").mkdir()
+    for i in range(2):
+        save_image(str(tmp_path / "lights" / f"l{i}.fits"), _starfield(seed=i), bit_depth=16)
+        _save_uniform(tmp_path / "darks" / f"d{i}.fits", 0.02, (60, 60))
+    flib = tmp_path / "flat_library"; flib.mkdir()          # a shared library, not a subfolder
+    for i in range(3):
+        _save_uniform(flib / f"f{i}.fits", 0.5, (60, 60))
+    dfl = tmp_path / "df_library"; dfl.mkdir()
+    for i in range(2):
+        _save_uniform(dfl / f"df{i}.fits", 0.03, (60, 60))
+    p = LazyStackParams(flats_dir=str(flib), dark_flats_dir=str(dfl))
+    sets = lsrun.resolve_sets(str(tmp_path), p)
+    assert len(sets["lights"]) == 2 and len(sets["darks"]) == 2     # scanned from the root
+    assert len(sets["flats"]) == 3                                  # explicit override
+    assert len(sets["dark_flats"]) == 2                            # explicit (no scan subfolder)
+
+
+def test_stack_with_explicit_lights_folder_and_blank_root(tmp_path):
+    pytest.importorskip("photutils")
+    subs = tmp_path / "subframes"                          # deliberately NOT named 'lights'
+    subs.mkdir()
+    base = _starfield(n=40, seed=7)
+    for i in range(6):
+        save_image(str(subs / f"s_{i:03d}.fits"),
+                   np.clip(fftreg.apply_shift(base, i - 3, 2 - i), 0, 1), bit_depth=16)
+    p = LazyStackParams(do_calibrate=False, do_cosmetic=False, lights_dir=str(subs))
+    res = lsrun.stack("", p)                               # blank root — derived from lights_dir
+    assert res is not None and res["n_stacked"] >= 2
+    assert (tmp_path / "lazystack" / lsrun.MASTER_NAME).exists()    # output beside the lights set
+
+
+def test_stack_uses_dark_flats_to_calibrate_flats(tmp_path):
+    pytest.importorskip("photutils")
+    shape = _starfield(n=40, seed=8).shape
+    lights = tmp_path / "lights"; lights.mkdir()
+    base = _starfield(n=40, seed=8)
+    for i in range(4):
+        f = np.clip(fftreg.apply_shift(base, i - 1.5, 1.5 - i) + 0.02, 0, 1)   # + dark pedestal
+        save_image(str(lights / f"l_{i:03d}.fits"), f, bit_depth=16)
+    for name, val in (("darks", 0.02), ("biases", 0.01), ("flats", 0.5), ("dark_flats", 0.03)):
+        d = tmp_path / name; d.mkdir()
+        for i in range(2):
+            _save_uniform(d / f"{name}_{i}.fits", val, shape)
+    logs = []
+    p = LazyStackParams(do_calibrate=True, do_cosmetic=False, fix_walking_noise=False,
+                        stage_to_disk=True, reuse_cache=False)
+    res = lsrun.stack(str(tmp_path), p, log=lambda s: logs.append(s))
+    assert res is not None
+    assert any("dark-flats (flat-darks)" in s for s in logs)        # flats calibrated with them
+    assert any("master darkflat" in s for s in logs)               # its own master was built
+
+
 def test_measure_only_advises_without_stacking(tmp_path):
     pytest.importorskip("photutils")
     lights = tmp_path / "lights"

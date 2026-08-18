@@ -1,8 +1,9 @@
 """LazyStack panel — calibrate, measure/cull, register and integrate a burst of subs.
 
-Sibling of the LazyStretch / LazyMoonSun panels, hosted by the same shell. Picks a dataset
-folder (lights/darks/flats/biases subfolders, or a lights-only folder), exposes the cull +
-integration dials, and runs the measure-only advisor or the full stack off the UI thread.
+Sibling of the LazyStretch / LazyMoonSun panels, hosted by the same shell. Picks the frame sets
+— a folder per set (Lights / Darks / Flats / Bias / Dark flats), or Auto-detect from one parent
+folder with lights/darks/flats/biases subfolders — exposes the cull + integration dials, and runs
+the measure-only advisor or the full stack off the UI thread.
 """
 from __future__ import annotations
 
@@ -33,6 +34,19 @@ from ..lazystack.model import LazyStackParams
 from .preview import PreviewView
 from .widgets import FloatSlider, RunLogView
 from .worker import CallableWorker
+
+# Per-set folder pickers. (key, button label, tooltip). Only Lights is required; the rest are
+# optional calibration sets. Dark-flats are darks matched to the FLATS' exposure.
+_SET_ROWS = [
+    ("lights", "Lights", "The exposures of your target (required)."),
+    ("darks", "Darks", "Darks matched to the lights' exposure + temperature — remove dark "
+     "current and amp glow."),
+    ("flats", "Flats", "Evenly-lit frames — correct vignetting and dust shadows."),
+    ("biases", "Bias", "Zero-length frames — the sensor's read pedestal (calibrates darks and, "
+     "if you have no dark-flats, the flats)."),
+    ("dark_flats", "Dark flats", "Darks matched to the FLATS' exposure — calibrate the flats. "
+     "Preferred over bias for flats because they also carry the flat-exposure dark current."),
+]
 
 _DIALS = [
     ("sigma_low", "Reject σ low", 1.0, 6.0, 1),
@@ -93,7 +107,10 @@ class LazyStackPanel(QWidget):
         super().__init__()
         self._nightscape = bool(nightscape)
         self.setWindowTitle("LazyNightscape" if self._nightscape else "LazyStack")
-        self._folder: Optional[str] = None
+        self._folder: Optional[str] = None                 # working/output root
+        self._auto_root: Optional[str] = None              # last auto-detected dataset folder
+        self._set_dirs: Dict[str, Optional[str]] = {       # explicit per-set folders (None = scan)
+            "lights": None, "darks": None, "flats": None, "biases": None, "dark_flats": None}
         self._nightscape_fg_path: Optional[str] = None
         self._nightscape_manual_mask: Optional[np.ndarray] = None  # painted mask (preview-res)
         self._seg_median: Optional[np.ndarray] = None              # last segmentation-preview median
@@ -120,16 +137,34 @@ class LazyStackPanel(QWidget):
     def _build_controls(self) -> QWidget:
         col = QVBoxLayout()
 
-        g_src = QGroupBox("Dataset folder")
+        g_src = QGroupBox("Frame sets")
         v = QVBoxLayout(g_src)
-        self.folder_btn = QPushButton("Choose dataset folder…")
-        self.folder_btn.clicked.connect(self._choose_folder)
-        self.folder_label = QLabel("(none) — lights/darks/flats/biases subfolders, "
-                                   "or a folder of lights")
-        self.folder_label.setStyleSheet("color: gray;")
-        self.folder_label.setWordWrap(True)
-        v.addWidget(self.folder_btn)
-        v.addWidget(self.folder_label)
+        auto = QPushButton("Auto-detect from one folder…")
+        auto.setToolTip("Pick a dataset folder that holds lights/darks/flats/biases subfolders "
+                        "(or a folder of loose lights). Fills every set below by name.")
+        auto.clicked.connect(self._auto_detect_folder)
+        v.addWidget(auto)
+        # The nightscape window is a fixed-tripod sky stack — it only takes lights here.
+        rows = [r for r in _SET_ROWS if not self._nightscape or r[0] == "lights"]
+        self.set_labels: Dict[str, QLabel] = {}
+        for key, label, tip in rows:
+            row = QHBoxLayout()
+            btn = QPushButton(f"{label}…")
+            btn.setToolTip(tip)
+            btn.clicked.connect(lambda _=False, k=key, lb=label: self._choose_set_folder(k, lb))
+            lab = QLabel("—")
+            lab.setToolTip(tip)
+            lab.setStyleSheet("color: gray;")
+            lab.setWordWrap(True)
+            self.set_labels[key] = lab
+            row.addWidget(btn)
+            row.addWidget(lab, 1)
+            v.addLayout(row)
+        hint = QLabel("Pick a folder per set, or Auto-detect from one parent folder. "
+                      "Only Lights is required; a blank set is skipped.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: gray; font-size: 11px;")
+        v.addWidget(hint)
         col.addWidget(g_src)
 
         g_opt = QGroupBox("Options")
@@ -247,7 +282,7 @@ class LazyStackPanel(QWidget):
         self.log_view = RunLogView()
         self.progress = QProgressBar()
         self.progress.setRange(0, 100)
-        self.status_label = QLabel("Pick a dataset folder, then Measure or Stack.")
+        self.status_label = QLabel("Pick your frame sets (at least Lights), then Measure or Stack.")
         v.addWidget(self.log_view, 3)
         v.addWidget(self.progress)
         v.addWidget(self.status_label)
@@ -261,6 +296,11 @@ class LazyStackPanel(QWidget):
             setattr(p, attr, fs.value())
         for attr, cb in self.checks.items():
             setattr(p, attr, cb.isChecked())
+        p.lights_dir = self._set_dirs.get("lights") or ""
+        p.darks_dir = self._set_dirs.get("darks") or ""
+        p.flats_dir = self._set_dirs.get("flats") or ""
+        p.biases_dir = self._set_dirs.get("biases") or ""
+        p.dark_flats_dir = self._set_dirs.get("dark_flats") or ""
         if self._nightscape:
             p.nightscape = True
             p.fix_walking_noise = False          # a moonlit star reads as a static hot pixel
@@ -315,14 +355,15 @@ class LazyStackPanel(QWidget):
 
     def _preview_segmentation(self):
         if self._folder is None:
-            self.status_label.setText("Pick a dataset folder first.")
+            self.status_label.setText("Pick your Lights folder (or Auto-detect a folder) first.")
             return
         folder, bias, fg_path = self._folder, float(self.ns_bias.value()), self._nightscape_fg_path
+        params = self._collect_params()
 
         def fn(log, _p):
             from ..io.image_io import load_preview
             from ..lazystack import nightscape as ns
-            lights = lsrun.find_sets(folder)["lights"]
+            lights = lsrun.resolve_sets(folder, params)["lights"]
             if len(lights) < 2:
                 log("Need at least 2 lights to segment.")
                 return None
@@ -354,21 +395,36 @@ class LazyStackPanel(QWidget):
 
     # -------------------------------------------------------------- actions
 
-    def _choose_folder(self):
+    def _auto_detect_folder(self):
         d = QFileDialog.getExistingDirectory(self, "Choose dataset folder")
         if not d:
             return
+        self._auto_root = d
         self._folder = d
+        for k in self._set_dirs:                              # clear explicit picks — scan wins now
+            self._set_dirs[k] = None
         sets = lsrun.find_sets(d)
-        self.folder_label.setText(
-            f"{Path(d).name} — {len(sets['lights'])} lights, {len(sets['darks'])} darks, "
-            f"{len(sets['flats'])} flats, {len(sets['biases'])} biases")
-        self.folder_label.setStyleSheet("")
-        self.status_label.setText("Folder ready.")
+        for key, lab in self.set_labels.items():
+            n = len(sets.get(key, []))
+            lab.setText(f"scan: {n}" if n else "—")
+            lab.setStyleSheet("" if n else "color: gray;")
+        self.status_label.setText(f"Auto-detected from {Path(d).name}.")
+
+    def _choose_set_folder(self, key: str, label: str):
+        d = QFileDialog.getExistingDirectory(self, f"Choose {label} folder")
+        if not d:
+            return
+        self._set_dirs[key] = d
+        n = len(lsrun.list_frames(d))
+        self.set_labels[key].setText(f"{Path(d).name} ({n})")
+        self.set_labels[key].setStyleSheet("" if n else "color: #b04a2f;")
+        if key == "lights":                                  # output goes beside the lights set
+            self._folder = str(Path(d).parent)
+        self.status_label.setText(f"{label}: {n} frame(s).")
 
     def _do_measure(self):
         if self._folder is None:
-            self.status_label.setText("Pick a dataset folder first.")
+            self.status_label.setText("Pick your Lights folder (or Auto-detect a folder) first.")
             return
         folder, params = self._folder, self._collect_params()
 
@@ -387,7 +443,7 @@ class LazyStackPanel(QWidget):
 
     def _do_stack(self):
         if self._folder is None:
-            self.status_label.setText("Pick a dataset folder first.")
+            self.status_label.setText("Pick your Lights folder (or Auto-detect a folder) first.")
             return
         folder, params = self._folder, self._collect_params()
 

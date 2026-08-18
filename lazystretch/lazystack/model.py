@@ -36,6 +36,15 @@ class LazyStackParams:
     reuse_cache: bool = True
     stage_to_disk: bool = True     # stage frames to lazystack/work (low RAM); off = in-memory
     decode_workers: int = 0        # parallel decode+measure threads (0 = auto by cores/memory; 1 = serial)
+    # --- explicit per-set folders (override the single-folder subfolder scan; blank = scan) ---
+    # Each set can point at its own folder anywhere on disk (e.g. a shared darks/bias library).
+    # Any left blank fall back to scanning the dataset root's lights/darks/flats/biases subfolders.
+    lights_dir: str = ""
+    darks_dir: str = ""
+    flats_dir: str = ""
+    biases_dir: str = ""
+    dark_flats_dir: str = ""       # flat-darks: darks matched to the FLATS' exposure — calibrate the
+                                   # flats (preferred over plain bias, as they also carry dark current)
     # --- nightscape (foreground-locked MW): stack the sky, keep a sharp static foreground ---
     nightscape: bool = False       # nightscape mode: sky-only registration + foreground companion
     nightscape_foreground: str = ""  # Mode 2: path to a user foreground image (else auto-pick sharpest)

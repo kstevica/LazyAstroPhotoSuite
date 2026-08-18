@@ -1,10 +1,13 @@
-"""LazyStack orchestration — dataset folder → calibrated, registered, integrated master.
+"""LazyStack orchestration — frame sets → calibrated, registered, integrated master.
 
-Scans ``lights/`` ``darks/`` ``flats/`` ``biases/`` subfolders (case-insensitive; if there is
-no ``lights/`` the folder's own frames are treated as uncalibrated lights), builds calibration
-masters, calibrates + cosmetic-corrects + measures + culls the lights, registers the survivors
-to the ranked reference, integrates them, measures the junk edges, and writes the master as
-FITS carrying the ``LZS*`` contract keywords the LazyStretch tab consumes.
+Frame sets come from either explicit per-set folders on the params (``lights_dir`` /
+``darks_dir`` / ``flats_dir`` / ``biases_dir`` / ``dark_flats_dir``) or, for any set left blank,
+a scan of the dataset root's ``lights/`` ``darks/`` ``flats/`` ``biases/`` ``dark_flats/``
+subfolders (case-insensitive; if there is no ``lights/`` the folder's own frames are treated as
+uncalibrated lights). From those it builds calibration masters (dark-flats calibrate the flats
+when present, else the bias), calibrates + cosmetic-corrects + measures + culls the lights,
+registers the survivors to the ranked reference, integrates them, measures the junk edges, and
+writes the master as FITS carrying the ``LZS*`` contract keywords the LazyStretch tab consumes.
 """
 from __future__ import annotations
 
@@ -30,7 +33,21 @@ from . import (
 )
 
 FRAME_EXTS = {".xisf", ".fits", ".fit", ".fts", ".tif", ".tiff", ".png"}
-_SUBSETS = ("lights", "darks", "flats", "biases")
+_SUBSETS = ("lights", "darks", "flats", "biases", "dark_flats")
+# Folder names accepted for each set when scanning a dataset root (case-insensitive).
+_SUBSET_ALIASES = {
+    "lights": ("lights", "light"),
+    "darks": ("darks", "dark"),
+    "flats": ("flats", "flat"),
+    "biases": ("biases", "bias", "offset", "offsets"),
+    "dark_flats": ("dark_flats", "darkflats", "dark_flat", "darkflat",
+                   "flat_darks", "flatdarks", "flat_dark", "flatdark", "dark flats", "flat darks"),
+}
+# Which params field carries the explicit folder for each set.
+_SUBSET_DIR_ATTR = {
+    "lights": "lights_dir", "darks": "darks_dir", "flats": "flats_dir",
+    "biases": "biases_dir", "dark_flats": "dark_flats_dir",
+}
 MASTER_NAME = "lazystack_master.fits"
 SNR_MAP_NAME = "lazystack_master_noise.npy"        # per-pixel σ companion (feeds the stretch SNR mask)
 COVERAGE_MAP_NAME = "lazystack_master_coverage.npy"  # per-pixel frame-support companion
@@ -80,20 +97,39 @@ def _list(folder: Path) -> List[str]:
     return [str(f) for f in sorted(folder.iterdir()) if f.suffix.lower() in exts]
 
 
+def list_frames(folder: str) -> List[str]:
+    """Public: the loadable frame paths directly inside ``folder`` (no recursion)."""
+    return _list(Path(folder))
+
+
 def find_sets(folder: str) -> Dict[str, List[str]]:
-    """Locate the four calibration subsets (case-insensitive); lights-only if none."""
+    """Locate the calibration subsets by scanning a root's subfolders (case-insensitive);
+    lights-only if there is no lights subfolder."""
     root = Path(folder)
     sub = {name: [] for name in _SUBSETS}
     if root.is_dir():
         by_lower = {d.name.lower(): d for d in root.iterdir() if d.is_dir()}
         for name in _SUBSETS:
-            if name in by_lower:
-                sub[name] = _list(by_lower[name])
-            elif name[:-1] in by_lower:                 # 'light' etc.
-                sub[name] = _list(by_lower[name[:-1]])
+            for alias in _SUBSET_ALIASES[name]:
+                if alias in by_lower:
+                    sub[name] = _list(by_lower[alias])
+                    break
     if not sub["lights"]:
         sub["lights"] = _list(root)                     # lights-only mode
     return sub
+
+
+def resolve_sets(folder: Optional[str], params) -> Dict[str, List[str]]:
+    """Resolve the frame sets. An explicit per-set folder on ``params`` (``lights_dir`` etc.)
+    wins for that set; any set left blank falls back to the single-folder subfolder scan of
+    ``folder``. Explicit and scanned sets can be mixed (e.g. scan the root but override flats).
+    """
+    out = find_sets(folder) if folder else {name: [] for name in _SUBSETS}
+    for name in _SUBSETS:
+        d = (getattr(params, _SUBSET_DIR_ATTR[name], "") or "").strip()
+        if d:
+            out[name] = _list(Path(d))
+    return out
 
 
 def _make_loader(folder: str, enabled: bool,
@@ -204,13 +240,27 @@ def _prune_work(work: Path, keep: set, log) -> None:
         log(f"Pruned {removed} stale work file(s).")
 
 
+def _working_folder(folder: Optional[str], params, sets: Dict[str, List[str]]) -> str:
+    """Root for output (``lazystack/``) and the decode cache. The given ``folder`` when set,
+    else the parent of an explicit ``lights_dir``, else the lights' own directory, else ``.``."""
+    if folder:
+        return folder
+    ld = (getattr(params, "lights_dir", "") or "").strip()
+    if ld:
+        return str(Path(ld).parent)
+    if sets.get("lights"):
+        return str(Path(sets["lights"][0]).parent)
+    return "."
+
+
 def measure_only(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optional[dict]:
     """The Phase-1 advisor: measure + cull the lights, stack nothing."""
-    sets = find_sets(folder)
+    sets = resolve_sets(folder, params)
     lights = sets["lights"]
     if len(lights) < 2:
         log(f"Found {len(lights)} light(s) — need at least 2.")
         return None
+    folder = _working_folder(folder, params, sets)
     log(f"Measuring {len(lights)} lights…")
     load = _make_loader(folder, params.reuse_cache, log)
     measures = []
@@ -229,13 +279,15 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     the whole stack in RAM (that OOM'd/bus-errored on real data); in-memory keeps everything
     in RAM (faster, no work files) for bursts that comfortably fit.
     """
-    sets = find_sets(folder)
+    sets = resolve_sets(folder, params)
     lights = sets["lights"]
     if len(lights) < 2:
         log(f"Found {len(lights)} light(s) — need at least 2.")
         return None
+    folder = _working_folder(folder, params, sets)
+    extra = f", {len(sets['dark_flats'])} dark-flats" if sets["dark_flats"] else ""
     log(f"LazyStack: {folder} — {len(lights)} lights, {len(sets['darks'])} darks, "
-        f"{len(sets['flats'])} flats, {len(sets['biases'])} biases.")
+        f"{len(sets['flats'])} flats, {len(sets['biases'])} biases{extra}.")
 
     out_dir = Path(folder) / "lazystack"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -255,7 +307,15 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
                    if params.do_calibrate else None)
     master_dark = (_master(sets["darks"], load, work, log, "dark", reuse=reuse)
                    if params.do_calibrate else None)
-    master_flat = (_master(sets["flats"], load, work, log, "flat", bias=master_bias, reuse=reuse)
+    # Flats are calibrated by their own dark-flats (darks at the flat exposure) when supplied —
+    # these carry the flat-exposure dark current + read pedestal, so they beat a plain bias for
+    # flat calibration. Fall back to the master bias when no dark-flats are given.
+    master_dark_flat = (_master(sets["dark_flats"], load, work, log, "darkflat", reuse=reuse)
+                        if params.do_calibrate else None)
+    flat_pedestal = master_dark_flat if master_dark_flat is not None else master_bias
+    if params.do_calibrate and master_dark_flat is not None:
+        log("  flats calibrated with dark-flats (flat-darks).")
+    master_flat = (_master(sets["flats"], load, work, log, "flat", bias=flat_pedestal, reuse=reuse)
                    if params.do_calibrate else None)
 
     def _get(handle):
@@ -711,7 +771,7 @@ def stack(folder: str, params, *, log: Callable[[str], None] = _noop) -> Optiona
     elif work is not None and reuse:                     # keep this run's files, prune orphans
         keep_names = {h.name for h in frames if isinstance(h, Path)}
         keep_names |= {h.name for h in aligned_handles if isinstance(h, Path)}
-        keep_names |= {f"master_{lbl}.npy" for lbl in ("bias", "dark", "flat")}
+        keep_names |= {f"master_{lbl}.npy" for lbl in ("bias", "dark", "flat", "darkflat")}
         keep_names.add("measures.json")
         _prune_work(work, keep_names, log)
     return {"master": master, "master_path": str(master_path), "n_stacked": n_stacked,
